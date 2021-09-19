@@ -1,0 +1,88 @@
+name: Publish docker image
+
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+on:
+  push:
+    # branches: [ master ]
+    # Publish semver tags as releases.
+    tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  # Use docker.io for Docker Hub if empty
+  REGISTRY: ghcr.io
+  # github.repository as <account>/<repo>
+  IMAGE_NAME: ${{ github.repository }}
+  HASH: ${{ github.sha }}
+  BRANCH: ${{ github.head_ref }}
+
+jobs:
+  build:
+
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      # Login against a Docker registry except on PR
+      # https://github.com/docker/login-action
+      - name: Log into registry ${{ env.REGISTRY }}
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@28218f9b04b4f3f62068d7b6ce6ca5b26e35336c
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get info
+        id: get_info
+        run: |
+          echo ::set-output name=SOURCE_NAME::${GITHUB_REF/refs\/*\//}
+          echo ::set-output name=SOURCE_BRANCH::${GITHUB_REF/refs\/heads\//}
+          echo ::set-output name=SOURCE_TAG::${GITHUB_REF/refs\/tags\//}
+
+      # Extract metadata (tags, labels) for Docker
+      # https://github.com/docker/metadata-action
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      # Build and push Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push Docker image for Bot project
+        uses: docker/build-push-action@ad44023a93711e3deb337508980b4b5e9bcdc5dc
+        with:
+          context: ./src/WojtusDiscord.Bot
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: "ghcr.io/kowalskiwiktor98/wojtusdiscord-bot:${{ steps.get_info.outputs.SOURCE_TAG }}"
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # Build and push Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push Docker image for API project
+        uses: docker/build-push-action@ad44023a93711e3deb337508980b4b5e9bcdc5dc
+        with:
+          context: ./src/WojtusDiscord.API
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: "ghcr.io/kowalskiwiktor98/wojtusdiscord-api:${{ steps.get_info.outputs.SOURCE_TAG }}"
+          labels: ${{ steps.meta.outputs.labels }}
+          
+      - name: Executing remote command
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          USERNAME: ${{ secrets.USERNAME }}
+          PORT: ${{ secrets.PORT }}
+          KEY: ${{ secrets.SSHKEY }}
+          script: "docker-compose --file ~/docker/wojtus/docker-compose.yml down && sed -i 's/BuildBranch=.*/BuildBranch=${{ env.BRANCH }}/g' ~/docker/wojtus/.env && sed -i 's/BuildHash=.*/BuildHash=${{ env.HASH }}/g' ~/docker/wojtus/.env && docker-compose --file ~/docker/wojtus/docker-compose.yml up -d --force-recreate"

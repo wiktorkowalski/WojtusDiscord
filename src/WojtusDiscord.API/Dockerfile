@@ -7,10 +7,10 @@ EXPOSE 443
 
 FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build
 WORKDIR /src
-COPY ["src/WojtusDiscord.API/WojtusDiscord.API.csproj", "src/WojtusDiscord.API/"]
-RUN dotnet restore "src/WojtusDiscord.API/WojtusDiscord.API.csproj"
-COPY . .
-WORKDIR "/src/src/WojtusDiscord.API"
+COPY ["WojtusDiscord.API.csproj", "WojtusDiscord.API/"]
+RUN dotnet restore --verbosity n "WojtusDiscord.API/WojtusDiscord.API.csproj"
+COPY . "/src/WojtusDiscord.API/"
+WORKDIR "/src/WojtusDiscord.API"
 RUN dotnet build "WojtusDiscord.API.csproj" -c Release -o /app/build
 
 FROM build AS publish
