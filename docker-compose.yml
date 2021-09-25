@@ -1,0 +1,15 @@
+version: '3.4'
+
+services:
+  wojtusdiscord.api:
+    image: ${DOCKER_REGISTRY-}wojtusdiscordapi
+    build:
+      context: .
+      dockerfile: src/WojtusDiscord.API/Dockerfile
+
+  wojtusdiscord.bot:
+    image: ${DOCKER_REGISTRY-}wojtusdiscordbot
+    build:
+      context: .
+      dockerfile: src/WojtusDiscord.Bot/Dockerfile
+
