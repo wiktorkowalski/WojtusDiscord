@@ -20,10 +20,10 @@ Custom Discord bot for my private server.
 
 #
 # Tech Stack
-- :white_check_mark: ASP.NET Core 6 with minimal API
-- :construction: PostgreSQL Database
-- :construction: RabbitMQ/Kafka/Redis Message queue
-- :white_check_mark: Docker/Docker Compose
+- :white_check_mark: ASP.NET Core 6 Hosted Service with minimal API
+- :construction: PostgreSQL/SQL Server Database
+- :white_check_mark: Redis Message queue
+- :white_check_mark: Docker with Docker Compose
 - :white_check_mark: CD Pipeline in Github Actions
 
 #
