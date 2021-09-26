@@ -10,6 +10,8 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using WojtusDiscord.API.Services.Auth;
+using WojtusDiscord.API.Services.Bot;
+using WojtusDiscord.API.Services.PubSub;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -36,17 +38,6 @@ builder.Services.AddAuthorization(options =>
     .Build();
 });
 
-builder.Services.AddHttpLogging(logging =>
-{
-    // Customize HTTP logging here.
-    logging.LoggingFields = HttpLoggingFields.All;
-    logging.RequestHeaders.Add("My-Request-Header");
-    logging.ResponseHeaders.Add("My-Response-Header");
-    logging.MediaTypeOptions.AddText("application/javascript");
-    logging.RequestBodyLogLimit = 4096;
-    logging.ResponseBodyLogLimit = 4096;
-});
-
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -71,7 +62,10 @@ builder.Services.AddSwaggerGen(options =>
         }
     });
 });
+
 builder.Services.AddSingleton<ITokenService, TokenService>();
+builder.Services.AddSingleton<IPubSubService, RedisPubSubService>();
+builder.Services.AddSingleton<IBotCommunicationService, BotCommunicationService>();
 
 var app = builder.Build();
 
@@ -83,11 +77,12 @@ if (builder.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpLogging();
 app.UseRouting();
-app.UseHttpsRedirection();
 app.UseAuthorization();
 app.UseAuthentication();
 app.MapControllers();
+
+//warmup IPubSubService
+app.Services.GetService<IPubSubService>();
 
 app.Run();
