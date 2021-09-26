@@ -1,0 +1,27 @@
+version: '3.4'
+
+services:
+  wojtusdiscord.api:
+    image: ${DOCKER_REGISTRY-}wojtusdiscordapi
+    build:
+      context: .
+      dockerfile: src/WojtusDiscord.API/Dockerfile
+    depends_on:
+      - redis
+
+  wojtusdiscord.bot:
+    image: ${DOCKER_REGISTRY-}wojtusdiscordbot
+    build:
+      context: .
+      dockerfile: src/WojtusDiscord.Bot/Dockerfile
+    depends_on:
+      - redis
+      - wojtusdiscord.api
+
+  redis:
+    container_name: redis-compose
+    image: redis:6.2.5-buster
+    ports:
+      - 6379:6379
+    environment:
+      - REDIS_REPLICATION_MODE=master

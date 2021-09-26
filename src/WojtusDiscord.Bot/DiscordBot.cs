@@ -2,20 +2,25 @@
 using System.Threading;
 using System.Threading.Tasks;
 using DSharpPlus;
+using DSharpPlus.SlashCommands;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using WojtusDiscord.Bot.Modules;
+using WojtusDiscord.Bot.Services;
 
 namespace WojtusDiscord.Bot
 {
     internal class DiscordBot : IHostedService
     {
-        private readonly ILogger<DiscordBot> logger;
-        private DiscordClient discordClient;
+        private readonly ILogger<DiscordBot> _logger;
+        private readonly IPubSubService _pubSubService;
+        private readonly DiscordClient _discordClient;
 
-        public DiscordBot(ILogger<DiscordBot> logger)
+        public DiscordBot(ILogger<DiscordBot> logger, IPubSubService pubSubService)
         {
-            this.logger = logger;
-            discordClient = new DiscordClient(GetDiscordConfiguration());
+            _logger = logger;
+            _pubSubService = pubSubService;
+            _discordClient = new DiscordClient(GetDiscordConfiguration());
         }
 
         private DiscordConfiguration GetDiscordConfiguration()
@@ -24,23 +29,25 @@ namespace WojtusDiscord.Bot
             {
                 Token = Environment.GetEnvironmentVariable("DiscordToken"),
                 TokenType = TokenType.Bot,
-                Intents = DiscordIntents.All, // Full admin right as the bot is designed for a private server
-                MinimumLogLevel = LogLevel.Debug
+                Intents = DiscordIntents.All
             };
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
         {
-            logger.LogInformation("Starting DiscordBot service...");
+            _logger.LogInformation("Starting DiscordBot service...");
 
-            return discordClient.ConnectAsync();
+            var commands = _discordClient.UseSlashCommands();
+            commands.RegisterCommands<InfoCommandsModule>();
+            
+            _pubSubService.RegisterBot();
+            return _discordClient.ConnectAsync();
         }
 
         public Task StopAsync(CancellationToken cancellationToken)
         {
-            logger.LogInformation("Stopping DiscordBot service...");
-
-            return discordClient.DisconnectAsync();
+            _logger.LogInformation("Stopping DiscordBot service...");
+            return _discordClient.DisconnectAsync();
         }
     }
 }
