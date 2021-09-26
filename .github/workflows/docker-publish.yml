@@ -7,11 +7,11 @@ name: Publish docker image
 
 on:
   push:
-    # branches: [ master ]
+    branches: [ master ]
     # Publish semver tags as releases.
-    tags: [ 'v*.*.*' ]
-  #pull_request:
-  #  branches: [ master ]
+    #tags: [ 'v*.*.*' ]
+  pull_request:
+    branches: [ master ]
 
 env:
   # Use docker.io for Docker Hub if empty
@@ -42,21 +42,44 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Get info
-        id: get_info
-        run: |
-          echo ::set-output name=SOURCE_NAME::${GITHUB_REF/refs\/*\//}
-          echo ::set-output name=SOURCE_BRANCH::${GITHUB_REF/refs\/heads\//}
-          echo ::set-output name=SOURCE_TAG::${GITHUB_REF/refs\/tags\//}
+          
+      - name: Get version from Bot project
+        uses: kzrnm/get-net-sdk-project-versions-action@v1
+        id: get-version-bot
+        with:
+          proj-path: ./src/WojtusDiscord.Bot/WojtusDiscord.Bot.csproj
+      - run: echo "${{steps.get-version-bot.outputs.version}}"
+      
+      - name: Get version from API project
+        uses: kzrnm/get-net-sdk-project-versions-action@v1
+        id: get-version-api
+        with:
+          proj-path: ./src/WojtusDiscord.API/WojtusDiscord.API.csproj
+      - run: echo "${{steps.get-version-api.outputs.version}}"
 
       # Extract metadata (tags, labels) for Docker
       # https://github.com/docker/metadata-action
-      - name: Extract Docker metadata
-        id: meta
+      - name: Extract Docker metadata for Bot
+        id: meta-bot
         uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/wojtusdiscord-bot
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.get-version-bot.outputs.version }}
+            
+      - run: echo "${{steps.meta-bot.outputs.tags}}"
+       
+      - name: Extract Docker metadata for API
+        id: meta-api
+        uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
+        with:
+          images: ${{ env.REGISTRY }}/wojtusdiscord-api
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.get-version-api.outputs.version }}
+          
+      - run: echo "${{steps.meta-api.outputs.tags}}"
 
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
@@ -65,8 +88,10 @@ jobs:
         with:
           context: ./src/WojtusDiscord.Bot
           push: ${{ github.event_name != 'pull_request' }}
-          tags: "ghcr.io/kowalskiwiktor98/wojtusdiscord-bot:${{ steps.get_info.outputs.SOURCE_TAG }}"
-          labels: ${{ steps.meta.outputs.labels }}
+          #tags: ${{ steps.meta-bot.outputs.tags }}
+          #tags: "ghcr.io/kowalskiwiktor98/wojtusdiscord-bot:${{ steps.get-version-bot.outputs.version }} ghcr.io/kowalskiwiktor98/wojtusdiscord-bot:latest"
+          tags: ghcr.io/kowalskiwiktor98/wojtusdiscord-bot:latest
+          labels: ${{ steps.meta-bot.outputs.labels }}
 
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
@@ -75,8 +100,10 @@ jobs:
         with:
           context: ./src/WojtusDiscord.API
           push: ${{ github.event_name != 'pull_request' }}
-          tags: "ghcr.io/kowalskiwiktor98/wojtusdiscord-api:${{ steps.get_info.outputs.SOURCE_TAG }}"
-          labels: ${{ steps.meta.outputs.labels }}
+          #tags: ${{ steps.meta-api.outputs.tags }}
+          #tags: "ghcr.io/kowalskiwiktor98/wojtusdiscord-api:${{ steps.get-version-api.outputs.version }} ghcr.io/kowalskiwiktor98/wojtusdiscord-api:latest"
+          tags: ghcr.io/kowalskiwiktor98/wojtusdiscord-api:latest
+          labels: ${{ steps.meta-api.outputs.labels }}
           
       - name: Executing remote command
         uses: appleboy/ssh-action@master
@@ -85,4 +112,5 @@ jobs:
           USERNAME: ${{ secrets.USERNAME }}
           PORT: ${{ secrets.PORT }}
           KEY: ${{ secrets.SSHKEY }}
-          script: "docker-compose --file ~/docker/wojtus/docker-compose.yml down && sed -i 's/BuildBranch=.*/BuildBranch=${{ env.BRANCH }}/g' ~/docker/wojtus/.env && sed -i 's/BuildHash=.*/BuildHash=${{ env.HASH }}/g' ~/docker/wojtus/.env && docker-compose --file ~/docker/wojtus/docker-compose.yml up -d --force-recreate"
+          script: "./docker/wojtus/deploy.sh"
+          #script: "docker-compose --file ~/docker/wojtus/docker-compose.yml down && sed -i 's/BuildBranch=.*/BuildBranch=${{ env.BRANCH }}/g' ~/docker/wojtus/.env && sed -i 's/BuildHash=.*/BuildHash=${{ env.HASH }}/g' ~/docker/wojtus/.env && docker-compose --file ~/docker/wojtus/docker-compose.yml up -d --force-recreate"
