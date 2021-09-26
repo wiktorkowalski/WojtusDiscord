@@ -6,17 +6,20 @@ using DSharpPlus.SlashCommands;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WojtusDiscord.Bot.Modules;
+using WojtusDiscord.Bot.Services;
 
 namespace WojtusDiscord.Bot
 {
     internal class DiscordBot : IHostedService
     {
         private readonly ILogger<DiscordBot> _logger;
+        private readonly IPubSubService _pubSubService;
         private readonly DiscordClient _discordClient;
 
-        public DiscordBot(ILogger<DiscordBot> logger)
+        public DiscordBot(ILogger<DiscordBot> logger, IPubSubService pubSubService)
         {
             _logger = logger;
+            _pubSubService = pubSubService;
             _discordClient = new DiscordClient(GetDiscordConfiguration());
         }
 
@@ -26,18 +29,18 @@ namespace WojtusDiscord.Bot
             {
                 Token = Environment.GetEnvironmentVariable("DiscordToken"),
                 TokenType = TokenType.Bot,
-                Intents = DiscordIntents.All,
-                MinimumLogLevel = LogLevel.Debug
+                Intents = DiscordIntents.All
             };
         }
 
         public Task StartAsync(CancellationToken cancellationToken)
         {
             _logger.LogInformation("Starting DiscordBot service...");
-            
+
             var commands = _discordClient.UseSlashCommands();
             commands.RegisterCommands<InfoCommandsModule>();
-
+            
+            _pubSubService.RegisterBot();
             return _discordClient.ConnectAsync();
         }
 

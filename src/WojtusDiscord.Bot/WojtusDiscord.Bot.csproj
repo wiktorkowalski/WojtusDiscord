@@ -14,6 +14,7 @@
   <PackageReference Include="IDoEverything.DSharpPlus.SlashCommands" Version="2.0.4" />
 	<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.11.1" />
   <PackageReference Include="Microsoft.Extensions.Hosting" Version="6.0.0-rc.1.21451.13" />
+  <PackageReference Include="StackExchange.Redis" Version="2.2.50" />
   </ItemGroup>
 
   <ItemGroup>
