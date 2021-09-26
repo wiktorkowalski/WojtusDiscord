@@ -6,6 +6,7 @@
     <UserSecretsId>dotnet-WojtusDiscord.Bot-C3AF39D2-0645-4F5A-B5EC-AB29C27B68AE</UserSecretsId>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     <DockerfileContext>..\..</DockerfileContext>
+    <Version>0.1.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
