@@ -1,0 +1,120 @@
+name: Publish dev docker image
+
+# This workflow uses actions that are not certified by GitHub.
+# They are provided by a third-party and are governed by
+# separate terms of service, privacy policy, and support
+# documentation.
+
+on:
+  push:
+    branches: [ dev ]
+
+  workflow_dispatch:
+    inputs:
+      dummy:
+        type: string
+        default: 'dummy'
+        required: true
+        description: 'dummy'
+        
+
+env:
+  REGISTRY: ghcr.io
+  # github.repository as <account>/<repo>
+  IMAGE_NAME: ${{ github.repository }}
+  HASH: ${{ github.sha }}
+  BRANCH: ${{ github.head_ref }}
+
+jobs:
+  build:
+
+    runs-on: [self-hosted, linux]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      # Login against a Docker registry except on PR
+      # https://github.com/docker/login-action
+      - name: Log into registry ${{ env.REGISTRY }}
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@28218f9b04b4f3f62068d7b6ce6ca5b26e35336c
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Get version from Bot project
+        uses: kzrnm/get-net-sdk-project-versions-action@v1
+        id: get-version-bot
+        with:
+          proj-path: ./src/WojtusDiscord.Bot/WojtusDiscord.Bot.csproj
+      - run: echo "${{steps.get-version-bot.outputs.version}}"
+      
+      - name: Get version from API project
+        uses: kzrnm/get-net-sdk-project-versions-action@v1
+        id: get-version-api
+        with:
+          proj-path: ./src/WojtusDiscord.API/WojtusDiscord.API.csproj
+      - run: echo "${{steps.get-version-api.outputs.version}}"
+
+      # Extract metadata (tags, labels) for Docker
+      # https://github.com/docker/metadata-action
+      - name: Extract Docker metadata for Bot
+        id: meta-bot
+        uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
+        with:
+          images: ${{ env.REGISTRY }}/wojtusdiscord-bot
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.get-version-bot.outputs.version }}
+            
+      - run: echo "${{steps.meta-bot.outputs.tags}}"
+       
+      - name: Extract Docker metadata for API
+        id: meta-api
+        uses: docker/metadata-action@98669ae865ea3cffbcbaa878cf57c20bbf1c6c38
+        with:
+          images: ${{ env.REGISTRY }}/wojtusdiscord-api
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.get-version-api.outputs.version }}
+          
+      - run: echo "${{steps.meta-api.outputs.tags}}"
+
+      # Build and push Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push Docker image for Bot project
+        uses: docker/build-push-action@ad44023a93711e3deb337508980b4b5e9bcdc5dc
+        with:
+          context: ./src/WojtusDiscord.Bot
+          push: ${{ github.event_name != 'pull_request' }}
+          #tags: ${{ steps.meta-bot.outputs.tags }}
+          #tags: "ghcr.io/kowalskiwiktor98/wojtusdiscord-bot:${{ steps.get-version-bot.outputs.version }} ghcr.io/kowalskiwiktor98/wojtusdiscord-bot:latest"
+          tags: ghcr.io/wiktorkowalski/wojtusdiscord-bot:dev
+          labels: ${{ steps.meta-bot.outputs.labels }}
+
+      # Build and push Docker image with Buildx (don't push on PR)
+      # https://github.com/docker/build-push-action
+      - name: Build and push Docker image for API project
+        uses: docker/build-push-action@ad44023a93711e3deb337508980b4b5e9bcdc5dc
+        with:
+          context: ./src/WojtusDiscord.API
+          push: ${{ github.event_name != 'pull_request' }}
+          #tags: ${{ steps.meta-api.outputs.tags }}
+          #tags: "ghcr.io/kowalskiwiktor98/wojtusdiscord-api:${{ steps.get-version-api.outputs.version }} ghcr.io/kowalskiwiktor98/wojtusdiscord-api:latest"
+          tags: ghcr.io/wiktorkowalski/wojtusdiscord-api:dev
+          labels: ${{ steps.meta-api.outputs.labels }}
+          
+      - name: Executing remote command
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          USERNAME: ${{ secrets.USERNAME }}
+          PORT: ${{ secrets.PORT }}
+          KEY: ${{ secrets.SSHKEY }}
+          script: "./docker/wojtus-dev/deploy.sh"
+          #script: "docker-compose --file ~/docker/wojtus/docker-compose.yml down && sed -i 's/BuildBranch=.*/BuildBranch=${{ env.BRANCH }}/g' ~/docker/wojtus/.env && sed -i 's/BuildHash=.*/BuildHash=${{ env.HASH }}/g' ~/docker/wojtus/.env && docker-compose --file ~/docker/wojtus/docker-compose.yml up -d --force-recreate"
