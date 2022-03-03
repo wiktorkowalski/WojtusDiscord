@@ -1,14 +1,13 @@
 #See https://aka.ms/containerfastmode to understand how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
-FROM mcr.microsoft.com/dotnet/aspnet:6.0 AS base
+FROM mcr.microsoft.com/dotnet/runtime:6.0 AS base
 WORKDIR /app
-EXPOSE 80
-EXPOSE 443
 
 FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build
 WORKDIR /src
 COPY ["WojtusDiscord.Bot.csproj", "WojtusDiscord.Bot/"]
-RUN dotnet restore "WojtusDiscord.Bot/WojtusDiscord.Bot.csproj"
+COPY ["nuget.config", "WojtusDiscord.Bot/"]
+RUN dotnet restore --verbosity n --configfile "WojtusDiscord.Bot/nuget.config" "WojtusDiscord.Bot/WojtusDiscord.Bot.csproj"
 COPY . "/src/WojtusDiscord.Bot/"
 WORKDIR "/src/WojtusDiscord.Bot"
 RUN dotnet build "WojtusDiscord.Bot.csproj" -c Release -o /app/build
