@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  postgres:
+    container_name: postgres-wojtus
+    image: postgres:14.3
+    ports:
+      - 5432:5432
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    env_file:
+      - .env
+
+  wojtus-tech-deals:
+    build:
+      context: 'src/WojtusDiscord.TechDealsService/'
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - 3000:80
+
+  wojtus-archive-service:
+    build:
+      context: 'src/WojtusDiscord.ArchiveService/'
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - 3001:80
+    depends_on:
+      - postgres
+
+  wojtus-file-upload:
+    build:
+      context: 'src/WojtusDiscord.FileShareService/'
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - 3002:80
+
+volumes:
+  postgres:
+    driver: local
