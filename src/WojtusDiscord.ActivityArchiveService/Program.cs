@@ -1,5 +1,6 @@
 using Serilog;
 using Serilog.Sinks.SystemConsole.Themes;
+using WojtusDiscord.ActivityArchiveService;
 var builder = WebApplication.CreateBuilder(args);
 
 var logger = new LoggerConfiguration()
@@ -18,6 +19,7 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+builder.Services.AddHostedService<DiscordService>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
