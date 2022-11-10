@@ -1,6 +1,6 @@
 ﻿namespace WojtusDiscord.ActivityArchiveService.Models;
 
-public class DiscordReaction : BaseDiscordModel
+public class DiscordReaction : BaseModel
 {
     public bool IsRemoved { get; set; }
 

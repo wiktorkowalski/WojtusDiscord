@@ -3,7 +3,7 @@
 public class DiscordGuild : BaseDiscordModel
 {
     public string Name { get; set; }
-    public string IconId { get; set; }
+    public string? IconUrl { get; set; }
 
     public Guid OwnerId { get; set; }
     public DiscordUser Owner { get; set; }

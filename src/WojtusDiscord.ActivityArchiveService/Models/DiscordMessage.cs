@@ -4,6 +4,11 @@ public class DiscordMessage : BaseDiscordModel
 {
     public string? Content { get; set; }
     public bool HasAttatchment { get; set; }
+    public bool IsEdited { get; set; }
+    public bool IsRemoved { get; set; }
+
+    public Guid? ReplyToMessageId { get; set; }
+    public DiscordMessage? ReplyToMessage { get; set; }
 
     public Guid ChannelId { get; set; }
     public DiscordTextChannel TextChannel { get; set; }

@@ -1,6 +1,7 @@
 .PHONY: db-setup-postgres db-clean
 
-db-reset: db-clean db-setup
+db-reset: db-clean db-setup ef-database-update
+db-reset-migration: db-clean db-setup ef-migrations-remove
 db-restart: db-stop db-setup
 
 db-setup:

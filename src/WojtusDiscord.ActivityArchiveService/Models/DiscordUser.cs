@@ -4,7 +4,7 @@ public class DiscordUser : BaseDiscordModel
 {
     public string Username { get; set; }
     public string Discriminator { set; get; }
-    public string AvatarId { get; set; }
+    public string? AvatarUrl { get; set; }
     public bool IsBot { get; set; }
     public bool IsWebhook { get; set; }
 

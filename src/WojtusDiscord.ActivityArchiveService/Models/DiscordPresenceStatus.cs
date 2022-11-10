@@ -4,9 +4,11 @@ public class DiscordPresenceStatus : BaseModel
 {
     public string? Name { get; set; }
     public string? Details { get; set; }
+    public string? State { get; set; }
+    public string? LargeImageText { get; set; }
+    public string? SmallImageText { get; set; }
     public DiscordStatus Status { get; set; }
     public DiscordActivityType ActivityType { get; set; }
-    public DiscordActivityProperties ActivityProperties { get; set; }
 
     public Guid UserId { get; set; }
     public DiscordUser User { get; set; }
@@ -16,36 +18,21 @@ public class DiscordPresenceStatus : BaseModel
 
 public enum DiscordStatus
 {
-    AFK,
-    DoNotDisturb,
-    Idle,
-    Invisible,
-    Offline,
-    Online,
+    Offline = 0,
+    Online = 1,
+    Idle = 2,
+    DoNotDisturb = 4,
+    Invisible = 5,
 }
 
 public enum DiscordActivityType
 {
     Playing,
     Streaming,
-    Listening,
+    ListeningTo,
     Watching,
     Custom,
     Competing,
-}
-
-public enum DiscordActivityProperties
-{
-    Embedded,
-    Instance,
-    Join,
-    JoinRequest,
-    None,
-    PartyPrivacyFriends,
-    PartyPrivacyVoiceChannel,
-    Play,
-    Spectate,
-    Sync,
 }
 
 #endregion
