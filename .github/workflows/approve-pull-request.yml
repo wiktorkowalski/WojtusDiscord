@@ -1,0 +1,24 @@
+name: Approve Pull Request on Review Comment
+
+on:
+  workflow_dispatch:
+    inputs:
+      pullRequestNumber:
+        description: Pull request number to auto-approve
+        required: true
+
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  auto-approve:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    timeout-minutes: 1
+    if: github.event_name == 'pull_request_review_comment' && github.event.comment.body == 'lgtm'
+    steps:
+      - uses: hmarr/auto-approve-action@v3
+        with:
+          review-message: "Auto approved automated PR"
+          # pull-request-number: ${{ github.event.inputs.pullRequestNumber }}
