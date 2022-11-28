@@ -19,7 +19,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     is_animated = table.Column<bool>(type: "boolean", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    last_access = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
@@ -39,7 +38,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     is_webhook = table.Column<bool>(type: "boolean", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    last_access = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
@@ -57,7 +55,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     owner_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    last_access = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
@@ -85,8 +82,7 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     activity_type = table.Column<string>(type: "text", nullable: false),
                     user_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    last_access = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
+                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -130,10 +126,12 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     id = table.Column<Guid>(type: "uuid", nullable: false),
                     name = table.Column<string>(type: "text", nullable: false),
                     topic = table.Column<string>(type: "text", nullable: true),
-                    guild_id = table.Column<Guid>(type: "uuid", nullable: false),
+                    is_private = table.Column<bool>(type: "boolean", nullable: false),
+                    is_thread = table.Column<bool>(type: "boolean", nullable: false),
+                    parent_text_channel_id = table.Column<Guid>(type: "uuid", nullable: true),
+                    guild_id = table.Column<Guid>(type: "uuid", nullable: true),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    last_access = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
@@ -143,8 +141,12 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         name: "fk_discord_text_channels_discord_guilds_guild_id",
                         column: x => x.guild_id,
                         principalTable: "discord_guilds",
-                        principalColumn: "id",
-                        onDelete: ReferentialAction.Cascade);
+                        principalColumn: "id");
+                    table.ForeignKey(
+                        name: "fk_discord_text_channels_discord_text_channels_parent_text_cha",
+                        column: x => x.parent_text_channel_id,
+                        principalTable: "discord_text_channels",
+                        principalColumn: "id");
                 });
 
             migrationBuilder.CreateTable(
@@ -159,7 +161,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     guild_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    last_access = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
@@ -183,12 +184,10 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     is_edited = table.Column<bool>(type: "boolean", nullable: false),
                     is_removed = table.Column<bool>(type: "boolean", nullable: false),
                     reply_to_message_id = table.Column<Guid>(type: "uuid", nullable: true),
-                    channel_id = table.Column<Guid>(type: "uuid", nullable: false),
                     text_channel_id = table.Column<Guid>(type: "uuid", nullable: false),
                     author_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    last_access = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
@@ -222,8 +221,7 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     text_channel_id = table.Column<Guid>(type: "uuid", nullable: false),
                     user_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    last_access = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
+                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -257,8 +255,7 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     voice_channel_id = table.Column<Guid>(type: "uuid", nullable: false),
                     user_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    last_access = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
+                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -287,8 +284,7 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     is_removed = table.Column<bool>(type: "boolean", nullable: false),
                     message_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    last_access = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
+                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -311,8 +307,7 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     message_id = table.Column<Guid>(type: "uuid", nullable: false),
                     emote_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    last_access = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
+                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -391,6 +386,11 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                 name: "ix_discord_text_channels_guild_id",
                 table: "discord_text_channels",
                 column: "guild_id");
+
+            migrationBuilder.CreateIndex(
+                name: "ix_discord_text_channels_parent_text_channel_id",
+                table: "discord_text_channels",
+                column: "parent_text_channel_id");
 
             migrationBuilder.CreateIndex(
                 name: "ix_discord_typing_statuses_text_channel_id",

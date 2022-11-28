@@ -1,5 +1,4 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using WojtusDiscord.ActivityArchiveService.Mappers;
 using WojtusDiscord.ActivityArchiveService.Models;
 
 namespace WojtusDiscord.ActivityArchiveService.Database
@@ -8,7 +7,6 @@ namespace WojtusDiscord.ActivityArchiveService.Database
     {
         public ActivityArchiveContext(DbContextOptions<ActivityArchiveContext> options) : base(options)
         {
-            DiscordApiObjectsToModelsMapper.InitializeMappings();
         }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
@@ -33,8 +31,23 @@ namespace WojtusDiscord.ActivityArchiveService.Database
                 .HasConversion<string>();
         }
 
-        //methods for GetAndCreate, EnsureExists and so on
+        public override int SaveChanges()
+        {
+            var items = ChangeTracker.Entries<BaseModel>().Where(e => e.State == EntityState.Added || e.State == EntityState.Modified);
 
+            foreach (var item in items)
+            {
+                if (item.State == EntityState.Added)
+                {
+                    item.Entity.CreatedAt = DateTime.UtcNow;
+                }
+                item.Entity.UpdatedAt = DateTime.UtcNow;
+            }
+            
+            return base.SaveChanges();
+        }
+
+        #region DbSets
 
         public DbSet<DiscordUser> DiscordUsers { get; set; }
         public DbSet<DiscordGuild> DiscordGuilds { get; set; }
@@ -48,5 +61,7 @@ namespace WojtusDiscord.ActivityArchiveService.Database
         public DbSet<DiscordVoiceChannel> DiscordVoiceChannels { get; set; }
         public DbSet<DiscordVoiceStatus> DiscordVoiceStatuses { get; set; }
         public DbSet<DiscordPresenceStatus> DiscordPresenceStatuses { get; set; }
+
+        #endregion
     }
 }

@@ -10,7 +10,7 @@ public class DiscordMessage : BaseDiscordModel
     public Guid? ReplyToMessageId { get; set; }
     public DiscordMessage? ReplyToMessage { get; set; }
 
-    public Guid ChannelId { get; set; }
+    public Guid TextChannelId { get; set; }
     public DiscordTextChannel TextChannel { get; set; }
 
     public Guid AuthorId { get; set; }

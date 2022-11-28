@@ -3,8 +3,10 @@ using Serilog;
 using Serilog.Sinks.SystemConsole.Themes;
 using WojtusDiscord.ActivityArchiveService;
 using WojtusDiscord.ActivityArchiveService.Database;
+using WojtusDiscord.ActivityArchiveService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+DotNetEnv.Env.TraversePath().Load();
 
 var logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
@@ -21,6 +23,14 @@ builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddScoped<DiscordUserService>();
+builder.Services.AddScoped<DiscordGuildService>();
+builder.Services.AddScoped<DiscordChannelService>();
+builder.Services.AddScoped<DiscordEmoteService>();
+builder.Services.AddScoped<DiscordMessageService>();
+builder.Services.AddScoped<DiscordReactionService>();
+builder.Services.AddScoped<GuildInitializerService>();
 
 builder.Services.AddHostedService<DiscordService>();
 

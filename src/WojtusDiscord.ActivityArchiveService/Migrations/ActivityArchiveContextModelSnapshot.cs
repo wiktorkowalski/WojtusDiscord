@@ -41,10 +41,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_animated");
 
-                    b.Property<DateTime>("LastAccess")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_access");
-
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text")
@@ -82,10 +78,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.Property<string>("IconUrl")
                         .HasColumnType("text")
                         .HasColumnName("icon_url");
-
-                    b.Property<DateTime>("LastAccess")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_access");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -139,10 +131,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("author_id");
 
-                    b.Property<Guid>("ChannelId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("channel_id");
-
                     b.Property<string>("Content")
                         .HasColumnType("text")
                         .HasColumnName("content");
@@ -166,10 +154,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.Property<bool>("IsRemoved")
                         .HasColumnType("boolean")
                         .HasColumnName("is_removed");
-
-                    b.Property<DateTime>("LastAccess")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_access");
 
                     b.Property<Guid?>("ReplyToMessageId")
                         .HasColumnType("uuid")
@@ -221,10 +205,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_removed");
 
-                    b.Property<DateTime>("LastAccess")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_access");
-
                     b.Property<Guid>("MessageId")
                         .HasColumnType("uuid")
                         .HasColumnName("message_id");
@@ -265,10 +245,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.Property<string>("LargeImageText")
                         .HasColumnType("text")
                         .HasColumnName("large_image_text");
-
-                    b.Property<DateTime>("LastAccess")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_access");
 
                     b.Property<string>("Name")
                         .HasColumnType("text")
@@ -323,10 +299,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_removed");
 
-                    b.Property<DateTime>("LastAccess")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_access");
-
                     b.Property<Guid>("MessageId")
                         .HasColumnType("uuid")
                         .HasColumnName("message_id");
@@ -369,18 +341,26 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("numeric(20,0)")
                         .HasColumnName("discord_id");
 
-                    b.Property<Guid>("GuildId")
+                    b.Property<Guid?>("GuildId")
                         .HasColumnType("uuid")
                         .HasColumnName("guild_id");
 
-                    b.Property<DateTime>("LastAccess")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_access");
+                    b.Property<bool>("IsPrivate")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_private");
+
+                    b.Property<bool>("IsThread")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_thread");
 
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("name");
+
+                    b.Property<Guid?>("ParentTextChannelId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parent_text_channel_id");
 
                     b.Property<string>("Topic")
                         .HasColumnType("text")
@@ -395,6 +375,9 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
 
                     b.HasIndex("GuildId")
                         .HasDatabaseName("ix_discord_text_channels_guild_id");
+
+                    b.HasIndex("ParentTextChannelId")
+                        .HasDatabaseName("ix_discord_text_channels_parent_text_channel_id");
 
                     b.ToTable("discord_text_channels", (string)null);
                 });
@@ -413,10 +396,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
-
-                    b.Property<DateTime>("LastAccess")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_access");
 
                     b.Property<Guid>("TextChannelId")
                         .HasColumnType("uuid")
@@ -474,10 +453,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_webhook");
 
-                    b.Property<DateTime>("LastAccess")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_access");
-
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
@@ -515,10 +490,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.Property<Guid>("GuildId")
                         .HasColumnType("uuid")
                         .HasColumnName("guild_id");
-
-                    b.Property<DateTime>("LastAccess")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_access");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -584,10 +555,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.Property<bool>("IsSuppressed")
                         .HasColumnType("boolean")
                         .HasColumnName("is_suppressed");
-
-                    b.Property<DateTime>("LastAccess")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_access");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -733,11 +700,16 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordGuild", "Guild")
                         .WithMany("TextChannels")
                         .HasForeignKey("GuildId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
                         .HasConstraintName("fk_discord_text_channels_discord_guilds_guild_id");
 
+                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordTextChannel", "ParentTextChannel")
+                        .WithMany()
+                        .HasForeignKey("ParentTextChannelId")
+                        .HasConstraintName("fk_discord_text_channels_discord_text_channels_parent_text_cha");
+
                     b.Navigation("Guild");
+
+                    b.Navigation("ParentTextChannel");
                 });
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordTypingStatus", b =>
