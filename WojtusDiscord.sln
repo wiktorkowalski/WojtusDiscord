@@ -3,7 +3,11 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WojtusDiscord.ActivityArchiveService", "src\WojtusDiscord.ActivityArchiveService\WojtusDiscord.ActivityArchiveService.csproj", "{04F2C4F1-9B4F-4AA7-B6FD-ADC8194D1C7C}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "WojtusDiscord.ActivityArchiveService", "src\WojtusDiscord.ActivityArchiveService\WojtusDiscord.ActivityArchiveService.csproj", "{04F2C4F1-9B4F-4AA7-B6FD-ADC8194D1C7C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WojtusDiscord.IdentityProviderService", "src\WojtusDiscord.IdentityProviderService\WojtusDiscord.IdentityProviderService.csproj", "{AB9A57AA-8C91-411B-8312-C6005561657E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WojtusDiscord.DashboardBlazorServer", "src\WojtusDiscord.DashboardBlazorServer\WojtusDiscord.DashboardBlazorServer.csproj", "{B63ACBF1-051E-40B0-A33E-6E6ADF946C61}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -15,6 +19,14 @@ Global
 		{04F2C4F1-9B4F-4AA7-B6FD-ADC8194D1C7C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{04F2C4F1-9B4F-4AA7-B6FD-ADC8194D1C7C}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{04F2C4F1-9B4F-4AA7-B6FD-ADC8194D1C7C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AB9A57AA-8C91-411B-8312-C6005561657E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AB9A57AA-8C91-411B-8312-C6005561657E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AB9A57AA-8C91-411B-8312-C6005561657E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AB9A57AA-8C91-411B-8312-C6005561657E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B63ACBF1-051E-40B0-A33E-6E6ADF946C61}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B63ACBF1-051E-40B0-A33E-6E6ADF946C61}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B63ACBF1-051E-40B0-A33E-6E6ADF946C61}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B63ACBF1-051E-40B0-A33E-6E6ADF946C61}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

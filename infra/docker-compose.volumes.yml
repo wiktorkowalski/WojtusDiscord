@@ -1,0 +1,7 @@
+# version: '3.9'
+name: 'WojtusInfra'
+
+volumes:
+  postgres:
+    driver: local
+    name: wojtus-postgres

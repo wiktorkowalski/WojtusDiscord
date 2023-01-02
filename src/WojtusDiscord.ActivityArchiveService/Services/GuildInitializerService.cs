@@ -7,6 +7,7 @@ namespace WojtusDiscord.ActivityArchiveService.Services
         private readonly ILogger<GuildInitializerService> _logger;
         private readonly DiscordUserService _discordUserService;
         private readonly DiscordGuildService _discordGuildService;
+        private readonly DiscordGuildMemberService _discordGuildMemberService;
         private readonly DiscordChannelService _discordChannelService;
         private readonly DiscordEmoteService _discordEmoteService;
         private readonly DiscordMessageService _discordMessageService;
@@ -16,6 +17,7 @@ namespace WojtusDiscord.ActivityArchiveService.Services
             ILogger<GuildInitializerService> logger,
             DiscordUserService discordUserService,
             DiscordGuildService discordGuildService,
+            DiscordGuildMemberService discordGuildMemberService,
             DiscordChannelService discordChannelService,
             DiscordEmoteService discordEmoteService,
             DiscordMessageService discordMessageService,
@@ -24,6 +26,7 @@ namespace WojtusDiscord.ActivityArchiveService.Services
             _logger = logger;
             _discordUserService = discordUserService;
             _discordGuildService = discordGuildService;
+            _discordGuildMemberService = discordGuildMemberService;
             _discordChannelService = discordChannelService;
             _discordEmoteService = discordEmoteService;
             _discordMessageService = discordMessageService;
@@ -73,6 +76,11 @@ namespace WojtusDiscord.ActivityArchiveService.Services
         public async Task<DiscordMessage> CreateMessage(DiscordMessage message)
         {
             return _discordMessageService.Create(message);
+        }
+
+        public async Task<DiscordGuildMember[]> CreateGuildMembers(DiscordGuild guild, DiscordUser[] users)
+        {
+            return _discordGuildMemberService.CreateMany(guild, users);
         }
     }
 }

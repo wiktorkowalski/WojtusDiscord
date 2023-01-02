@@ -52,6 +52,11 @@ namespace WojtusDiscord.ActivityArchiveService.Services
             return _context.DiscordUsers.FirstOrDefault(x => x.Id == id);
         }
 
+        public DiscordUser? GetByDiscordId(ulong discordId)
+        {
+            return _context.DiscordUsers.FirstOrDefault(x => x.DiscordId == discordId);
+        }
+
         public IEnumerable<DiscordUser> GetAll()
         {
             return _context.DiscordUsers;

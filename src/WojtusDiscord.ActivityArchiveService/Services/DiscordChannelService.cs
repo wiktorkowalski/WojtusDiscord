@@ -39,4 +39,19 @@ public class DiscordChannelService
         _context.SaveChanges();
         return channels;
     }
+
+    public DiscordTextChannel Create(DiscordTextChannel channel)
+    {
+        if (!_context.DiscordTextChannels.Any(x => x.DiscordId == channel.DiscordId))
+        {
+            _context.DiscordTextChannels.Add(channel);
+        }
+        _context.SaveChanges();
+        return channel;
+    }
+
+    public DiscordTextChannel? GetByDiscordId(ulong id)
+    {
+        return _context.DiscordTextChannels.FirstOrDefault(x => x.DiscordId == id);
+    }
 }

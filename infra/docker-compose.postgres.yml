@@ -1,0 +1,33 @@
+# version: '3.9'
+name: 'WojtusInfra'
+
+networks:
+  wojtus:
+    driver: bridge
+    # external: true
+
+volumes:
+  postgres:
+    driver: local
+    name: wojtus-postgres
+    # external: true
+
+services:
+  postgres:
+    container_name: wojtus-postgres
+    image: postgres:15.0-bullseye
+    env_file:
+      - '.env'
+    volumes:
+      - postgres:/data/postgres
+      - postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - wojtus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

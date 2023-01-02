@@ -12,7 +12,7 @@ using WojtusDiscord.ActivityArchiveService.Database;
 namespace WojtusDiscord.ActivityArchiveService.Migrations
 {
     [DbContext(typeof(ActivityArchiveContext))]
-    [Migration("20221127223308_CreateActivityArchiveDB")]
+    [Migration("20221210220308_CreateActivityArchiveDB")]
     partial class CreateActivityArchiveDB
     {
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

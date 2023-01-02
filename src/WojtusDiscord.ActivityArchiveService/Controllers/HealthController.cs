@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using System.Diagnostics;
 
 namespace WojtusDiscord.ActivityArchiveService.Controllers
 {
@@ -9,6 +10,7 @@ namespace WojtusDiscord.ActivityArchiveService.Controllers
         [HttpGet]
         public IActionResult GetHealth()
         {
+            using var activity = new ActivitySource(this.GetType().Name).StartActivity();
             return Ok(new { status = "ActivityArchiveService is running" });
         }
     }

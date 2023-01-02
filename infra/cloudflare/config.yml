@@ -1,0 +1,7 @@
+token: zLGlb5K8wQtqr2KvaCoInxEuEDZc4JzScAhaUQt8
+# tunnel: 5b1a89e4-4c2d-4f11-9492-5d5ab69930cd
+logfile: "/var/log/cloudflared.log"
+loglevel: info
+tunnel:
+  hostname: grafana.pc.vicio.ovh
+  url: http://grafana:3000

@@ -46,4 +46,15 @@ public class DiscordMessageService
 
         return messages;
     }
+
+    public DiscordMessage? GetByDiscordId(ulong id)
+    {
+        return _context.DiscordMessages.FirstOrDefault(x => x.DiscordId == id);
+    }
+
+    public void CreateContentEdit(DiscordMessageContentEdit contentEdit)
+    {
+        _context.DiscordMessageContentEdit.Add(contentEdit);
+        _context.SaveChanges();
+    }
 }

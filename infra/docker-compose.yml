@@ -1,0 +1,151 @@
+# version: '3.9'
+name: 'WojtusInfra'
+
+networks:
+  wojtus:
+    driver: bridge
+
+volumes:
+  postgres:
+    driver: local
+    name: wojtus-postgres
+    
+  grafana:
+    driver: local
+    name: wojtus-grafana
+    
+
+services:
+  postgres:
+    container_name: wojtus-postgres
+    image: postgres:15.0-bullseye
+    env_file:
+      - '.env'
+    volumes:
+      - postgres:/data/postgres
+      - postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - wojtus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-exporter:
+    container_name: wojtus-postgres-exporter
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.11.1
+    env_file:
+      - '.env'
+    environment:
+      # - DATA_SOURCE_NAME="postgresql://postgres:postgres@192.168.65.2:5432/postgres?sslmode=disable"
+      - DATA_SOURCE_URI=postgres?sslmode=disable
+      - DATA_SOURCE_USER=postgres
+      - DATA_SOURCE_PASS=postgres
+      # - DATA_SOURCE_DBNAME="postgres"
+      - PG_EXPORTER_AUTO_DISCOVER_DATABASES=true
+    ports:
+      - "9187:9187"
+    networks:
+      - wojtus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9187/metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    container_name: wojtus-prometheus
+    image: prom/prometheus:v2.40.3
+    env_file:
+      - '.env'
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - wojtus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  jaeger:
+    container_name: wojtus-jaeger
+    image: jaegertracing/all-in-one:1.39.0
+    ports:
+      - "6831:6831/udp"
+      - "16686:16686"
+    networks:
+      - wojtus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:16686"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  loki:
+    container_name: wojtus-loki
+    image: grafana/loki:2.7.0
+    ports:
+      - "3100:3100"
+    networks:
+      - wojtus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  promtail:
+    container_name: wojtus-promtail
+    image: grafana/promtail:2.7.0
+    ports:
+      - "9080:9080"
+    networks:
+      - wojtus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9080/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  
+  grafana:
+    container_name: wojtus-grafana
+    image: grafana/grafana:9.2.6
+    env_file:
+      - '.env'
+    volumes:
+      - grafana:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - wojtus
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # cloudflared:
+  #   container_name: wojtus-cloudflared
+  #   image: cloudflare/cloudflared:2021.11.1
+  #   volumes:
+  #     - ./cloudflared/config.yml:/etc/cloudflared/config.yml
+  #   # command: ["--config", "/config.yml"]
+  #   # command: "cloudflared tunnel --config /config.yml"
+  #   ports:
+  #     - "5053:5053"
+  #   networks:
+  #     - wojtus
+  #   restart: "no"

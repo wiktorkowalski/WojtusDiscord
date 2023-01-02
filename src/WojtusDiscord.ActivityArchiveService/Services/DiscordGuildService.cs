@@ -29,5 +29,10 @@ namespace WojtusDiscord.ActivityArchiveService.Services
             _context.SaveChanges();
             return model;
         }
+
+        public DiscordGuild GetByDiscordId(ulong id)
+        {
+            return _context.DiscordGuilds.First(x => x.DiscordId == id);
+        }
     }
 }

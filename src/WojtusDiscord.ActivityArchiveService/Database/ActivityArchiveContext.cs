@@ -1,17 +1,27 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using WojtusDiscord.ActivityArchiveService.Config;
 using WojtusDiscord.ActivityArchiveService.Models;
 
 namespace WojtusDiscord.ActivityArchiveService.Database
 {
     public class ActivityArchiveContext : DbContext
     {
-        public ActivityArchiveContext(DbContextOptions<ActivityArchiveContext> options) : base(options)
+        private readonly DatabaseConfig config;
+        private readonly ILoggerFactory loggerFactory;
+
+        public ActivityArchiveContext(DbContextOptions<ActivityArchiveContext> options, IOptions<DatabaseConfig> config, ILoggerFactory loggerFactory) : base(options)
         {
+            this.config = config.Value;
+            this.loggerFactory = loggerFactory;
         }
 
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
             optionsBuilder
+                .UseLoggerFactory(loggerFactory)
+                .UseNpgsql(config.ToConnectionString())
+                .UseSnakeCaseNamingConvention()
                 .EnableSensitiveDataLogging()
                 .EnableDetailedErrors();
         }

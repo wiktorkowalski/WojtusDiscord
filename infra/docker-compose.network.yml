@@ -1,0 +1,7 @@
+# version: '3.9'
+name: 'WojtusInfra'
+
+networks:
+  wojtus:
+    name: 'wojtus-network'
+    driver: bridge
