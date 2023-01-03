@@ -399,3 +399,4 @@ Desktop.ini
 .DS_Store
 
 **/.env
+infra/data/*
