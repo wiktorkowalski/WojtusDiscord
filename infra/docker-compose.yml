@@ -24,6 +24,8 @@ services:
     volumes:
       - postgres:/data/postgres
       - postgres:/var/lib/postgresql/data
+      - ./data/postgres:/data/postgres
+      - ./data/postgres:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     networks:
@@ -132,6 +134,7 @@ services:
       - '.env'
     volumes:
       - grafana:/var/lib/grafana
+      - ./data/grafana:/var/lib/grafana
     ports:
       - "3000:3000"
     networks:
