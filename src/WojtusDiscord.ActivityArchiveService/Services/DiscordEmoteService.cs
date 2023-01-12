@@ -38,5 +38,10 @@ namespace WojtusDiscord.ActivityArchiveService.Services
             _context.SaveChanges();
             return emotes;
         }
+
+        public DiscordEmote? GetByDiscordId(ulong discordId)
+        {
+            return _context.DiscordEmotes.FirstOrDefault(e => e.DiscordId == discordId);
+        }
     }
 }

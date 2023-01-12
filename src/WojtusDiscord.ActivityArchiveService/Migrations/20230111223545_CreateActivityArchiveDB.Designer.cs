@@ -12,7 +12,7 @@ using WojtusDiscord.ActivityArchiveService.Database;
 namespace WojtusDiscord.ActivityArchiveService.Migrations
 {
     [DbContext(typeof(ActivityArchiveContext))]
-    [Migration("20221210220308_CreateActivityArchiveDB")]
+    [Migration("20230111223545_CreateActivityArchiveDB")]
     partial class CreateActivityArchiveDB
     {
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -145,6 +145,10 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("numeric(20,0)")
                         .HasColumnName("discord_id");
 
+                    b.Property<DateTime>("DiscordTimestamp")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("discord_timestamp");
+
                     b.Property<bool>("HasAttatchment")
                         .HasColumnType("boolean")
                         .HasColumnName("has_attatchment");
@@ -231,10 +235,49 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<Guid>("DetailsId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("details_id");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_discord_presence_statuses");
+
+                    b.HasIndex("DetailsId")
+                        .HasDatabaseName("ix_discord_presence_statuses_details_id");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("ix_discord_presence_statuses_user_id");
+
+                    b.ToTable("discord_presence_statuses", (string)null);
+                });
+
+            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordPresenceStatusDetails", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
                     b.Property<string>("ActivityType")
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("activity_type");
+
+                    b.Property<Guid?>("BeforeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("before_id");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -269,17 +312,13 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("user_id");
-
                     b.HasKey("Id")
-                        .HasName("pk_discord_presence_statuses");
+                        .HasName("pk_discord_presence_status_entries");
 
-                    b.HasIndex("UserId")
-                        .HasDatabaseName("ix_discord_presence_statuses_user_id");
+                    b.HasIndex("BeforeId")
+                        .HasDatabaseName("ix_discord_presence_status_entries_before_id");
 
-                    b.ToTable("discord_presence_statuses", (string)null);
+                    b.ToTable("discord_presence_status_entries", (string)null);
                 });
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordReaction", b =>
@@ -530,6 +569,49 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
 
+                    b.Property<Guid>("DetailsId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("details_id");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
+
+                    b.Property<Guid>("VoiceChannelId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("voice_channel_id");
+
+                    b.HasKey("Id")
+                        .HasName("pk_discord_voice_statuses");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("ix_discord_voice_statuses_user_id");
+
+                    b.HasIndex("VoiceChannelId")
+                        .HasDatabaseName("ix_discord_voice_statuses_voice_channel_id");
+
+                    b.ToTable("discord_voice_statuses", (string)null);
+                });
+
+            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceStatusDetails", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("BeforeId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("before_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
                     b.Property<bool>("IsSelfDeafened")
                         .HasColumnType("boolean")
                         .HasColumnName("is_self_deafened");
@@ -558,28 +640,25 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("is_suppressed");
 
+                    b.Property<Guid>("StatusId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("status_id");
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("user_id");
-
-                    b.Property<Guid>("VoiceChannelId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("voice_channel_id");
-
                     b.HasKey("Id")
-                        .HasName("pk_discord_voice_statuses");
+                        .HasName("pk_discord_voice_status_entries");
 
-                    b.HasIndex("UserId")
-                        .HasDatabaseName("ix_discord_voice_statuses_user_id");
+                    b.HasIndex("BeforeId")
+                        .HasDatabaseName("ix_discord_voice_status_entries_before_id");
 
-                    b.HasIndex("VoiceChannelId")
-                        .HasDatabaseName("ix_discord_voice_statuses_voice_channel_id");
+                    b.HasIndex("StatusId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_discord_voice_status_entries_status_id");
 
-                    b.ToTable("discord_voice_statuses", (string)null);
+                    b.ToTable("discord_voice_status_entries", (string)null);
                 });
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordGuild", b =>
@@ -657,6 +736,13 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordPresenceStatus", b =>
                 {
+                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordPresenceStatusDetails", "Details")
+                        .WithMany()
+                        .HasForeignKey("DetailsId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_discord_presence_statuses_discord_presence_status_entries_d");
+
                     b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordUser", "User")
                         .WithMany("PresenceStatuses")
                         .HasForeignKey("UserId")
@@ -664,7 +750,19 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_discord_presence_statuses_discord_users_user_id");
 
+                    b.Navigation("Details");
+
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordPresenceStatusDetails", b =>
+                {
+                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordPresenceStatusDetails", "Before")
+                        .WithMany()
+                        .HasForeignKey("BeforeId")
+                        .HasConstraintName("fk_discord_presence_status_entries_discord_presence_status_ent");
+
+                    b.Navigation("Before");
                 });
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordReaction", b =>
@@ -768,6 +866,25 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.Navigation("VoiceChannel");
                 });
 
+            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceStatusDetails", b =>
+                {
+                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceStatusDetails", "Before")
+                        .WithMany()
+                        .HasForeignKey("BeforeId")
+                        .HasConstraintName("fk_discord_voice_status_entries_discord_voice_status_entries_b");
+
+                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceStatus", "Status")
+                        .WithOne("Details")
+                        .HasForeignKey("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceStatusDetails", "StatusId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_discord_voice_status_entries_discord_voice_statuses_status_i");
+
+                    b.Navigation("Before");
+
+                    b.Navigation("Status");
+                });
+
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordEmote", b =>
                 {
                     b.Navigation("Reactions");
@@ -812,6 +929,12 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceChannel", b =>
                 {
                     b.Navigation("VoiceStatuses");
+                });
+
+            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceStatus", b =>
+                {
+                    b.Navigation("Details")
+                        .IsRequired();
                 });
 #pragma warning restore 612, 618
         }

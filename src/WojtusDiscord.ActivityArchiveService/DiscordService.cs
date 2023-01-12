@@ -47,6 +47,10 @@ namespace WojtusDiscord.ActivityArchiveService
             _discordClient.PresenceUpdated += PresenceUpdated;
 
             _discordClient.GuildCreated += JoinedGuild;
+            //_discordClient.GuildMemberAdded += GuildMemberAdded;
+            //_discordClient.GuildMemberUpdated += GuildMemberUpdated;
+            // and so on
+
             _logger.LogInformation($"Done initializing {nameof(DiscordService)}");
         }
 
@@ -126,7 +130,7 @@ namespace WojtusDiscord.ActivityArchiveService
                             foreach (var userReacted in usersReacted)
                             {
                                 var user = await guildInitService.CreateUser(userReacted);
-                                reactionsToSave.Add(DiscordMapper.MapReaction(reaction, message, user, emote));
+                                reactionsToSave.Add(DiscordMapper.MapReaction(message, user, emote));
                             }
                         }
                         message.Reactions = reactionsToSave;
@@ -146,7 +150,7 @@ namespace WojtusDiscord.ActivityArchiveService
             using var scope = _scopeFactory.CreateScope();
 
             var messageService = scope.ServiceProvider.GetRequiredService<DiscordMessageService>();
-            var channelService = scope.ServiceProvider.GetRequiredService<DiscordChannelService>();
+            var channelService = scope.ServiceProvider.GetRequiredService<DiscordTextChannelService>();
             var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
             var guildService = scope.ServiceProvider.GetRequiredService<DiscordGuildService>();
 
@@ -182,7 +186,7 @@ namespace WojtusDiscord.ActivityArchiveService
             using var scope = _scopeFactory.CreateScope();
 
             var messageService = scope.ServiceProvider.GetRequiredService<DiscordMessageService>();
-            var channelService = scope.ServiceProvider.GetRequiredService<DiscordChannelService>();
+            var channelService = scope.ServiceProvider.GetRequiredService<DiscordTextChannelService>();
             var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
             var guildService = scope.ServiceProvider.GetRequiredService<DiscordGuildService>();
 
@@ -233,188 +237,83 @@ namespace WojtusDiscord.ActivityArchiveService
             });
         }
 
-        //private async Task MessageBuldDeleted(DiscordClient sender, MessageBulkDeleteEventArgs messageBulkDeleteEventArgs)
-        //{
-        //    _logger.LogInformation("[Message][BulkDelete]");
-        //    var messages = await _dbContext.DiscordMessages.Where(message => messageBulkDeleteEventArgs.Messages.Any(m => m.Id == message.DiscordId)).ToListAsync();
-        //    foreach (var message in messages)
-        //    {
-        //        message.IsRemoved = true;
-        //        await _dbContext.DiscordMessageContentEdit.AddAsync(new DiscordMessageContentEdit
-        //        {
-        //            Message = message,
-        //            IsRemoved = true,
-        //            Content = null,
-        //            ContentBefore = message.Content
-        //        });
-        //    }
-        //    await _dbContext.SaveChangesAsync();
-        //}
-
         private async Task ReactionAdded(DiscordClient sender, MessageReactionAddEventArgs messageReactionAddEventArgs)
         {
             _logger.LogInformation($"[Reaction][Add][{messageReactionAddEventArgs.Message.Id}][{messageReactionAddEventArgs.Emoji.Name}]");
-            var message = await _dbContext.DiscordMessages.SingleOrDefaultAsync(message => message.DiscordId == messageReactionAddEventArgs.Message.Id) ?? new DiscordMessage
-            {
-                DiscordId = messageReactionAddEventArgs.Message.Id,
-                Author = _dbContext.DiscordUsers.First(user => user.DiscordId == messageReactionAddEventArgs.Message.Author.Id),
-                Content = messageReactionAddEventArgs.Message.Content,
-                HasAttatchment = messageReactionAddEventArgs.Message.Attachments.Any(),
-            };
-            //TODO: move creating to separate service
-            var user = await _dbContext.DiscordUsers.SingleOrDefaultAsync(user => user.DiscordId == messageReactionAddEventArgs.User.Id) ?? new DiscordUser
-            {
-                DiscordId = messageReactionAddEventArgs.User.Id,
-                Username = messageReactionAddEventArgs.User.Username,
-                Discriminator = messageReactionAddEventArgs.User.Discriminator,
-                AvatarUrl = messageReactionAddEventArgs.User.AvatarUrl,
-                IsBot = messageReactionAddEventArgs.User.IsBot,
-            };
-            var emote = await _dbContext.DiscordEmotes.SingleOrDefaultAsync(emote => emote.DiscordId == messageReactionAddEventArgs.Emoji.Id) ?? new DiscordEmote
-            {
-                DiscordId = messageReactionAddEventArgs.Emoji.Id,
-                Name = messageReactionAddEventArgs.Emoji.Name,
-                IsAnimated = messageReactionAddEventArgs.Emoji.IsAnimated,
-                Url = messageReactionAddEventArgs.Emoji.Url,
-            };
+            using var scope = _scopeFactory.CreateScope();
+            var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
+            var channelService = scope.ServiceProvider.GetRequiredService<DiscordTextChannelService>();
+            var messageService = scope.ServiceProvider.GetRequiredService<DiscordMessageService>();
+            var reactionService = scope.ServiceProvider.GetRequiredService<DiscordReactionService>();
+            var emoteService = scope.ServiceProvider.GetRequiredService<DiscordEmoteService>();
 
-            await _dbContext.DiscordReactions.AddAsync(new DiscordReaction
+            var message = messageService.GetByDiscordId(messageReactionAddEventArgs.Message.Id);
+            if (message is null)
             {
-                Message = message,
-                User = user,
-                Emote = emote,
-                IsRemoved = false,
-            });
+                var author = userService.GetByDiscordId(messageReactionAddEventArgs.Message.Author.Id);
+                var channel = channelService.GetByDiscordId(messageReactionAddEventArgs.Message.ChannelId);
+                message = messageService.Create(DiscordMapper.MapMessage(messageReactionAddEventArgs.Message, author, channel));
+            }
+            var emote = emoteService.GetByDiscordId(messageReactionAddEventArgs.Emoji.Id);
+            if(emote is null)
+            {
+                emote = emoteService.Create(DiscordMapper.MapEmote(messageReactionAddEventArgs.Emoji));
+            }
+            var user = userService.GetByDiscordId(messageReactionAddEventArgs.User.Id);
+            if(user is null)
+            {
+                user = userService.Create(DiscordMapper.MapUser(messageReactionAddEventArgs.User));
+            }
 
-            await _dbContext.SaveChangesAsync();
+            reactionService.Create(DiscordMapper.MapReaction(message, user, emote));
         }
 
         private async Task ReactionRemoved(DiscordClient sender, MessageReactionRemoveEventArgs messageReactionRemoveEventArgs)
         {
-            _logger.LogInformation($"[Reaction][Delete][{messageReactionRemoveEventArgs.Message.Id}][{messageReactionRemoveEventArgs.Emoji.Name}]");
-            var message = await _dbContext.DiscordMessages.SingleOrDefaultAsync(message => message.DiscordId == messageReactionRemoveEventArgs.Message.Id) ?? new DiscordMessage
-            {
-                DiscordId = messageReactionRemoveEventArgs.Message.Id,
-                Author = _dbContext.DiscordUsers.FirstOrDefault(user => user.DiscordId == messageReactionRemoveEventArgs.Message.Author.Id),
-                Content = messageReactionRemoveEventArgs.Message.Content,
-                HasAttatchment = messageReactionRemoveEventArgs.Message.Attachments.Any(),
-            };
-            var user = await _dbContext.DiscordUsers.SingleOrDefaultAsync(user => user.DiscordId == messageReactionRemoveEventArgs.User.Id) ?? new DiscordUser
-            {
-                DiscordId = messageReactionRemoveEventArgs.User.Id,
-                Username = messageReactionRemoveEventArgs.User.Username,
-                Discriminator = messageReactionRemoveEventArgs.User.Discriminator,
-                AvatarUrl = messageReactionRemoveEventArgs.User.AvatarUrl,
-                IsBot = messageReactionRemoveEventArgs.User.IsBot,
-            };
-            var emote = await _dbContext.DiscordEmotes.SingleOrDefaultAsync(emote => emote.DiscordId == messageReactionRemoveEventArgs.Emoji.Id) ?? new DiscordEmote
-            {
-                DiscordId = messageReactionRemoveEventArgs.Emoji.Id,
-                Name = messageReactionRemoveEventArgs.Emoji.Name,
-                IsAnimated = messageReactionRemoveEventArgs.Emoji.IsAnimated,
-                Url = messageReactionRemoveEventArgs.Emoji.Url,
-            };
+            _logger.LogInformation($"[Reaction][Remove][{messageReactionRemoveEventArgs.Message.Id}][{messageReactionRemoveEventArgs.Emoji.Name}]");
+            using var scope = _scopeFactory.CreateScope();
+            var reactionService = scope.ServiceProvider.GetRequiredService<DiscordReactionService>();
 
-            try
-            {
-                var reaction = await _dbContext.DiscordReactions.SingleOrDefaultAsync(r => r.User == user && r.Message == message && r.Emote == emote && !r.IsRemoved);
-                reaction.IsRemoved = true;
-                _dbContext.DiscordReactions.Update(reaction);
-            }
-            catch (InvalidOperationException)
-            {
-                await _dbContext.DiscordReactions.AddAsync(new DiscordReaction
-                {
-                    Message = message,
-                    User = user,
-                    Emote = emote,
-                    IsRemoved = true,
-                });
-            }
-            await _dbContext.SaveChangesAsync();
+            var reaction = messageReactionRemoveEventArgs;
+            reactionService.SetAsRemoved(reaction.User.Id, reaction.Message.Id, reaction.Emoji.Id);
         }
-
-        //private async Task ReactionsRemovedForEmote(DiscordClient sender, MessageReactionRemoveEmojiEventArgs messageReactionRemoveEmojiEventArgs)
-        //{
-        //    _logger.LogInformation($"[Reaction][Delete][{messageReactionRemoveEmojiEventArgs.Message.Id}][{messageReactionRemoveEmojiEventArgs.Emoji.Name}]");
-        //    var message = await _dbContext.DiscordMessages.SingleOrDefaultAsync(message => message.DiscordId == messageReactionRemoveEmojiEventArgs.Message.Id);
-        //    var emote = await _dbContext.DiscordEmotes.SingleOrDefaultAsync(emote => emote.DiscordId == messageReactionRemoveEmojiEventArgs.Emoji.Id);
-        //    var reactions = await _dbContext.DiscordReactions.Where(reaction => reaction.Message == message && reaction.Emote == emote).ToListAsync();
-        //    foreach (var reaction in reactions)
-        //    {
-        //        reaction.IsRemoved = true;
-        //    }
-        //    _dbContext.DiscordReactions.UpdateRange(reactions);
-        //    await _dbContext.SaveChangesAsync();
-        //}
-
-        //private async Task ReactionsCleared(DiscordClient sender, MessageReactionsClearEventArgs messageReactionsClearEventArgs)
-        //{
-        //    _logger.LogInformation($"[Reaction][DeleteAll][{messageReactionsClearEventArgs.Message.Id}]");
-        //    var message = await _dbContext.DiscordMessages.SingleOrDefaultAsync(message => message.DiscordId == messageReactionsClearEventArgs.Message.Id);
-        //    var reactions = await _dbContext.DiscordReactions.Where(reaction => reaction.Message == message).ToListAsync();
-        //    foreach (var reaction in reactions)
-        //    {
-        //        reaction.IsRemoved = true;
-        //    }
-        //    _dbContext.DiscordReactions.UpdateRange(reactions);
-        //    await _dbContext.SaveChangesAsync();
-        //}
 
         private async Task TypingStarted(DiscordClient sender, TypingStartEventArgs typingStartEventArgs)
         {
             _logger.LogInformation($"[Typing][{typingStartEventArgs.Channel.Id}][{typingStartEventArgs.User.Username}]");
-            var user = await _dbContext.DiscordUsers.SingleOrDefaultAsync(user => user.DiscordId == typingStartEventArgs.User.Id);
-            var channel = await _dbContext.DiscordTextChannels.SingleOrDefaultAsync(channel => channel.DiscordId == typingStartEventArgs.Channel.Id);
-            await _dbContext.DiscordTypingStatuses.AddAsync(new DiscordTypingStatus
+            using var scope = _scopeFactory.CreateScope();
+            var channelService = scope.ServiceProvider.GetRequiredService<DiscordTextChannelService>();
+            var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
+
+            var channel = channelService.GetByDiscordId(typingStartEventArgs.Channel.Id);
+            var user = userService.GetByDiscordId(typingStartEventArgs.User.Id);
+
+            channelService.CreateTypingStatus(new DiscordTypingStatus
             {
-                User = user,
                 TextChannel = channel,
+                User = user,
             });
-            await _dbContext.SaveChangesAsync();
         }
 
         private async Task VoiceStateUpdated(DiscordClient sender, VoiceStateUpdateEventArgs voiceStateUpdateEventArgs)
         {
-            _logger.LogInformation("Voice state updated");
-            var voiceState = voiceStateUpdateEventArgs.After;
-            var user = await _dbContext.DiscordUsers.SingleOrDefaultAsync(user => user.DiscordId == voiceStateUpdateEventArgs.User.Id);
-            var channel = await _dbContext.DiscordVoiceChannels.SingleOrDefaultAsync(channel => channel.DiscordId == voiceStateUpdateEventArgs.Channel.Id);
-            await _dbContext.DiscordVoiceStatuses.AddAsync(new DiscordVoiceStatus
-            {
-                User = user,
-                VoiceChannel = channel,
-                IsSelfMuted = voiceState.IsSelfMuted,
-                IsSelfDeafened = voiceState.IsSelfDeafened,
-                IsSelfStream = voiceState.IsSelfStream,
-                IsSelfVideo = voiceState.IsSelfVideo,
-                IsServerMuted = voiceState.IsServerMuted,
-                IsServerDeafened = voiceState.IsServerDeafened,
-                IsSuppressed = voiceState.IsSuppressed,
-            });
-            await _dbContext.SaveChangesAsync();
+            _logger.LogInformation($"[Voice][{voiceStateUpdateEventArgs.Channel.Name}][{voiceStateUpdateEventArgs.User.Username}]");
+            using var scope = _scopeFactory.CreateScope();
+            var channelService = scope.ServiceProvider.GetRequiredService<DiscordVoiceChannelService>();
+            var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
+
+            var channel = channelService.GetByDiscordId(voiceStateUpdateEventArgs.Channel.Id);
+            var user = userService.GetByDiscordId(voiceStateUpdateEventArgs.User.Id);
+
+            channelService.CreateVoiceState(DiscordMapper.MapVoiceStatus(voiceStateUpdateEventArgs.Before, voiceStateUpdateEventArgs.After, channel, user));
         }
 
         private async Task PresenceUpdated(DiscordClient sender, PresenceUpdateEventArgs presenceUpdateEventArgs)
         {
             _logger.LogInformation($"[Presence][{presenceUpdateEventArgs.User.Username}]");
-            var user = await _dbContext.DiscordUsers.SingleOrDefaultAsync(u =>
-                u.DiscordId == presenceUpdateEventArgs.User.Id);
-            var presence = presenceUpdateEventArgs.PresenceAfter;
-
-            await _dbContext.DiscordPresenceStatuses.AddAsync(new DiscordPresenceStatus
-            {
-                User = user,
-                Name = presence.Activity.Name,
-                Details = presence.Activity.RichPresence.Details,
-                Status = (DiscordStatus)presence.Status,
-                ActivityType = (DiscordActivityType)presence.Activity.ActivityType,
-                State = presence.Activity.RichPresence.State,
-                SmallImageText = presence.Activity.RichPresence.SmallImageText,
-                LargeImageText = presence.Activity.RichPresence.LargeImageText,
-            });
-
-            await _dbContext.SaveChangesAsync();
+            using var scope = _scopeFactory.CreateScope();
+            var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
+            var user = userService.GetByDiscordId(presenceUpdateEventArgs.User.Id);
         }
     }
 }

@@ -397,3 +397,6 @@ _UpgradeReport_Files/
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+infra/data/*
+/.contextkeeper/.git-branches/init.ck

@@ -3,12 +3,12 @@ using WojtusDiscord.ActivityArchiveService.Models;
 
 namespace WojtusDiscord.ActivityArchiveService.Services;
 
-public class DiscordChannelService
+public class DiscordTextChannelService
 {
-    private readonly ILogger<DiscordChannelService> _logger;
+    private readonly ILogger<DiscordTextChannelService> _logger;
     private readonly ActivityArchiveContext _context;
 
-    public DiscordChannelService(ILogger<DiscordChannelService> logger, ActivityArchiveContext context)
+    public DiscordTextChannelService(ILogger<DiscordTextChannelService> logger, ActivityArchiveContext context)
     {
         _logger = logger;
         _context = context;
@@ -53,5 +53,12 @@ public class DiscordChannelService
     public DiscordTextChannel? GetByDiscordId(ulong id)
     {
         return _context.DiscordTextChannels.FirstOrDefault(x => x.DiscordId == id);
+    }
+
+    public DiscordTypingStatus CreateTypingStatus(DiscordTypingStatus status)
+    {
+        _context.DiscordTypingStatuses.Add(status);
+        _context.SaveChanges();
+        return status;
     }
 }

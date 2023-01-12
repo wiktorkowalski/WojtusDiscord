@@ -6,6 +6,7 @@ public class DiscordMessage : BaseDiscordModel
     public bool HasAttatchment { get; set; }
     public bool IsEdited { get; set; }
     public bool IsRemoved { get; set; }
+    public DateTime DiscordTimestamp { get; set; }
 
     public Guid? ReplyToMessageId { get; set; }
     public DiscordMessage? ReplyToMessage { get; set; }

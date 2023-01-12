@@ -30,13 +30,34 @@ namespace WojtusDiscord.ActivityArchiveService.Database
         {
             // Composite Keys can only be created via FluentAPI
             modelBuilder.Entity<DiscordGuildMember>()
-                .HasKey(m => new {m.DiscordGuildId, m.DiscordUserId});
+                .HasKey(m => new { m.DiscordGuildId, m.DiscordUserId });
+
+            //One-to-one relations
+            //modelBuilder.Entity<DiscordVoiceStatusDetails>()
+            modelBuilder.Entity<DiscordVoiceStatus>()
+                .HasOne(s => s.Details)
+                .WithOne(e => e.Status)
+                .HasForeignKey<DiscordVoiceStatusDetails>(e => e.StatusId);
+            //modelBuilder.Entity<DiscordVoiceStatus>()
+            //    .HasOne(s => s.VoiceStatusAfter)
+            //    .WithOne(e => e.VoiceStatusAfter)
+            //    .HasForeignKey<DiscordVoiceStatusDetails>(e => e.VoiceStatusAfterId);
+
+            //modelBuilder.Entity<DiscordPresenceStatus>()
+            //    .HasOne(s => s.PresenceStatusBefore)
+            //    .WithOne(e => e.PresenceStatusBefore)
+            //    .HasForeignKey<DiscordPresenceStatusDetails>(e => e.PresenceStatusBeforeId);
+            //modelBuilder.Entity<DiscordPresenceStatus>()
+            //    .HasOne(s => s.PresenceStatusAfter)
+            //    .WithOne(e => e.PresenceStatusAfter)
+            //    .HasForeignKey<DiscordPresenceStatusDetails>(e => e.PresenceStatusAfterId);
 
             //enum conversions
-            modelBuilder.Entity<DiscordPresenceStatus>()
+            modelBuilder.Entity<DiscordPresenceStatusDetails>()
                 .Property(p => p.Status)
                 .HasConversion<string>();
-            modelBuilder.Entity<DiscordPresenceStatus>()
+
+            modelBuilder.Entity<DiscordPresenceStatusDetails>()
                 .Property(p => p.ActivityType)
                 .HasConversion<string>();
         }
@@ -53,7 +74,7 @@ namespace WojtusDiscord.ActivityArchiveService.Database
                 }
                 item.Entity.UpdatedAt = DateTime.UtcNow;
             }
-            
+
             return base.SaveChanges();
         }
 
@@ -70,7 +91,9 @@ namespace WojtusDiscord.ActivityArchiveService.Database
         public DbSet<DiscordTypingStatus> DiscordTypingStatuses { get; set; }
         public DbSet<DiscordVoiceChannel> DiscordVoiceChannels { get; set; }
         public DbSet<DiscordVoiceStatus> DiscordVoiceStatuses { get; set; }
+        public DbSet<DiscordVoiceStatusDetails> DiscordVoiceStatusEntries { get; set; }
         public DbSet<DiscordPresenceStatus> DiscordPresenceStatuses { get; set; }
+        public DbSet<DiscordPresenceStatusDetails> DiscordPresenceStatusEntries { get; set; }
 
         #endregion
     }

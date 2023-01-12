@@ -108,10 +108,11 @@ public static class DiscordMapper
             Content = message.Content,
             Author = author,
             TextChannel = channel,
+            DiscordTimestamp = message.Timestamp.UtcDateTime
         };
     }
     
-    public static DiscordReaction MapReaction(DSharpPlus.Entities.DiscordReaction reaction, DiscordMessage message, DiscordUser user, DiscordEmote emote)
+    public static DiscordReaction MapReaction(DiscordMessage message, DiscordUser user, DiscordEmote emote)
     {
         return new DiscordReaction
         {
@@ -128,6 +129,55 @@ public static class DiscordMapper
             DiscordId = emote.Id,
             Name = emote.Name,
             IsAnimated = emote.IsAnimated,
+        };
+    }
+
+    public static DiscordVoiceStatus MapVoiceStatus(DSharpPlus.Entities.DiscordVoiceState before, DSharpPlus.Entities.DiscordVoiceState after, DiscordVoiceChannel channel, DiscordUser user)
+    {
+        return new DiscordVoiceStatus
+        {
+            User = user,
+            VoiceChannel = channel,
+            Details = MapVoiceStatusEntry(after, before),
+        };
+    }
+
+    public static DiscordVoiceStatusDetails MapVoiceStatusEntry(DSharpPlus.Entities.DiscordVoiceState voiceState, DSharpPlus.Entities.DiscordVoiceState before = null)
+    {
+        return new DiscordVoiceStatusDetails
+        {
+            IsSelfMuted = voiceState.IsSelfMuted,
+            IsSelfDeafened = voiceState.IsSelfDeafened,
+            IsSelfStream = voiceState.IsSelfStream,
+            IsSelfVideo = voiceState.IsSelfVideo,
+            IsServerMuted = voiceState.IsServerMuted,
+            IsServerDeafened = voiceState.IsServerDeafened,
+            IsSuppressed = voiceState.IsSuppressed,
+            Before = before is null ? null : MapVoiceStatusEntry(before),
+        };
+    }
+
+    public static DiscordPresenceStatus MapPresenceStatus(DSharpPlus.Entities.DiscordPresence before, DSharpPlus.Entities.DiscordPresence after, DiscordUser user)
+    {
+        return new DiscordPresenceStatus
+        {
+            User = user,
+            Details = MapPresenceStatusEntry(after, before),
+        };
+    }
+
+    public static DiscordPresenceStatusDetails MapPresenceStatusEntry(DSharpPlus.Entities.DiscordPresence presence, DSharpPlus.Entities.DiscordPresence before = null)
+    {
+        return new DiscordPresenceStatusDetails
+        {
+            Name = presence.Activity.Name,
+            Details = presence.Activity.RichPresence.Details,
+            Status = (DiscordStatus)presence.Status,
+            ActivityType = (DiscordActivityType)presence.Activity.ActivityType,
+            State = presence.Activity.RichPresence.State,
+            SmallImageText = presence.Activity.RichPresence.SmallImageText,
+            LargeImageText = presence.Activity.RichPresence.LargeImageText,
+            Before = before is null ? null : MapPresenceStatusEntry(before),
         };
     }
 }

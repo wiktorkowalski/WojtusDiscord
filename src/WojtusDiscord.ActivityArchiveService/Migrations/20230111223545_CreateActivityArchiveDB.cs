@@ -27,6 +27,32 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "discord_presence_status_entries",
+                columns: table => new
+                {
+                    id = table.Column<Guid>(type: "uuid", nullable: false),
+                    name = table.Column<string>(type: "text", nullable: true),
+                    details = table.Column<string>(type: "text", nullable: true),
+                    state = table.Column<string>(type: "text", nullable: true),
+                    large_image_text = table.Column<string>(type: "text", nullable: true),
+                    small_image_text = table.Column<string>(type: "text", nullable: true),
+                    status = table.Column<string>(type: "text", nullable: false),
+                    activity_type = table.Column<string>(type: "text", nullable: false),
+                    before_id = table.Column<Guid>(type: "uuid", nullable: true),
+                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("pk_discord_presence_status_entries", x => x.id);
+                    table.ForeignKey(
+                        name: "fk_discord_presence_status_entries_discord_presence_status_ent",
+                        column: x => x.before_id,
+                        principalTable: "discord_presence_status_entries",
+                        principalColumn: "id");
+                });
+
+            migrationBuilder.CreateTable(
                 name: "discord_users",
                 columns: table => new
                 {
@@ -73,13 +99,7 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
-                    name = table.Column<string>(type: "text", nullable: true),
-                    details = table.Column<string>(type: "text", nullable: true),
-                    state = table.Column<string>(type: "text", nullable: true),
-                    large_image_text = table.Column<string>(type: "text", nullable: true),
-                    small_image_text = table.Column<string>(type: "text", nullable: true),
-                    status = table.Column<string>(type: "text", nullable: false),
-                    activity_type = table.Column<string>(type: "text", nullable: false),
+                    details_id = table.Column<Guid>(type: "uuid", nullable: false),
                     user_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
@@ -87,6 +107,12 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("pk_discord_presence_statuses", x => x.id);
+                    table.ForeignKey(
+                        name: "fk_discord_presence_statuses_discord_presence_status_entries_d",
+                        column: x => x.details_id,
+                        principalTable: "discord_presence_status_entries",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
                         name: "fk_discord_presence_statuses_discord_users_user_id",
                         column: x => x.user_id,
@@ -183,6 +209,7 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     has_attatchment = table.Column<bool>(type: "boolean", nullable: false),
                     is_edited = table.Column<bool>(type: "boolean", nullable: false),
                     is_removed = table.Column<bool>(type: "boolean", nullable: false),
+                    discord_timestamp = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     reply_to_message_id = table.Column<Guid>(type: "uuid", nullable: true),
                     text_channel_id = table.Column<Guid>(type: "uuid", nullable: false),
                     author_id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -245,13 +272,7 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
-                    is_self_muted = table.Column<bool>(type: "boolean", nullable: false),
-                    is_self_deafened = table.Column<bool>(type: "boolean", nullable: false),
-                    is_self_stream = table.Column<bool>(type: "boolean", nullable: false),
-                    is_self_video = table.Column<bool>(type: "boolean", nullable: false),
-                    is_server_muted = table.Column<bool>(type: "boolean", nullable: false),
-                    is_server_deafened = table.Column<bool>(type: "boolean", nullable: false),
-                    is_suppressed = table.Column<bool>(type: "boolean", nullable: false),
+                    details_id = table.Column<Guid>(type: "uuid", nullable: false),
                     voice_channel_id = table.Column<Guid>(type: "uuid", nullable: false),
                     user_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
@@ -332,6 +353,39 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
+            migrationBuilder.CreateTable(
+                name: "discord_voice_status_entries",
+                columns: table => new
+                {
+                    id = table.Column<Guid>(type: "uuid", nullable: false),
+                    is_self_muted = table.Column<bool>(type: "boolean", nullable: false),
+                    is_self_deafened = table.Column<bool>(type: "boolean", nullable: false),
+                    is_self_stream = table.Column<bool>(type: "boolean", nullable: false),
+                    is_self_video = table.Column<bool>(type: "boolean", nullable: false),
+                    is_server_muted = table.Column<bool>(type: "boolean", nullable: false),
+                    is_server_deafened = table.Column<bool>(type: "boolean", nullable: false),
+                    is_suppressed = table.Column<bool>(type: "boolean", nullable: false),
+                    status_id = table.Column<Guid>(type: "uuid", nullable: false),
+                    before_id = table.Column<Guid>(type: "uuid", nullable: true),
+                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("pk_discord_voice_status_entries", x => x.id);
+                    table.ForeignKey(
+                        name: "fk_discord_voice_status_entries_discord_voice_status_entries_b",
+                        column: x => x.before_id,
+                        principalTable: "discord_voice_status_entries",
+                        principalColumn: "id");
+                    table.ForeignKey(
+                        name: "fk_discord_voice_status_entries_discord_voice_statuses_status_i",
+                        column: x => x.status_id,
+                        principalTable: "discord_voice_statuses",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
             migrationBuilder.CreateIndex(
                 name: "ix_discord_guild_members_discord_user_id",
                 table: "discord_guild_members",
@@ -361,6 +415,16 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                 name: "ix_discord_messages_text_channel_id",
                 table: "discord_messages",
                 column: "text_channel_id");
+
+            migrationBuilder.CreateIndex(
+                name: "ix_discord_presence_status_entries_before_id",
+                table: "discord_presence_status_entries",
+                column: "before_id");
+
+            migrationBuilder.CreateIndex(
+                name: "ix_discord_presence_statuses_details_id",
+                table: "discord_presence_statuses",
+                column: "details_id");
 
             migrationBuilder.CreateIndex(
                 name: "ix_discord_presence_statuses_user_id",
@@ -408,6 +472,17 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                 column: "guild_id");
 
             migrationBuilder.CreateIndex(
+                name: "ix_discord_voice_status_entries_before_id",
+                table: "discord_voice_status_entries",
+                column: "before_id");
+
+            migrationBuilder.CreateIndex(
+                name: "ix_discord_voice_status_entries_status_id",
+                table: "discord_voice_status_entries",
+                column: "status_id",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "ix_discord_voice_statuses_user_id",
                 table: "discord_voice_statuses",
                 column: "user_id");
@@ -436,7 +511,10 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                 name: "discord_typing_statuses");
 
             migrationBuilder.DropTable(
-                name: "discord_voice_statuses");
+                name: "discord_voice_status_entries");
+
+            migrationBuilder.DropTable(
+                name: "discord_presence_status_entries");
 
             migrationBuilder.DropTable(
                 name: "discord_emotes");
@@ -445,10 +523,13 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                 name: "discord_messages");
 
             migrationBuilder.DropTable(
-                name: "discord_voice_channels");
+                name: "discord_voice_statuses");
 
             migrationBuilder.DropTable(
                 name: "discord_text_channels");
+
+            migrationBuilder.DropTable(
+                name: "discord_voice_channels");
 
             migrationBuilder.DropTable(
                 name: "discord_guilds");

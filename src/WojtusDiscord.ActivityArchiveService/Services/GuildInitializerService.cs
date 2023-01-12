@@ -8,7 +8,7 @@ namespace WojtusDiscord.ActivityArchiveService.Services
         private readonly DiscordUserService _discordUserService;
         private readonly DiscordGuildService _discordGuildService;
         private readonly DiscordGuildMemberService _discordGuildMemberService;
-        private readonly DiscordChannelService _discordChannelService;
+        private readonly DiscordTextChannelService _discordChannelService;
         private readonly DiscordEmoteService _discordEmoteService;
         private readonly DiscordMessageService _discordMessageService;
         private readonly DiscordReactionService _discordReactionService;
@@ -18,7 +18,7 @@ namespace WojtusDiscord.ActivityArchiveService.Services
             DiscordUserService discordUserService,
             DiscordGuildService discordGuildService,
             DiscordGuildMemberService discordGuildMemberService,
-            DiscordChannelService discordChannelService,
+            DiscordTextChannelService discordChannelService,
             DiscordEmoteService discordEmoteService,
             DiscordMessageService discordMessageService,
             DiscordReactionService discordReactionService)
