@@ -52,55 +52,23 @@ public static class DiscordMapper
         };
     }
 
-    public static DiscordTextChannel MapTextChannel(DSharpPlus.Entities.DiscordChannel channel, DiscordGuild guild)
+    public static DiscordChannel MapChannel(DSharpPlus.Entities.DiscordChannel channel, DiscordGuild guild)
     {
-        return new DiscordTextChannel
+        return new DiscordChannel
         {
             Guild = guild,
             DiscordId = channel.Id,
             Name = channel.Name,
             Topic = channel.Topic,
+            BitRate = channel.Bitrate,
+            ParentChannel = MapChannel(channel.Parent, guild),
+            RtcRegion = channel.RtcRegion?.Name,
+            Type = (ChannelType)channel.Type,
+            UserLimit = channel.UserLimit
         };
     }
 
-    public static DiscordTextChannel MapThread(DSharpPlus.Entities.DiscordChannel channel, DiscordTextChannel textChannel, DiscordGuild guild)
-    {
-        return new DiscordTextChannel
-        {
-            Guild = guild,
-            DiscordId = channel.Id,
-            Name = channel.Name,
-            Topic = channel.Topic,
-            ParentTextChannel = textChannel,
-            IsThread = true,
-        };
-    }
-
-    public static DiscordTextChannel MapDMChannel(DSharpPlus.Entities.DiscordChannel channel)
-    {
-        return new DiscordTextChannel
-        {
-            DiscordId = channel.Id,
-            Name = channel.Name,
-            Topic = channel.Topic,
-            IsPrivate = true
-        };
-    }
-
-    public static DiscordVoiceChannel MapVoiceChannel(DSharpPlus.Entities.DiscordChannel channel, DiscordGuild guild)
-    {
-        return new DiscordVoiceChannel
-        {
-            Guild = guild,
-            DiscordId = channel.Id,
-            Name = channel.Name,
-            BitRate = channel.Bitrate ?? 0,
-            UserLimit = channel.UserLimit ?? 0,
-            RtcRegion = channel.RtcRegion?.Name ?? "",
-        };
-    }
-
-    public static DiscordMessage MapMessage(DSharpPlus.Entities.DiscordMessage message, DiscordUser author, DiscordTextChannel channel)
+    public static DiscordMessage MapMessage(DSharpPlus.Entities.DiscordMessage message, DiscordUser author, DiscordChannel channel)
     {
         return new DiscordMessage
         {
@@ -132,12 +100,12 @@ public static class DiscordMapper
         };
     }
 
-    public static DiscordVoiceStatus MapVoiceStatus(DSharpPlus.Entities.DiscordVoiceState before, DSharpPlus.Entities.DiscordVoiceState after, DiscordVoiceChannel channel, DiscordUser user)
+    public static DiscordVoiceStatus MapVoiceStatus(DSharpPlus.Entities.DiscordVoiceState before, DSharpPlus.Entities.DiscordVoiceState after, DiscordChannel channel, DiscordUser user)
     {
         return new DiscordVoiceStatus
         {
             User = user,
-            VoiceChannel = channel,
+            Channel = channel,
             Before = MapVoiceStatusEntry(before),
             After = MapVoiceStatusEntry(after),
         };

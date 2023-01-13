@@ -40,6 +40,10 @@ namespace WojtusDiscord.ActivityArchiveService.Database
             modelBuilder.Entity<DiscordPresenceStatusDetails>()
                 .Property(p => p.ActivityType)
                 .HasConversion<string>();
+
+            modelBuilder.Entity<DiscordChannel>()
+                .Property(p => p.Type)
+                .HasConversion<string>();
         }
 
         public override int SaveChanges()
@@ -63,17 +67,16 @@ namespace WojtusDiscord.ActivityArchiveService.Database
         public DbSet<DiscordUser> DiscordUsers { get; set; }
         public DbSet<DiscordGuild> DiscordGuilds { get; set; }
         public DbSet<DiscordGuildMember> DiscordGuildMembers { get; set; }
-        public DbSet<DiscordTextChannel> DiscordTextChannels { get; set; }
+        public DbSet<DiscordChannel> DiscordChannels { get; set; }
         public DbSet<DiscordEmote> DiscordEmotes { get; set; }
         public DbSet<DiscordMessage> DiscordMessages { get; set; }
         public DbSet<DiscordMessageContentEdit> DiscordMessageContentEdit { get; set; }
         public DbSet<DiscordReaction> DiscordReactions { get; set; }
         public DbSet<DiscordTypingStatus> DiscordTypingStatuses { get; set; }
-        public DbSet<DiscordVoiceChannel> DiscordVoiceChannels { get; set; }
         public DbSet<DiscordVoiceStatus> DiscordVoiceStatuses { get; set; }
-        public DbSet<DiscordVoiceStatusDetails> DiscordVoiceStatusEntries { get; set; }
+        public DbSet<DiscordVoiceStatusDetails> DiscordVoiceStatusDetails { get; set; }
         public DbSet<DiscordPresenceStatus> DiscordPresenceStatuses { get; set; }
-        public DbSet<DiscordPresenceStatusDetails> DiscordPresenceStatusEntries { get; set; }
+        public DbSet<DiscordPresenceStatusDetails> DiscordPresenceStatusDetails { get; set; }
 
         #endregion
     }

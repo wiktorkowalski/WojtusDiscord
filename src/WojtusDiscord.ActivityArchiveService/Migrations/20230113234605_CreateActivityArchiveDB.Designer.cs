@@ -12,7 +12,7 @@ using WojtusDiscord.ActivityArchiveService.Database;
 namespace WojtusDiscord.ActivityArchiveService.Migrations
 {
     [DbContext(typeof(ActivityArchiveContext))]
-    [Migration("20230112181710_CreateActivityArchiveDB")]
+    [Migration("20230113234605_CreateActivityArchiveDB")]
     partial class CreateActivityArchiveDB
     {
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -23,6 +23,71 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordChannel", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int?>("BitRate")
+                        .HasColumnType("integer")
+                        .HasColumnName("bit_rate");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at");
+
+                    b.Property<decimal>("DiscordId")
+                        .HasColumnType("numeric(20,0)")
+                        .HasColumnName("discord_id");
+
+                    b.Property<Guid?>("GuildId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("guild_id");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("name");
+
+                    b.Property<Guid?>("ParentChannelId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("parent_channel_id");
+
+                    b.Property<string>("RtcRegion")
+                        .HasColumnType("text")
+                        .HasColumnName("rtc_region");
+
+                    b.Property<string>("Topic")
+                        .HasColumnType("text")
+                        .HasColumnName("topic");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("type");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at");
+
+                    b.Property<int?>("UserLimit")
+                        .HasColumnType("integer")
+                        .HasColumnName("user_limit");
+
+                    b.HasKey("Id")
+                        .HasName("pk_discord_channels");
+
+                    b.HasIndex("GuildId")
+                        .HasDatabaseName("ix_discord_channels_guild_id");
+
+                    b.HasIndex("ParentChannelId")
+                        .HasDatabaseName("ix_discord_channels_parent_channel_id");
+
+                    b.ToTable("discord_channels", (string)null);
+                });
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordEmote", b =>
                 {
@@ -290,10 +355,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("text")
                         .HasColumnName("details");
 
-                    b.Property<bool>("IsBefore")
-                        .HasColumnType("boolean")
-                        .HasColumnName("is_before");
-
                     b.Property<string>("LargeImageText")
                         .HasColumnType("text")
                         .HasColumnName("large_image_text");
@@ -320,9 +381,9 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnName("updated_at");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_presence_status_entries");
+                        .HasName("pk_discord_presence_status_details");
 
-                    b.ToTable("discord_presence_status_entries", (string)null);
+                    b.ToTable("discord_presence_status_details", (string)null);
                 });
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordReaction", b =>
@@ -369,62 +430,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasDatabaseName("ix_discord_reactions_user_id");
 
                     b.ToTable("discord_reactions", (string)null);
-                });
-
-            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordTextChannel", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<decimal>("DiscordId")
-                        .HasColumnType("numeric(20,0)")
-                        .HasColumnName("discord_id");
-
-                    b.Property<Guid?>("GuildId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("guild_id");
-
-                    b.Property<bool>("IsPrivate")
-                        .HasColumnType("boolean")
-                        .HasColumnName("is_private");
-
-                    b.Property<bool>("IsThread")
-                        .HasColumnType("boolean")
-                        .HasColumnName("is_thread");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("name");
-
-                    b.Property<Guid?>("ParentTextChannelId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("parent_text_channel_id");
-
-                    b.Property<string>("Topic")
-                        .HasColumnType("text")
-                        .HasColumnName("topic");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at");
-
-                    b.HasKey("Id")
-                        .HasName("pk_discord_text_channels");
-
-                    b.HasIndex("GuildId")
-                        .HasDatabaseName("ix_discord_text_channels_guild_id");
-
-                    b.HasIndex("ParentTextChannelId")
-                        .HasDatabaseName("ix_discord_text_channels_parent_text_channel_id");
-
-                    b.ToTable("discord_text_channels", (string)null);
                 });
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordTypingStatus", b =>
@@ -513,55 +518,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.ToTable("discord_users", (string)null);
                 });
 
-            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceChannel", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<int>("BitRate")
-                        .HasColumnType("integer")
-                        .HasColumnName("bit_rate");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<decimal>("DiscordId")
-                        .HasColumnType("numeric(20,0)")
-                        .HasColumnName("discord_id");
-
-                    b.Property<Guid>("GuildId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("guild_id");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("name");
-
-                    b.Property<string>("RtcRegion")
-                        .HasColumnType("text")
-                        .HasColumnName("rtc_region");
-
-                    b.Property<DateTime>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("updated_at");
-
-                    b.Property<int>("UserLimit")
-                        .HasColumnType("integer")
-                        .HasColumnName("user_limit");
-
-                    b.HasKey("Id")
-                        .HasName("pk_discord_voice_channels");
-
-                    b.HasIndex("GuildId")
-                        .HasDatabaseName("ix_discord_voice_channels_guild_id");
-
-                    b.ToTable("discord_voice_channels", (string)null);
-                });
-
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceStatus", b =>
                 {
                     b.Property<Guid>("Id")
@@ -577,6 +533,10 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("before_id");
 
+                    b.Property<Guid>("ChannelId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("channel_id");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -589,10 +549,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("user_id");
 
-                    b.Property<Guid>("VoiceChannelId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("voice_channel_id");
-
                     b.HasKey("Id")
                         .HasName("pk_discord_voice_statuses");
 
@@ -602,11 +558,11 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.HasIndex("BeforeId")
                         .HasDatabaseName("ix_discord_voice_statuses_before_id");
 
+                    b.HasIndex("ChannelId")
+                        .HasDatabaseName("ix_discord_voice_statuses_channel_id");
+
                     b.HasIndex("UserId")
                         .HasDatabaseName("ix_discord_voice_statuses_user_id");
-
-                    b.HasIndex("VoiceChannelId")
-                        .HasDatabaseName("ix_discord_voice_statuses_voice_channel_id");
 
                     b.ToTable("discord_voice_statuses", (string)null);
                 });
@@ -621,10 +577,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
-
-                    b.Property<bool>("IsBefore")
-                        .HasColumnType("boolean")
-                        .HasColumnName("is_before");
 
                     b.Property<bool>("IsSelfDeafened")
                         .HasColumnType("boolean")
@@ -659,9 +611,26 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasColumnName("updated_at");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_voice_status_entries");
+                        .HasName("pk_discord_voice_status_details");
 
-                    b.ToTable("discord_voice_status_entries", (string)null);
+                    b.ToTable("discord_voice_status_details", (string)null);
+                });
+
+            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordChannel", b =>
+                {
+                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordGuild", "Guild")
+                        .WithMany("Channels")
+                        .HasForeignKey("GuildId")
+                        .HasConstraintName("fk_discord_channels_discord_guilds_guild_id");
+
+                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordChannel", "ParentChannel")
+                        .WithMany()
+                        .HasForeignKey("ParentChannelId")
+                        .HasConstraintName("fk_discord_channels_discord_channels_parent_channel_id");
+
+                    b.Navigation("Guild");
+
+                    b.Navigation("ParentChannel");
                 });
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordGuild", b =>
@@ -711,12 +680,12 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasForeignKey("ReplyToMessageId")
                         .HasConstraintName("fk_discord_messages_discord_messages_reply_to_message_id");
 
-                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordTextChannel", "TextChannel")
+                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordChannel", "TextChannel")
                         .WithMany("Messages")
                         .HasForeignKey("TextChannelId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_messages_discord_text_channels_text_channel_id");
+                        .HasConstraintName("fk_discord_messages_discord_channels_text_channel_id");
 
                     b.Navigation("Author");
 
@@ -744,14 +713,14 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasForeignKey("AfterId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_presence_statuses_discord_presence_status_entries_a");
+                        .HasConstraintName("fk_discord_presence_statuses_discord_presence_status_details_a");
 
                     b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordPresenceStatusDetails", "Before")
                         .WithMany()
                         .HasForeignKey("BeforeId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_presence_statuses_discord_presence_status_entries_b");
+                        .HasConstraintName("fk_discord_presence_statuses_discord_presence_status_details_b");
 
                     b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordUser", "User")
                         .WithMany("PresenceStatuses")
@@ -797,31 +766,14 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordTextChannel", b =>
-                {
-                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordGuild", "Guild")
-                        .WithMany("TextChannels")
-                        .HasForeignKey("GuildId")
-                        .HasConstraintName("fk_discord_text_channels_discord_guilds_guild_id");
-
-                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordTextChannel", "ParentTextChannel")
-                        .WithMany()
-                        .HasForeignKey("ParentTextChannelId")
-                        .HasConstraintName("fk_discord_text_channels_discord_text_channels_parent_text_cha");
-
-                    b.Navigation("Guild");
-
-                    b.Navigation("ParentTextChannel");
-                });
-
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordTypingStatus", b =>
                 {
-                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordTextChannel", "TextChannel")
+                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordChannel", "TextChannel")
                         .WithMany()
                         .HasForeignKey("TextChannelId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_typing_statuses_discord_text_channels_text_channel_id");
+                        .HasConstraintName("fk_discord_typing_statuses_discord_channels_text_channel_id");
 
                     b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordUser", "User")
                         .WithMany("TypingStatuses")
@@ -835,18 +787,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceChannel", b =>
-                {
-                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordGuild", "Guild")
-                        .WithMany("VoiceChannels")
-                        .HasForeignKey("GuildId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_discord_voice_channels_discord_guilds_guild_id");
-
-                    b.Navigation("Guild");
-                });
-
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceStatus", b =>
                 {
                     b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceStatusDetails", "After")
@@ -854,14 +794,21 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .HasForeignKey("AfterId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_voice_statuses_discord_voice_status_entries_after_id");
+                        .HasConstraintName("fk_discord_voice_statuses_discord_voice_status_details_after_id");
 
                     b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceStatusDetails", "Before")
                         .WithMany()
                         .HasForeignKey("BeforeId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_voice_statuses_discord_voice_status_entries_before_");
+                        .HasConstraintName("fk_discord_voice_statuses_discord_voice_status_details_before_");
+
+                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordChannel", "Channel")
+                        .WithMany("VoiceStatuses")
+                        .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("fk_discord_voice_statuses_discord_channels_channel_id");
 
                     b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordUser", "User")
                         .WithMany("VoiceStatuses")
@@ -870,20 +817,20 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_discord_voice_statuses_discord_users_user_id");
 
-                    b.HasOne("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceChannel", "VoiceChannel")
-                        .WithMany("VoiceStatuses")
-                        .HasForeignKey("VoiceChannelId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_discord_voice_statuses_discord_voice_channels_voice_channel");
-
                     b.Navigation("After");
 
                     b.Navigation("Before");
 
-                    b.Navigation("User");
+                    b.Navigation("Channel");
 
-                    b.Navigation("VoiceChannel");
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordChannel", b =>
+                {
+                    b.Navigation("Messages");
+
+                    b.Navigation("VoiceStatuses");
                 });
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordEmote", b =>
@@ -893,11 +840,9 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordGuild", b =>
                 {
+                    b.Navigation("Channels");
+
                     b.Navigation("Members");
-
-                    b.Navigation("TextChannels");
-
-                    b.Navigation("VoiceChannels");
                 });
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordMessage", b =>
@@ -905,11 +850,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
                     b.Navigation("ContentEdits");
 
                     b.Navigation("Reactions");
-                });
-
-            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordTextChannel", b =>
-                {
-                    b.Navigation("Messages");
                 });
 
             modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordUser", b =>
@@ -924,11 +864,6 @@ namespace WojtusDiscord.ActivityArchiveService.Migrations
 
                     b.Navigation("TypingStatuses");
 
-                    b.Navigation("VoiceStatuses");
-                });
-
-            modelBuilder.Entity("WojtusDiscord.ActivityArchiveService.Models.DiscordVoiceChannel", b =>
-                {
                     b.Navigation("VoiceStatuses");
                 });
 #pragma warning restore 612, 618

@@ -8,7 +8,6 @@ public class DiscordGuild : BaseDiscordModel
     public Guid OwnerId { get; set; }
     public DiscordUser Owner { get; set; }
 
-    public ICollection<DiscordTextChannel> TextChannels { get; set; }
-    public ICollection<DiscordVoiceChannel> VoiceChannels { get; set; }
+    public ICollection<DiscordChannel> Channels { get; set; }
     public ICollection<DiscordGuildMember> Members { get; set; }
 }

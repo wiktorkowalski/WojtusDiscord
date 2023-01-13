@@ -8,7 +8,7 @@ namespace WojtusDiscord.ActivityArchiveService.Services
         private readonly DiscordUserService _discordUserService;
         private readonly DiscordGuildService _discordGuildService;
         private readonly DiscordGuildMemberService _discordGuildMemberService;
-        private readonly DiscordTextChannelService _discordChannelService;
+        private readonly DiscordChannelService _discordChannelService;
         private readonly DiscordEmoteService _discordEmoteService;
         private readonly DiscordMessageService _discordMessageService;
         private readonly DiscordReactionService _discordReactionService;
@@ -18,7 +18,7 @@ namespace WojtusDiscord.ActivityArchiveService.Services
             DiscordUserService discordUserService,
             DiscordGuildService discordGuildService,
             DiscordGuildMemberService discordGuildMemberService,
-            DiscordTextChannelService discordChannelService,
+            DiscordChannelService discordChannelService,
             DiscordEmoteService discordEmoteService,
             DiscordMessageService discordMessageService,
             DiscordReactionService discordReactionService)
@@ -48,12 +48,7 @@ namespace WojtusDiscord.ActivityArchiveService.Services
             return _discordGuildService.Create(guild);
         }
 
-        public async Task<DiscordTextChannel[]> CreateTextChannels(DiscordTextChannel[] channels)
-        {
-            return _discordChannelService.CreateMany(channels);
-        }
-
-        public async Task<DiscordVoiceChannel[]> CreateVoiceChannels(DiscordVoiceChannel[] channels)
+        public async Task<DiscordChannel[]> CreateChannels(DiscordChannel[] channels)
         {
             return _discordChannelService.CreateMany(channels);
         }

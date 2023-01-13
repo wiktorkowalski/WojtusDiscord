@@ -91,20 +91,14 @@ namespace WojtusDiscord.ActivityArchiveService
             var emotes = guildCreateEventArgs.Guild.Emojis
                 .Select(e => DiscordMapper.MapEmote(e.Value))
                 .ToArray();
-            var textChannels = guildCreateEventArgs.Guild.Channels
-                .Where(c => c.Value.Type == ChannelType.Text)
-                .Select(c => DiscordMapper.MapTextChannel(c.Value, guild))
-                .ToArray();
-            var voiceChannels = guildCreateEventArgs.Guild.Channels
-                .Where(c => c.Value.Type == ChannelType.Voice)
-                .Select(c => DiscordMapper.MapVoiceChannel(c.Value, guild))
+            var channels = guildCreateEventArgs.Guild.Channels
+                .Select(c => DiscordMapper.MapChannel(c.Value, guild))
                 .ToArray();
 
             emotes = await guildInitService.CreateEmotes(emotes);
-            textChannels = await guildInitService.CreateTextChannels(textChannels);
-            voiceChannels = await guildInitService.CreateVoiceChannels(voiceChannels);
+            channels = await guildInitService.CreateChannels(channels);
 
-            foreach (var channel in textChannels)
+            foreach (var channel in channels)
             {
                 var messagesToSave = new List<DiscordMessage>();
 
@@ -152,7 +146,7 @@ namespace WojtusDiscord.ActivityArchiveService
             using var scope = _scopeFactory.CreateScope();
 
             var messageService = scope.ServiceProvider.GetRequiredService<DiscordMessageService>();
-            var channelService = scope.ServiceProvider.GetRequiredService<DiscordTextChannelService>();
+            var channelService = scope.ServiceProvider.GetRequiredService<DiscordChannelService>();
             var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
             var guildService = scope.ServiceProvider.GetRequiredService<DiscordGuildService>();
 
@@ -165,7 +159,7 @@ namespace WojtusDiscord.ActivityArchiveService
             if (channel is null)
             {
                 var guild = guildService.GetByDiscordId(messageCreateEventArgs.Guild.Id);
-                channel = channelService.Create(DiscordMapper.MapTextChannel(messageCreateEventArgs.Channel, guild));
+                channel = channelService.Create(DiscordMapper.MapChannel(messageCreateEventArgs.Channel, guild));
             }
 
             var message = DiscordMapper.MapMessage(messageCreateEventArgs.Message, author, channel);
@@ -177,7 +171,7 @@ namespace WojtusDiscord.ActivityArchiveService
                     message.ReplyToMessage = referencedMessage;
                 }
             }
-            
+
             messageService.Create(message);
         }
 
@@ -187,7 +181,7 @@ namespace WojtusDiscord.ActivityArchiveService
             using var scope = _scopeFactory.CreateScope();
 
             var messageService = scope.ServiceProvider.GetRequiredService<DiscordMessageService>();
-            var channelService = scope.ServiceProvider.GetRequiredService<DiscordTextChannelService>();
+            var channelService = scope.ServiceProvider.GetRequiredService<DiscordChannelService>();
             var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
             var guildService = scope.ServiceProvider.GetRequiredService<DiscordGuildService>();
 
@@ -200,10 +194,10 @@ namespace WojtusDiscord.ActivityArchiveService
             if (channel is null)
             {
                 var guild = guildService.GetByDiscordId(messageUpdateEventArgs.Guild.Id);
-                channel = channelService.Create(DiscordMapper.MapTextChannel(messageUpdateEventArgs.Channel, guild));
+                channel = channelService.Create(DiscordMapper.MapChannel(messageUpdateEventArgs.Channel, guild));
             }
             var message = messageService.GetByDiscordId(messageUpdateEventArgs.Message.Id);
-            if(message is null)
+            if (message is null)
             {
                 message = messageService.Create(DiscordMapper.MapMessage(messageUpdateEventArgs.Message, author, channel));
             }
@@ -243,7 +237,7 @@ namespace WojtusDiscord.ActivityArchiveService
             _logger.LogInformation($"[Reaction][Add][{messageReactionAddEventArgs.Message.Id}][{messageReactionAddEventArgs.Emoji.Name}]");
             using var scope = _scopeFactory.CreateScope();
             var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
-            var channelService = scope.ServiceProvider.GetRequiredService<DiscordTextChannelService>();
+            var channelService = scope.ServiceProvider.GetRequiredService<DiscordChannelService>();
             var messageService = scope.ServiceProvider.GetRequiredService<DiscordMessageService>();
             var reactionService = scope.ServiceProvider.GetRequiredService<DiscordReactionService>();
             var emoteService = scope.ServiceProvider.GetRequiredService<DiscordEmoteService>();
@@ -256,12 +250,12 @@ namespace WojtusDiscord.ActivityArchiveService
                 message = messageService.Create(DiscordMapper.MapMessage(messageReactionAddEventArgs.Message, author, channel));
             }
             var emote = emoteService.GetByDiscordId(messageReactionAddEventArgs.Emoji.Id);
-            if(emote is null)
+            if (emote is null)
             {
                 emote = emoteService.Create(DiscordMapper.MapEmote(messageReactionAddEventArgs.Emoji));
             }
             var user = userService.GetByDiscordId(messageReactionAddEventArgs.User.Id);
-            if(user is null)
+            if (user is null)
             {
                 user = userService.Create(DiscordMapper.MapUser(messageReactionAddEventArgs.User));
             }
@@ -283,7 +277,7 @@ namespace WojtusDiscord.ActivityArchiveService
         {
             _logger.LogInformation($"[Typing][{typingStartEventArgs.Channel.Id}][{typingStartEventArgs.User.Username}]");
             using var scope = _scopeFactory.CreateScope();
-            var channelService = scope.ServiceProvider.GetRequiredService<DiscordTextChannelService>();
+            var channelService = scope.ServiceProvider.GetRequiredService<DiscordChannelService>();
             var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
 
             var channel = channelService.GetByDiscordId(typingStartEventArgs.Channel.Id);
@@ -300,7 +294,7 @@ namespace WojtusDiscord.ActivityArchiveService
         {
             _logger.LogInformation($"[Voice][{voiceStateUpdateEventArgs.Channel.Name}][{voiceStateUpdateEventArgs.User.Username}]");
             using var scope = _scopeFactory.CreateScope();
-            var channelService = scope.ServiceProvider.GetRequiredService<DiscordVoiceChannelService>();
+            var channelService = scope.ServiceProvider.GetRequiredService<DiscordChannelService>();
             var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
 
             var channel = channelService.GetByDiscordId(voiceStateUpdateEventArgs.Channel.Id);
