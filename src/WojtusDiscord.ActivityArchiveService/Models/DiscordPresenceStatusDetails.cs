@@ -9,8 +9,6 @@
         public string? SmallImageText { get; set; }
         public DiscordStatus Status { get; set; }
         public DiscordActivityType ActivityType { get; set; }
-
-        public DiscordPresenceStatusDetails? Before { get; set; }
     }
 
     #region Enums

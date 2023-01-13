@@ -2,7 +2,11 @@
 
 public class DiscordPresenceStatus : BaseModel
 {
-    public DiscordPresenceStatusDetails Details { get; set; }
+    public Guid BeforeId { get; set; }
+    public DiscordPresenceStatusDetails Before { get; set; }
+
+    public Guid AfterId { get; set; }
+    public DiscordPresenceStatusDetails After { get; set; }
 
     public Guid UserId { get; set; }
     public DiscordUser User { get; set; }

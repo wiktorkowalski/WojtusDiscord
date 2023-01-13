@@ -32,26 +32,6 @@ namespace WojtusDiscord.ActivityArchiveService.Database
             modelBuilder.Entity<DiscordGuildMember>()
                 .HasKey(m => new { m.DiscordGuildId, m.DiscordUserId });
 
-            //One-to-one relations
-            //modelBuilder.Entity<DiscordVoiceStatusDetails>()
-            modelBuilder.Entity<DiscordVoiceStatus>()
-                .HasOne(s => s.Details)
-                .WithOne(e => e.Status)
-                .HasForeignKey<DiscordVoiceStatusDetails>(e => e.StatusId);
-            //modelBuilder.Entity<DiscordVoiceStatus>()
-            //    .HasOne(s => s.VoiceStatusAfter)
-            //    .WithOne(e => e.VoiceStatusAfter)
-            //    .HasForeignKey<DiscordVoiceStatusDetails>(e => e.VoiceStatusAfterId);
-
-            //modelBuilder.Entity<DiscordPresenceStatus>()
-            //    .HasOne(s => s.PresenceStatusBefore)
-            //    .WithOne(e => e.PresenceStatusBefore)
-            //    .HasForeignKey<DiscordPresenceStatusDetails>(e => e.PresenceStatusBeforeId);
-            //modelBuilder.Entity<DiscordPresenceStatus>()
-            //    .HasOne(s => s.PresenceStatusAfter)
-            //    .WithOne(e => e.PresenceStatusAfter)
-            //    .HasForeignKey<DiscordPresenceStatusDetails>(e => e.PresenceStatusAfterId);
-
             //enum conversions
             modelBuilder.Entity<DiscordPresenceStatusDetails>()
                 .Property(p => p.Status)

@@ -2,8 +2,11 @@
 
 public class DiscordVoiceStatus : BaseModel
 {
-    public Guid DetailsId { get; set; }
-    public DiscordVoiceStatusDetails Details { get; set; }
+    public Guid BeforeId { get; set; }
+    public DiscordVoiceStatusDetails Before { get; set; }
+
+    public Guid AfterId { get; set; }
+    public DiscordVoiceStatusDetails After { get; set; }
 
     public Guid VoiceChannelId { get; set; }
     public DiscordVoiceChannel VoiceChannel { get; set; }

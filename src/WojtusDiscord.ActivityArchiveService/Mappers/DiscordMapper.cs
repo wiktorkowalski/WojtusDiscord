@@ -138,11 +138,12 @@ public static class DiscordMapper
         {
             User = user,
             VoiceChannel = channel,
-            Details = MapVoiceStatusEntry(after, before),
+            Before = MapVoiceStatusEntry(before),
+            After = MapVoiceStatusEntry(after),
         };
     }
 
-    public static DiscordVoiceStatusDetails MapVoiceStatusEntry(DSharpPlus.Entities.DiscordVoiceState voiceState, DSharpPlus.Entities.DiscordVoiceState before = null)
+    public static DiscordVoiceStatusDetails MapVoiceStatusEntry(DSharpPlus.Entities.DiscordVoiceState voiceState)
     {
         return new DiscordVoiceStatusDetails
         {
@@ -153,7 +154,6 @@ public static class DiscordMapper
             IsServerMuted = voiceState.IsServerMuted,
             IsServerDeafened = voiceState.IsServerDeafened,
             IsSuppressed = voiceState.IsSuppressed,
-            Before = before is null ? null : MapVoiceStatusEntry(before),
         };
     }
 
@@ -162,11 +162,12 @@ public static class DiscordMapper
         return new DiscordPresenceStatus
         {
             User = user,
-            Details = MapPresenceStatusEntry(after, before),
+            Before = MapPresenceStatusEntry(before),
+            After = MapPresenceStatusEntry(after),
         };
     }
 
-    public static DiscordPresenceStatusDetails MapPresenceStatusEntry(DSharpPlus.Entities.DiscordPresence presence, DSharpPlus.Entities.DiscordPresence before = null)
+    public static DiscordPresenceStatusDetails MapPresenceStatusEntry(DSharpPlus.Entities.DiscordPresence presence)
     {
         return new DiscordPresenceStatusDetails
         {
@@ -174,11 +175,9 @@ public static class DiscordMapper
             Details = presence.Activity.RichPresence.Details,
             Status = (DiscordStatus)presence.Status,
             ActivityType = (DiscordActivityType)presence.Activity.ActivityType,
-            State = presence.Activity.RichPresence.State,
-            SmallImageText = presence.Activity.RichPresence.SmallImageText,
-            LargeImageText = presence.Activity.RichPresence.LargeImageText,
-            Before = before is null ? null : MapPresenceStatusEntry(before),
+            State = presence.Activity.RichPresence?.State,
+            SmallImageText = presence.Activity.RichPresence?.SmallImageText,
+            LargeImageText = presence.Activity.RichPresence?.LargeImageText,
         };
     }
 }
-

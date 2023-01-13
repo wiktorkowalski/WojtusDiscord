@@ -9,10 +9,4 @@ public class DiscordVoiceStatusDetails : BaseModel
     public bool IsServerMuted { get; set; }
     public bool IsServerDeafened { get; set; }
     public bool IsSuppressed { get; set; }
-
-    public Guid StatusId { get; set; }
-    public DiscordVoiceStatus Status { get; set; }
-
-    public Guid? BeforeId { get; set; }
-    public DiscordVoiceStatusDetails? Before { get; set; }
 }

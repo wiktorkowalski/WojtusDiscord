@@ -67,5 +67,12 @@ namespace WojtusDiscord.ActivityArchiveService.Services
             _context.DiscordUsers.Update(model);
             _context.SaveChanges();
         }
+
+        public void CreatePresenceStatus(DiscordPresenceStatus status)
+        {
+            _context.DiscordPresenceStatuses.Add(status);
+            _context.SaveChanges();
+        }
+
     }
 }

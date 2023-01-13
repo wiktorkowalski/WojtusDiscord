@@ -1,6 +1,7 @@
 ﻿using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
+using Newtonsoft.Json;
 using WojtusDiscord.ActivityArchiveService.Database;
 using WojtusDiscord.ActivityArchiveService.Mappers;
 using WojtusDiscord.ActivityArchiveService.Models;
@@ -11,6 +12,7 @@ namespace WojtusDiscord.ActivityArchiveService
     public class DiscordService : IHostedService
     {
         private const int MAX_SCRAPE_MESSAGES = 100;
+
         private readonly ILogger<DiscordService> _logger;
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly DiscordClient _discordClient;
@@ -61,7 +63,7 @@ namespace WojtusDiscord.ActivityArchiveService
             _logger.LogInformation("Started DiscordService");
             await Task.Delay(1000).ContinueWith(async t =>
             {
-                await _discordClient.UpdateStatusAsync(userStatus: DSharpPlus.Entities.UserStatus.Invisible);
+                await _discordClient.UpdateStatusAsync(userStatus: DSharpPlus.Entities.UserStatus.DoNotDisturb);
             });
         }
 
@@ -177,7 +179,6 @@ namespace WojtusDiscord.ActivityArchiveService
             }
             
             messageService.Create(message);
-            _logger.LogInformation($"[Message][{messageCreateEventArgs.Message.Id}][{messageCreateEventArgs.Author.Username}][Saved]");
         }
 
         private async Task MessageUpdated(DiscordClient sender, MessageUpdateEventArgs messageUpdateEventArgs)
@@ -311,9 +312,15 @@ namespace WojtusDiscord.ActivityArchiveService
         private async Task PresenceUpdated(DiscordClient sender, PresenceUpdateEventArgs presenceUpdateEventArgs)
         {
             _logger.LogInformation($"[Presence][{presenceUpdateEventArgs.User.Username}]");
+            var temp = JsonConvert.SerializeObject(presenceUpdateEventArgs, new JsonSerializerSettings
+            {
+                ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
+            });
             using var scope = _scopeFactory.CreateScope();
             var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
             var user = userService.GetByDiscordId(presenceUpdateEventArgs.User.Id);
+
+            userService.CreatePresenceStatus(DiscordMapper.MapPresenceStatus(presenceUpdateEventArgs.PresenceBefore, presenceUpdateEventArgs.PresenceAfter, user));
         }
     }
 }

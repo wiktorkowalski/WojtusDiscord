@@ -4,7 +4,7 @@ namespace WojtusDiscord.ActivityArchiveService.Config
 {
     public class DatabaseConfig
     {
-        public const string Section = "DB";
+        public static readonly string Prefix = "DB";
 
         public string Host { get; set; }
         public string Port { get; set; }
