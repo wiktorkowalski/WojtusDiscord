@@ -8,13 +8,10 @@ public class DiscordMessage : BaseDiscordModel
     public bool IsRemoved { get; set; }
     public DateTime DiscordTimestamp { get; set; }
 
-    public Guid? ReplyToMessageId { get; set; }
     public DiscordMessage? ReplyToMessage { get; set; }
 
-    public Guid TextChannelId { get; set; }
-    public DiscordChannel TextChannel { get; set; }
+    public DiscordChannel Channel { get; set; }
 
-    public Guid AuthorId { get; set; }
     public DiscordUser Author { get; set; }
 
     public ICollection<DiscordReaction> Reactions { get; set; }

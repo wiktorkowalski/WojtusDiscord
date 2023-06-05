@@ -21,7 +21,7 @@ public static class DiscordMapper
         {
             DiscordId = user.Id,
             Username = user.Username,
-            Discriminator = user.Discriminator ?? "",
+            Discriminator = user.Discriminator,
             AvatarUrl = user.AvatarUrl,
             IsBot = user.IsBot,
         };
@@ -33,7 +33,7 @@ public static class DiscordMapper
         {
             DiscordId = member.Id,
             Username = member.Username,
-            Discriminator = member.Discriminator ?? "",
+            Discriminator = member.Discriminator,
             AvatarUrl = member.AvatarUrl,
             IsBot = member.IsBot,
         };
@@ -45,14 +45,14 @@ public static class DiscordMapper
         {
             DiscordId = webhook.Id,
             Username = webhook.Name,
-            Discriminator = webhook.Token ?? "",
+            Discriminator = webhook.Token,
             AvatarUrl = webhook.AvatarUrl,
             IsBot = false,
             IsWebhook = true,
         };
     }
 
-    public static DiscordChannel MapChannel(DSharpPlus.Entities.DiscordChannel channel, DiscordGuild guild)
+    public static DiscordChannel MapChannel(DSharpPlus.Entities.DiscordChannel channel, DiscordGuild guild, DiscordChannel parent = null)
     {
         return new DiscordChannel
         {
@@ -61,7 +61,7 @@ public static class DiscordMapper
             Name = channel.Name,
             Topic = channel.Topic,
             BitRate = channel.Bitrate,
-            ParentChannel = MapChannel(channel.Parent, guild),
+            ParentChannel = parent,
             RtcRegion = channel.RtcRegion?.Name,
             Type = (ChannelType)channel.Type,
             UserLimit = channel.UserLimit
@@ -75,7 +75,7 @@ public static class DiscordMapper
             DiscordId = message.Id,
             Content = message.Content,
             Author = author,
-            TextChannel = channel,
+            Channel = channel,
             DiscordTimestamp = message.Timestamp.UtcDateTime
         };
     }
@@ -130,22 +130,39 @@ public static class DiscordMapper
         return new DiscordPresenceStatus
         {
             User = user,
-            Before = MapPresenceStatusEntry(before),
-            After = MapPresenceStatusEntry(after),
+            Before = MapPresenceStatusDetails(before),
+            After = MapPresenceStatusDetails(after),
         };
     }
 
-    public static DiscordPresenceStatusDetails MapPresenceStatusEntry(DSharpPlus.Entities.DiscordPresence presence)
+    public static DiscordPresenceStatusDetails MapPresenceStatusDetails(DSharpPlus.Entities.DiscordPresence presence)
     {
         return new DiscordPresenceStatusDetails
         {
-            Name = presence.Activity.Name,
-            Details = presence.Activity.RichPresence.Details,
-            Status = (DiscordStatus)presence.Status,
-            ActivityType = (DiscordActivityType)presence.Activity.ActivityType,
-            State = presence.Activity.RichPresence?.State,
-            SmallImageText = presence.Activity.RichPresence?.SmallImageText,
-            LargeImageText = presence.Activity.RichPresence?.LargeImageText,
+            Activities = presence.Activities.Select(a => MapActivity(a)).ToArray(),
+            DesktopStatus = (DiscordStatus)presence.ClientStatus.Desktop.Value,
+            MobileStatus = (DiscordStatus)presence.ClientStatus.Mobile.Value,
+            WebStatus = (DiscordStatus)presence.ClientStatus.Web.Value,
+        };
+    }
+
+    public static DiscordActivity MapActivity(DSharpPlus.Entities.DiscordActivity activity)
+    {
+        return new DiscordActivity
+        {
+            Name = activity.Name,
+            ActivityType = (DiscordActivityType)activity.ActivityType,
+            Start = activity.RichPresence?.StartTimestamp?.UtcDateTime,
+            End = activity.RichPresence?.EndTimestamp?.UtcDateTime,
+            LargeImage = activity.RichPresence?.LargeImage.Id,
+            LargeImageText = activity.RichPresence?.LargeImageText,
+            SmallImage = activity.RichPresence?.SmallImage.Id,
+            SmallImageText = activity.RichPresence?.SmallImageText,
+            Details = activity.RichPresence?.Details,
+            State = activity.RichPresence?.State,
+            ApplicationId = activity.RichPresence?.Application.Id.ToString(),
+            Party = activity.RichPresence?.PartyId.ToString(),
+            Emote = activity.CustomStatus?.Emoji is null ? null : MapEmote(activity.CustomStatus.Emoji),
         };
     }
 }

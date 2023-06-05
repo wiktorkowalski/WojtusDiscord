@@ -33,11 +33,14 @@ namespace WojtusDiscord.ActivityArchiveService.Database
                 .HasKey(m => new { m.DiscordGuildId, m.DiscordUserId });
 
             //enum conversions
-            modelBuilder.Entity<DiscordPresenceStatusDetails>()
-                .Property(p => p.Status)
-                .HasConversion<string>();
+            modelBuilder.Entity<DiscordPresenceStatusDetails>(p =>
+            {
+                p.Property(p => p.DesktopStatus).HasConversion<string>();
+                p.Property(p => p.MobileStatus).HasConversion<string>();
+                p.Property(p => p.WebStatus).HasConversion<string>();
+            });
 
-            modelBuilder.Entity<DiscordPresenceStatusDetails>()
+            modelBuilder.Entity<DiscordActivity>()
                 .Property(p => p.ActivityType)
                 .HasConversion<string>();
 
@@ -50,6 +53,7 @@ namespace WojtusDiscord.ActivityArchiveService.Database
         {
             var items = ChangeTracker.Entries<BaseModel>().Where(e => e.State == EntityState.Added || e.State == EntityState.Modified);
 
+            //add tracking based on CurrentValues and OriginalValues
             foreach (var item in items)
             {
                 if (item.State == EntityState.Added)
@@ -77,6 +81,7 @@ namespace WojtusDiscord.ActivityArchiveService.Database
         public DbSet<DiscordVoiceStatusDetails> DiscordVoiceStatusDetails { get; set; }
         public DbSet<DiscordPresenceStatus> DiscordPresenceStatuses { get; set; }
         public DbSet<DiscordPresenceStatusDetails> DiscordPresenceStatusDetails { get; set; }
+        public DbSet<DiscordActivity> DiscordActivities { get; set; }
 
         #endregion
     }

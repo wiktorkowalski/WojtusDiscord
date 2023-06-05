@@ -6,6 +6,5 @@ public class DiscordMessageContentEdit : BaseModel
     public string? ContentBefore { get; set; }
     public bool IsRemoved { get; set; }
 
-    public Guid MessageId { get; set; }
     public DiscordMessage Message { get; set; }
 }

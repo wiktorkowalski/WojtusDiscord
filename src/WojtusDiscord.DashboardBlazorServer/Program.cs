@@ -20,13 +20,13 @@ builder.Services.AddAuthentication(options =>
     .AddGitHub(options =>
     {
         options.ClientId = "b0fbc8b872c2ae2fa23a";
-        options.ClientSecret = "040a1e9716a1e53f4f5d3cdfafc5449da35e39b4";
+        options.ClientSecret = "";
         options.Scope.Add("user");
     })
     .AddDiscord(options =>
     {
         options.ClientId = "918568639794397214";
-        options.ClientSecret = "SfjZ-_432Uil6swDzDJO1a8l-fWDrTyA";
+        options.ClientSecret = "";
         options.Scope.Add("identify");
         options.Scope.Add("email");
     });

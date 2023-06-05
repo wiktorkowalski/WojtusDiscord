@@ -9,10 +9,8 @@ public class DiscordChannel : BaseDiscordModel
     public string? RtcRegion { get; set; }
     public ChannelType Type { get; set; }
 
-    public Guid? ParentChannelId { get; set; }
     public DiscordChannel? ParentChannel { get; set; }
     
-    public Guid? GuildId { get; set; }
     public DiscordGuild? Guild { get; set; }
 
     public ICollection<DiscordMessage> Messages { get; set; }

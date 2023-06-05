@@ -2,13 +2,11 @@
 {
     public class DiscordPresenceStatusDetails : BaseModel
     {
-        public string? Name { get; set; }
-        public string? Details { get; set; }
-        public string? State { get; set; }
-        public string? LargeImageText { get; set; }
-        public string? SmallImageText { get; set; }
-        public DiscordStatus Status { get; set; }
-        public DiscordActivityType ActivityType { get; set; }
+        public DiscordStatus DesktopStatus { get; set; }
+        public DiscordStatus MobileStatus { get; set; }
+        public DiscordStatus WebStatus { get; set; }
+
+        public ICollection<DiscordActivity> Activities { get; set; }
     }
 
     #region Enums
@@ -20,16 +18,6 @@
         Idle,// = 2,
         DoNotDisturb,// = 4,
         Invisible,// = 5,
-    }
-
-    public enum DiscordActivityType
-    {
-        Playing,
-        Streaming,
-        ListeningTo,
-        Watching,
-        Custom,
-        Competing,
     }
 
     #endregion

@@ -6,6 +6,5 @@ public class DiscordEmote : BaseDiscordModel
     public string? Url { get; set; }
     public bool IsAnimated { get; set; }
     
-
     public ICollection<DiscordReaction> Reactions { get; set; }
 }

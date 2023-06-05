@@ -2,10 +2,8 @@
 {
     public class DiscordTypingStatus : BaseModel
     {
-        public Guid ChannelId { get; set; }
-        public DiscordChannel TextChannel { get; set; }
+        public DiscordChannel Channel { get; set; }
 
-        public Guid UserId { get; set; }
         public DiscordUser User { get; set; }
     }
 }

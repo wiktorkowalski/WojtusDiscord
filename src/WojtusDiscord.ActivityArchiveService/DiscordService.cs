@@ -2,6 +2,7 @@
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json;
+using System.Linq;
 using WojtusDiscord.ActivityArchiveService.Database;
 using WojtusDiscord.ActivityArchiveService.Mappers;
 using WojtusDiscord.ActivityArchiveService.Models;
@@ -26,7 +27,6 @@ namespace WojtusDiscord.ActivityArchiveService
                 Token = configuration.GetValue<string>("DiscordToken"),
                 Intents = DiscordIntents.All,
                 LoggerFactory = loggerFactory,
-
             });
             //TODO: properly use context
             var temp = scopeFactory.CreateScope().ServiceProvider.GetRequiredService<ActivityArchiveContext>();
@@ -51,8 +51,9 @@ namespace WojtusDiscord.ActivityArchiveService
             _discordClient.GuildCreated += JoinedGuild;
             //_discordClient.GuildMemberAdded += GuildMemberAdded;
             //_discordClient.GuildMemberUpdated += GuildMemberUpdated;
+            //_discordClient.ChannelCreated += ChannelCreated;
+            //_discordClient.ChannelUpdated += ChannelUpdated;
             // and so on
-
             _logger.LogInformation($"Done initializing {nameof(DiscordService)}");
         }
 
@@ -91,8 +92,16 @@ namespace WojtusDiscord.ActivityArchiveService
             var emotes = guildCreateEventArgs.Guild.Emojis
                 .Select(e => DiscordMapper.MapEmote(e.Value))
                 .ToArray();
-            var channels = guildCreateEventArgs.Guild.Channels
+
+            var categories = guildCreateEventArgs.Guild.Channels
+                .Where(c => c.Value.Type == DSharpPlus.ChannelType.Category)
                 .Select(c => DiscordMapper.MapChannel(c.Value, guild))
+                .ToArray();
+            categories = await guildInitService.CreateChannels(categories);
+
+            var channels = guildCreateEventArgs.Guild.Channels
+                .Where(c => c.Value.Type != DSharpPlus.ChannelType.Category)
+                .Select(c => DiscordMapper.MapChannel(c.Value, guild, categories.Where(cat => cat.DiscordId == c.Value.ParentId).First()))
                 .ToArray();
 
             emotes = await guildInitService.CreateEmotes(emotes);
@@ -285,7 +294,7 @@ namespace WojtusDiscord.ActivityArchiveService
 
             channelService.CreateTypingStatus(new DiscordTypingStatus
             {
-                TextChannel = channel,
+                Channel = channel,
                 User = user,
             });
         }
@@ -306,15 +315,16 @@ namespace WojtusDiscord.ActivityArchiveService
         private async Task PresenceUpdated(DiscordClient sender, PresenceUpdateEventArgs presenceUpdateEventArgs)
         {
             _logger.LogInformation($"[Presence][{presenceUpdateEventArgs.User.Username}]");
-            var temp = JsonConvert.SerializeObject(presenceUpdateEventArgs, new JsonSerializerSettings
-            {
-                ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
-            });
+            //var temp = JsonConvert.SerializeObject(presenceUpdateEventArgs, new JsonSerializerSettings
+            //{
+            //    ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
+            //});
             using var scope = _scopeFactory.CreateScope();
             var userService = scope.ServiceProvider.GetRequiredService<DiscordUserService>();
             var user = userService.GetByDiscordId(presenceUpdateEventArgs.User.Id);
+            var presence = DiscordMapper.MapPresenceStatus(presenceUpdateEventArgs.PresenceBefore, presenceUpdateEventArgs.PresenceAfter, user);
 
-            userService.CreatePresenceStatus(DiscordMapper.MapPresenceStatus(presenceUpdateEventArgs.PresenceBefore, presenceUpdateEventArgs.PresenceAfter, user));
+            userService.CreatePresenceStatus(presence);
         }
     }
 }
