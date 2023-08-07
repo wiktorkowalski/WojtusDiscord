@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ActivityListenerService", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DiscordApiGateway", "src\DiscordApiGateway\DiscordApiGateway.csproj", "{7A2EEFE0-E8AE-4200-AFBA-BDB8308A3413}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ActivityArchiveService", "src\ActivityArchiveService\ActivityArchiveService.csproj", "{A70614AB-E335-4204-A20B-B87E6209EB85}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -24,5 +26,9 @@ Global
 		{7A2EEFE0-E8AE-4200-AFBA-BDB8308A3413}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7A2EEFE0-E8AE-4200-AFBA-BDB8308A3413}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7A2EEFE0-E8AE-4200-AFBA-BDB8308A3413}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A70614AB-E335-4204-A20B-B87E6209EB85}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A70614AB-E335-4204-A20B-B87E6209EB85}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A70614AB-E335-4204-A20B-B87E6209EB85}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A70614AB-E335-4204-A20B-B87E6209EB85}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
