@@ -2,7 +2,7 @@
 
 namespace ActivityArchiveService.Database.Entities;
 
-public class DiscordMessage : BaseEntity
+public class Message : BaseEntity
 {
     public ulong DiscordId { get; set; }
     public string? Content { get; set; }
@@ -11,12 +11,12 @@ public class DiscordMessage : BaseEntity
     public bool IsRemoved { get; set; }
     public DateTime DiscordTimestamp { get; set; }
 
-    public DiscordMessage? ReplyToMessage { get; set; }
+    public Message? ReplyToMessage { get; set; }
 
-    public DiscordChannel Channel { get; set; }
+    public Channel Channel { get; set; }
 
-    public DiscordUser Author { get; set; }
+    public User Author { get; set; }
 
-    public ICollection<DiscordReaction> Reactions { get; set; }
-    public ICollection<DiscordMessageContentEdit> ContentEdits { get; set; }
+    public ICollection<Reaction> Reactions { get; set; }
+    public ICollection<MessageContentEdit> ContentEdits { get; set; }
 }

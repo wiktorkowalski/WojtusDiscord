@@ -2,7 +2,7 @@
 
 namespace ActivityArchiveService.Database.Entities;
 
-public class DiscordChannel : BaseEntity
+public class Channel : BaseEntity
 {
     public ulong DiscordId { get; set; }
     public string Name { get; set; }
@@ -12,12 +12,12 @@ public class DiscordChannel : BaseEntity
     public string? RtcRegion { get; set; }
     public DiscordChannelType Type { get; set; }
 
-    public DiscordChannel? ParentChannel { get; set; }
+    public Channel? ParentChannel { get; set; }
 
-    public DiscordGuild? Guild { get; set; }
+    public Guild? Guild { get; set; }
 
-    public ICollection<DiscordMessage> Messages { get; set; }
-    public ICollection<DiscordVoiceStatus> VoiceStatuses { get; set; }
+    public ICollection<Message> Messages { get; set; }
+    public ICollection<VoiceStatus> VoiceStatuses { get; set; }
 }
 
 public enum DiscordChannelType

@@ -12,7 +12,7 @@ namespace ActivityArchiveService.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "discord_emotes",
+                name: "emotes",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -26,11 +26,11 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_emotes", x => x.id);
+                    table.PrimaryKey("pk_emotes", x => x.id);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_presence_status_details",
+                name: "presence_status_details",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -43,11 +43,11 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_presence_status_details", x => x.id);
+                    table.PrimaryKey("pk_presence_status_details", x => x.id);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_users",
+                name: "users",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -63,11 +63,11 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_users", x => x.id);
+                    table.PrimaryKey("pk_users", x => x.id);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_voice_status_details",
+                name: "voice_status_details",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -84,11 +84,11 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_voice_status_details", x => x.id);
+                    table.PrimaryKey("pk_voice_status_details", x => x.id);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_activities",
+                name: "activities",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -111,17 +111,17 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_activities", x => x.id);
+                    table.PrimaryKey("pk_activities", x => x.id);
                     table.ForeignKey(
-                        name: "fk_discord_activities_discord_presence_status_details_presence",
+                        name: "fk_activities_presence_status_details_presence_id",
                         column: x => x.presence_id,
-                        principalTable: "discord_presence_status_details",
+                        principalTable: "presence_status_details",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_guilds",
+                name: "guilds",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -135,17 +135,17 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_guilds", x => x.id);
+                    table.PrimaryKey("pk_guilds", x => x.id);
                     table.ForeignKey(
-                        name: "fk_discord_guilds_discord_users_owner_id",
+                        name: "fk_guilds_users_owner_id",
                         column: x => x.owner_id,
-                        principalTable: "discord_users",
+                        principalTable: "users",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_presence_statuses",
+                name: "presence_statuses",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -158,29 +158,29 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_presence_statuses", x => x.id);
+                    table.PrimaryKey("pk_presence_statuses", x => x.id);
                     table.ForeignKey(
-                        name: "fk_discord_presence_statuses_discord_presence_status_details_a",
+                        name: "fk_presence_statuses_presence_status_details_after_id",
                         column: x => x.after_id,
-                        principalTable: "discord_presence_status_details",
+                        principalTable: "presence_status_details",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "fk_discord_presence_statuses_discord_presence_status_details_b",
+                        name: "fk_presence_statuses_presence_status_details_before_id",
                         column: x => x.before_id,
-                        principalTable: "discord_presence_status_details",
+                        principalTable: "presence_status_details",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "fk_discord_presence_statuses_discord_users_user_id",
+                        name: "fk_presence_statuses_users_user_id",
                         column: x => x.user_id,
-                        principalTable: "discord_users",
+                        principalTable: "users",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_channels",
+                name: "channels",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -199,51 +199,51 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_channels", x => x.id);
+                    table.PrimaryKey("pk_channels", x => x.id);
                     table.ForeignKey(
-                        name: "fk_discord_channels_discord_channels_parent_channel_id",
+                        name: "fk_channels_channels_parent_channel_id",
                         column: x => x.parent_channel_id,
-                        principalTable: "discord_channels",
+                        principalTable: "channels",
                         principalColumn: "id");
                     table.ForeignKey(
-                        name: "fk_discord_channels_discord_guilds_guild_id",
+                        name: "fk_channels_guilds_guild_id",
                         column: x => x.guild_id,
-                        principalTable: "discord_guilds",
+                        principalTable: "guilds",
                         principalColumn: "id");
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_guild_members",
+                name: "guild_members",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
                     username = table.Column<string>(type: "text", nullable: false),
                     avatar_url = table.Column<string>(type: "text", nullable: true),
-                    discord_user_id = table.Column<Guid>(type: "uuid", nullable: false),
-                    discord_guild_id = table.Column<Guid>(type: "uuid", nullable: false),
+                    user_id = table.Column<Guid>(type: "uuid", nullable: false),
+                    guild_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_guild_members", x => x.id);
+                    table.PrimaryKey("pk_guild_members", x => x.id);
                     table.ForeignKey(
-                        name: "fk_discord_guild_members_discord_guilds_discord_guild_id",
-                        column: x => x.discord_guild_id,
-                        principalTable: "discord_guilds",
+                        name: "fk_guild_members_guilds_guild_id",
+                        column: x => x.guild_id,
+                        principalTable: "guilds",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "fk_discord_guild_members_discord_users_discord_user_id",
-                        column: x => x.discord_user_id,
-                        principalTable: "discord_users",
+                        name: "fk_guild_members_users_user_id",
+                        column: x => x.user_id,
+                        principalTable: "users",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_messages",
+                name: "messages",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -262,28 +262,28 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_messages", x => x.id);
+                    table.PrimaryKey("pk_messages", x => x.id);
                     table.ForeignKey(
-                        name: "fk_discord_messages_discord_channels_channel_id",
+                        name: "fk_messages_channels_channel_id",
                         column: x => x.channel_id,
-                        principalTable: "discord_channels",
+                        principalTable: "channels",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "fk_discord_messages_discord_messages_reply_to_message_id",
+                        name: "fk_messages_messages_reply_to_message_id",
                         column: x => x.reply_to_message_id,
-                        principalTable: "discord_messages",
+                        principalTable: "messages",
                         principalColumn: "id");
                     table.ForeignKey(
-                        name: "fk_discord_messages_discord_users_author_id",
+                        name: "fk_messages_users_author_id",
                         column: x => x.author_id,
-                        principalTable: "discord_users",
+                        principalTable: "users",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_typing_statuses",
+                name: "typing_statuses",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -295,23 +295,23 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_typing_statuses", x => x.id);
+                    table.PrimaryKey("pk_typing_statuses", x => x.id);
                     table.ForeignKey(
-                        name: "fk_discord_typing_statuses_discord_channels_channel_id",
+                        name: "fk_typing_statuses_channels_channel_id",
                         column: x => x.channel_id,
-                        principalTable: "discord_channels",
+                        principalTable: "channels",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "fk_discord_typing_statuses_discord_users_user_id",
+                        name: "fk_typing_statuses_users_user_id",
                         column: x => x.user_id,
-                        principalTable: "discord_users",
+                        principalTable: "users",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_voice_statuses",
+                name: "voice_statuses",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -325,35 +325,35 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_voice_statuses", x => x.id);
+                    table.PrimaryKey("pk_voice_statuses", x => x.id);
                     table.ForeignKey(
-                        name: "fk_discord_voice_statuses_discord_channels_channel_id",
+                        name: "fk_voice_statuses_channels_channel_id",
                         column: x => x.channel_id,
-                        principalTable: "discord_channels",
+                        principalTable: "channels",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "fk_discord_voice_statuses_discord_users_user_id",
+                        name: "fk_voice_statuses_users_user_id",
                         column: x => x.user_id,
-                        principalTable: "discord_users",
+                        principalTable: "users",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "fk_discord_voice_statuses_discord_voice_status_details_after_id",
+                        name: "fk_voice_statuses_voice_status_details_after_id",
                         column: x => x.after_id,
-                        principalTable: "discord_voice_status_details",
+                        principalTable: "voice_status_details",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "fk_discord_voice_statuses_discord_voice_status_details_before_id",
+                        name: "fk_voice_statuses_voice_status_details_before_id",
                         column: x => x.before_id,
-                        principalTable: "discord_voice_status_details",
+                        principalTable: "voice_status_details",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_message_content_edits",
+                name: "message_content_edits",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -367,17 +367,17 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_message_content_edits", x => x.id);
+                    table.PrimaryKey("pk_message_content_edits", x => x.id);
                     table.ForeignKey(
-                        name: "fk_discord_message_content_edits_discord_messages_message_id",
+                        name: "fk_message_content_edits_messages_message_id",
                         column: x => x.message_id,
-                        principalTable: "discord_messages",
+                        principalTable: "messages",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_reactions",
+                name: "reactions",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -391,135 +391,135 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_reactions", x => x.id);
+                    table.PrimaryKey("pk_reactions", x => x.id);
                     table.ForeignKey(
-                        name: "fk_discord_reactions_discord_emotes_emote_id",
+                        name: "fk_reactions_emotes_emote_id",
                         column: x => x.emote_id,
-                        principalTable: "discord_emotes",
+                        principalTable: "emotes",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "fk_discord_reactions_discord_messages_message_id",
+                        name: "fk_reactions_messages_message_id",
                         column: x => x.message_id,
-                        principalTable: "discord_messages",
+                        principalTable: "messages",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "fk_discord_reactions_discord_users_user_id",
+                        name: "fk_reactions_users_user_id",
                         column: x => x.user_id,
-                        principalTable: "discord_users",
+                        principalTable: "users",
                         principalColumn: "id",
                         onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_activities_presence_id",
-                table: "discord_activities",
+                name: "ix_activities_presence_id",
+                table: "activities",
                 column: "presence_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_channels_guild_id",
-                table: "discord_channels",
+                name: "ix_channels_guild_id",
+                table: "channels",
                 column: "guild_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_channels_parent_channel_id",
-                table: "discord_channels",
+                name: "ix_channels_parent_channel_id",
+                table: "channels",
                 column: "parent_channel_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_guild_members_discord_guild_id",
-                table: "discord_guild_members",
-                column: "discord_guild_id");
+                name: "ix_guild_members_guild_id",
+                table: "guild_members",
+                column: "guild_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_guild_members_discord_user_id",
-                table: "discord_guild_members",
-                column: "discord_user_id");
+                name: "ix_guild_members_user_id",
+                table: "guild_members",
+                column: "user_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_guilds_owner_id",
-                table: "discord_guilds",
+                name: "ix_guilds_owner_id",
+                table: "guilds",
                 column: "owner_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_message_content_edits_message_id",
-                table: "discord_message_content_edits",
+                name: "ix_message_content_edits_message_id",
+                table: "message_content_edits",
                 column: "message_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_messages_author_id",
-                table: "discord_messages",
+                name: "ix_messages_author_id",
+                table: "messages",
                 column: "author_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_messages_channel_id",
-                table: "discord_messages",
+                name: "ix_messages_channel_id",
+                table: "messages",
                 column: "channel_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_messages_reply_to_message_id",
-                table: "discord_messages",
+                name: "ix_messages_reply_to_message_id",
+                table: "messages",
                 column: "reply_to_message_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_presence_statuses_after_id",
-                table: "discord_presence_statuses",
+                name: "ix_presence_statuses_after_id",
+                table: "presence_statuses",
                 column: "after_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_presence_statuses_before_id",
-                table: "discord_presence_statuses",
+                name: "ix_presence_statuses_before_id",
+                table: "presence_statuses",
                 column: "before_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_presence_statuses_user_id",
-                table: "discord_presence_statuses",
+                name: "ix_presence_statuses_user_id",
+                table: "presence_statuses",
                 column: "user_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_reactions_emote_id",
-                table: "discord_reactions",
+                name: "ix_reactions_emote_id",
+                table: "reactions",
                 column: "emote_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_reactions_message_id",
-                table: "discord_reactions",
+                name: "ix_reactions_message_id",
+                table: "reactions",
                 column: "message_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_reactions_user_id",
-                table: "discord_reactions",
+                name: "ix_reactions_user_id",
+                table: "reactions",
                 column: "user_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_typing_statuses_channel_id",
-                table: "discord_typing_statuses",
+                name: "ix_typing_statuses_channel_id",
+                table: "typing_statuses",
                 column: "channel_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_typing_statuses_user_id",
-                table: "discord_typing_statuses",
+                name: "ix_typing_statuses_user_id",
+                table: "typing_statuses",
                 column: "user_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_voice_statuses_after_id",
-                table: "discord_voice_statuses",
+                name: "ix_voice_statuses_after_id",
+                table: "voice_statuses",
                 column: "after_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_voice_statuses_before_id",
-                table: "discord_voice_statuses",
+                name: "ix_voice_statuses_before_id",
+                table: "voice_statuses",
                 column: "before_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_voice_statuses_channel_id",
-                table: "discord_voice_statuses",
+                name: "ix_voice_statuses_channel_id",
+                table: "voice_statuses",
                 column: "channel_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_voice_statuses_user_id",
-                table: "discord_voice_statuses",
+                name: "ix_voice_statuses_user_id",
+                table: "voice_statuses",
                 column: "user_id");
         }
 
@@ -527,46 +527,46 @@ namespace ActivityArchiveService.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "discord_activities");
+                name: "activities");
 
             migrationBuilder.DropTable(
-                name: "discord_guild_members");
+                name: "guild_members");
 
             migrationBuilder.DropTable(
-                name: "discord_message_content_edits");
+                name: "message_content_edits");
 
             migrationBuilder.DropTable(
-                name: "discord_presence_statuses");
+                name: "presence_statuses");
 
             migrationBuilder.DropTable(
-                name: "discord_reactions");
+                name: "reactions");
 
             migrationBuilder.DropTable(
-                name: "discord_typing_statuses");
+                name: "typing_statuses");
 
             migrationBuilder.DropTable(
-                name: "discord_voice_statuses");
+                name: "voice_statuses");
 
             migrationBuilder.DropTable(
-                name: "discord_presence_status_details");
+                name: "presence_status_details");
 
             migrationBuilder.DropTable(
-                name: "discord_emotes");
+                name: "emotes");
 
             migrationBuilder.DropTable(
-                name: "discord_messages");
+                name: "messages");
 
             migrationBuilder.DropTable(
-                name: "discord_voice_status_details");
+                name: "voice_status_details");
 
             migrationBuilder.DropTable(
-                name: "discord_channels");
+                name: "channels");
 
             migrationBuilder.DropTable(
-                name: "discord_guilds");
+                name: "guilds");
 
             migrationBuilder.DropTable(
-                name: "discord_users");
+                name: "users");
         }
     }
 }

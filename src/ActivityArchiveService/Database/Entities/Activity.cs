@@ -2,7 +2,7 @@
 
 namespace ActivityArchiveService.Database.Entities;
 
-public class DiscordActivity : BaseEntity
+public class Activity : BaseEntity
 {
     public string Name { get; set; }
     public DiscordActivityType ActivityType { get; set; }
@@ -17,7 +17,7 @@ public class DiscordActivity : BaseEntity
     public string? ApplicationId { get; set; }
     public string? Party { get; set; }
 
-    public DiscordPresenceStatusDetails Presence { get; set; }
+    public PresenceStatusDetails Presence { get; set; }
 }
 
 public enum DiscordActivityType

@@ -28,39 +28,43 @@ public class ActivityArchiveContext : DbContext
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
-            //enum conversions
-            modelBuilder.Entity<DiscordPresenceStatusDetails>(p =>
+            #region enum conversions
+            
+            modelBuilder.Entity<PresenceStatusDetails>(p =>
             {
                 p.Property(p => p.DesktopStatus).HasConversion<string>();
                 p.Property(p => p.MobileStatus).HasConversion<string>();
                 p.Property(p => p.WebStatus).HasConversion<string>();
             });
 
-            modelBuilder.Entity<DiscordActivity>()
+            modelBuilder.Entity<Activity>()
                 .Property(p => p.ActivityType)
                 .HasConversion<string>();
 
-            modelBuilder.Entity<DiscordChannel>()
+            modelBuilder.Entity<Channel>()
                 .Property(p => p.Type)
                 .HasConversion<string>();
+
+            #endregion
             
-            // soft delete filter
-            //modelBuilder.Entity<BaseEntity>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordActivity>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordChannel>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordEmote>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordGuild>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordGuildMember>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordMessage>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordMessageContentEdit>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordPresenceStatus>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordPresenceStatusDetails>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordReaction>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordTypingStatus>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordUser>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordVoiceStatus>().HasQueryFilter(p => !p.DeletedAt.HasValue);
-            modelBuilder.Entity<DiscordVoiceStatusDetails>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            #region soft delete
+
+            modelBuilder.Entity<Activity>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<Channel>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<Emote>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<Guild>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<GuildMember>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<Message>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<MessageContentEdit>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<PresenceStatus>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<PresenceStatusDetails>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<Reaction>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<TypingStatus>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<User>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<VoiceStatus>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<VoiceStatusDetails>().HasQueryFilter(p => !p.DeletedAt.HasValue);
             
+            #endregion
             
             base.OnModelCreating(modelBuilder);
         }
@@ -96,20 +100,20 @@ public class ActivityArchiveContext : DbContext
 
         #region DbSets
 
-        public DbSet<DiscordActivity> DiscordActivities { get; set; }
-        public DbSet<DiscordChannel> DiscordChannels { get; set; }
-        public DbSet<DiscordEmote> DiscordEmotes { get; set; }
-        public DbSet<DiscordGuild> DiscordGuilds { get; set; }
-        public DbSet<DiscordGuildMember> DiscordGuildMembers { get; set; }
-        public DbSet<DiscordMessage> DiscordMessages { get; set; }
-        public DbSet<DiscordMessageContentEdit> DiscordMessageContentEdits { get; set; }
-        public DbSet<DiscordPresenceStatus> DiscordPresenceStatuses { get; set; }
-        public DbSet<DiscordPresenceStatusDetails> DiscordPresenceStatusDetails { get; set; }
-        public DbSet<DiscordReaction> DiscordReactions { get; set; }
-        public DbSet<DiscordTypingStatus> DiscordTypingStatuses { get; set; }
-        public DbSet<DiscordUser> DiscordUsers { get; set; }
-        public DbSet<DiscordVoiceStatus> DiscordVoiceStatuses { get; set; }
-        public DbSet<DiscordVoiceStatusDetails> DiscordVoiceStatusDetails { get; set; }
+        public DbSet<Activity> Activities { get; set; }
+        public DbSet<Channel> Channels { get; set; }
+        public DbSet<Emote> Emotes { get; set; }
+        public DbSet<Guild> Guilds { get; set; }
+        public DbSet<GuildMember> GuildMembers { get; set; }
+        public DbSet<Message> Messages { get; set; }
+        public DbSet<MessageContentEdit> MessageContentEdits { get; set; }
+        public DbSet<PresenceStatus> PresenceStatuses { get; set; }
+        public DbSet<PresenceStatusDetails> PresenceStatusDetails { get; set; }
+        public DbSet<Reaction> Reactions { get; set; }
+        public DbSet<TypingStatus> TypingStatuses { get; set; }
+        public DbSet<User> Users { get; set; }
+        public DbSet<VoiceStatus> VoiceStatuses { get; set; }
+        public DbSet<VoiceStatusDetails> VoiceStatusDetails { get; set; }
 
         #endregion
 }

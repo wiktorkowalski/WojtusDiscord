@@ -22,7 +22,7 @@ namespace ActivityArchiveService.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordActivity", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Activity", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -100,15 +100,15 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("updated_at");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_activities");
+                        .HasName("pk_activities");
 
                     b.HasIndex("PresenceId")
-                        .HasDatabaseName("ix_discord_activities_presence_id");
+                        .HasDatabaseName("ix_activities_presence_id");
 
-                    b.ToTable("discord_activities", (string)null);
+                    b.ToTable("activities", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordChannel", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Channel", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -166,18 +166,18 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("user_limit");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_channels");
+                        .HasName("pk_channels");
 
                     b.HasIndex("GuildId")
-                        .HasDatabaseName("ix_discord_channels_guild_id");
+                        .HasDatabaseName("ix_channels_guild_id");
 
                     b.HasIndex("ParentChannelId")
-                        .HasDatabaseName("ix_discord_channels_parent_channel_id");
+                        .HasDatabaseName("ix_channels_parent_channel_id");
 
-                    b.ToTable("discord_channels", (string)null);
+                    b.ToTable("channels", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordEmote", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Emote", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -214,12 +214,12 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("url");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_emotes");
+                        .HasName("pk_emotes");
 
-                    b.ToTable("discord_emotes", (string)null);
+                    b.ToTable("emotes", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordGuild", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Guild", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -256,15 +256,15 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("updated_at");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_guilds");
+                        .HasName("pk_guilds");
 
                     b.HasIndex("OwnerId")
-                        .HasDatabaseName("ix_discord_guilds_owner_id");
+                        .HasDatabaseName("ix_guilds_owner_id");
 
-                    b.ToTable("discord_guilds", (string)null);
+                    b.ToTable("guilds", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordGuildMember", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.GuildMember", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -283,17 +283,17 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deleted_at");
 
-                    b.Property<Guid>("DiscordGuildId")
+                    b.Property<Guid>("GuildId")
                         .HasColumnType("uuid")
-                        .HasColumnName("discord_guild_id");
-
-                    b.Property<Guid>("DiscordUserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("discord_user_id");
+                        .HasColumnName("guild_id");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("user_id");
 
                     b.Property<string>("Username")
                         .IsRequired()
@@ -301,18 +301,18 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("username");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_guild_members");
+                        .HasName("pk_guild_members");
 
-                    b.HasIndex("DiscordGuildId")
-                        .HasDatabaseName("ix_discord_guild_members_discord_guild_id");
+                    b.HasIndex("GuildId")
+                        .HasDatabaseName("ix_guild_members_guild_id");
 
-                    b.HasIndex("DiscordUserId")
-                        .HasDatabaseName("ix_discord_guild_members_discord_user_id");
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("ix_guild_members_user_id");
 
-                    b.ToTable("discord_guild_members", (string)null);
+                    b.ToTable("guild_members", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordMessage", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Message", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -368,21 +368,21 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("updated_at");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_messages");
+                        .HasName("pk_messages");
 
                     b.HasIndex("AuthorId")
-                        .HasDatabaseName("ix_discord_messages_author_id");
+                        .HasDatabaseName("ix_messages_author_id");
 
                     b.HasIndex("ChannelId")
-                        .HasDatabaseName("ix_discord_messages_channel_id");
+                        .HasDatabaseName("ix_messages_channel_id");
 
                     b.HasIndex("ReplyToMessageId")
-                        .HasDatabaseName("ix_discord_messages_reply_to_message_id");
+                        .HasDatabaseName("ix_messages_reply_to_message_id");
 
-                    b.ToTable("discord_messages", (string)null);
+                    b.ToTable("messages", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordMessageContentEdit", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.MessageContentEdit", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -418,15 +418,15 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("updated_at");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_message_content_edits");
+                        .HasName("pk_message_content_edits");
 
                     b.HasIndex("MessageId")
-                        .HasDatabaseName("ix_discord_message_content_edits_message_id");
+                        .HasDatabaseName("ix_message_content_edits_message_id");
 
-                    b.ToTable("discord_message_content_edits", (string)null);
+                    b.ToTable("message_content_edits", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordPresenceStatus", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.PresenceStatus", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -458,21 +458,21 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("user_id");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_presence_statuses");
+                        .HasName("pk_presence_statuses");
 
                     b.HasIndex("AfterId")
-                        .HasDatabaseName("ix_discord_presence_statuses_after_id");
+                        .HasDatabaseName("ix_presence_statuses_after_id");
 
                     b.HasIndex("BeforeId")
-                        .HasDatabaseName("ix_discord_presence_statuses_before_id");
+                        .HasDatabaseName("ix_presence_statuses_before_id");
 
                     b.HasIndex("UserId")
-                        .HasDatabaseName("ix_discord_presence_statuses_user_id");
+                        .HasDatabaseName("ix_presence_statuses_user_id");
 
-                    b.ToTable("discord_presence_statuses", (string)null);
+                    b.ToTable("presence_statuses", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordPresenceStatusDetails", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.PresenceStatusDetails", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -507,12 +507,12 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("web_status");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_presence_status_details");
+                        .HasName("pk_presence_status_details");
 
-                    b.ToTable("discord_presence_status_details", (string)null);
+                    b.ToTable("presence_status_details", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordReaction", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Reaction", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -548,21 +548,21 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("user_id");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_reactions");
+                        .HasName("pk_reactions");
 
                     b.HasIndex("EmoteId")
-                        .HasDatabaseName("ix_discord_reactions_emote_id");
+                        .HasDatabaseName("ix_reactions_emote_id");
 
                     b.HasIndex("MessageId")
-                        .HasDatabaseName("ix_discord_reactions_message_id");
+                        .HasDatabaseName("ix_reactions_message_id");
 
                     b.HasIndex("UserId")
-                        .HasDatabaseName("ix_discord_reactions_user_id");
+                        .HasDatabaseName("ix_reactions_user_id");
 
-                    b.ToTable("discord_reactions", (string)null);
+                    b.ToTable("reactions", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordTypingStatus", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.TypingStatus", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -590,18 +590,18 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("user_id");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_typing_statuses");
+                        .HasName("pk_typing_statuses");
 
                     b.HasIndex("ChannelId")
-                        .HasDatabaseName("ix_discord_typing_statuses_channel_id");
+                        .HasDatabaseName("ix_typing_statuses_channel_id");
 
                     b.HasIndex("UserId")
-                        .HasDatabaseName("ix_discord_typing_statuses_user_id");
+                        .HasDatabaseName("ix_typing_statuses_user_id");
 
-                    b.ToTable("discord_typing_statuses", (string)null);
+                    b.ToTable("typing_statuses", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordUser", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -646,12 +646,12 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("username");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_users");
+                        .HasName("pk_users");
 
-                    b.ToTable("discord_users", (string)null);
+                    b.ToTable("users", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordVoiceStatus", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.VoiceStatus", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -687,24 +687,24 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("user_id");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_voice_statuses");
+                        .HasName("pk_voice_statuses");
 
                     b.HasIndex("AfterId")
-                        .HasDatabaseName("ix_discord_voice_statuses_after_id");
+                        .HasDatabaseName("ix_voice_statuses_after_id");
 
                     b.HasIndex("BeforeId")
-                        .HasDatabaseName("ix_discord_voice_statuses_before_id");
+                        .HasDatabaseName("ix_voice_statuses_before_id");
 
                     b.HasIndex("ChannelId")
-                        .HasDatabaseName("ix_discord_voice_statuses_channel_id");
+                        .HasDatabaseName("ix_voice_statuses_channel_id");
 
                     b.HasIndex("UserId")
-                        .HasDatabaseName("ix_discord_voice_statuses_user_id");
+                        .HasDatabaseName("ix_voice_statuses_user_id");
 
-                    b.ToTable("discord_voice_statuses", (string)null);
+                    b.ToTable("voice_statuses", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordVoiceStatusDetails", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.VoiceStatusDetails", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -752,93 +752,93 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("updated_at");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_voice_status_details");
+                        .HasName("pk_voice_status_details");
 
-                    b.ToTable("discord_voice_status_details", (string)null);
+                    b.ToTable("voice_status_details", (string)null);
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordActivity", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Activity", b =>
                 {
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordPresenceStatusDetails", "Presence")
+                    b.HasOne("ActivityArchiveService.Database.Entities.PresenceStatusDetails", "Presence")
                         .WithMany("Activities")
                         .HasForeignKey("PresenceId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_activities_discord_presence_status_details_presence");
+                        .HasConstraintName("fk_activities_presence_status_details_presence_id");
 
                     b.Navigation("Presence");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordChannel", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Channel", b =>
                 {
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordGuild", "Guild")
+                    b.HasOne("ActivityArchiveService.Database.Entities.Guild", "Guild")
                         .WithMany("Channels")
                         .HasForeignKey("GuildId")
-                        .HasConstraintName("fk_discord_channels_discord_guilds_guild_id");
+                        .HasConstraintName("fk_channels_guilds_guild_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordChannel", "ParentChannel")
+                    b.HasOne("ActivityArchiveService.Database.Entities.Channel", "ParentChannel")
                         .WithMany()
                         .HasForeignKey("ParentChannelId")
-                        .HasConstraintName("fk_discord_channels_discord_channels_parent_channel_id");
+                        .HasConstraintName("fk_channels_channels_parent_channel_id");
 
                     b.Navigation("Guild");
 
                     b.Navigation("ParentChannel");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordGuild", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Guild", b =>
                 {
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordUser", "Owner")
+                    b.HasOne("ActivityArchiveService.Database.Entities.User", "Owner")
                         .WithMany()
                         .HasForeignKey("OwnerId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_guilds_discord_users_owner_id");
+                        .HasConstraintName("fk_guilds_users_owner_id");
 
                     b.Navigation("Owner");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordGuildMember", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.GuildMember", b =>
                 {
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordGuild", "DiscordGuild")
+                    b.HasOne("ActivityArchiveService.Database.Entities.Guild", "Guild")
                         .WithMany("Members")
-                        .HasForeignKey("DiscordGuildId")
+                        .HasForeignKey("GuildId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_guild_members_discord_guilds_discord_guild_id");
+                        .HasConstraintName("fk_guild_members_guilds_guild_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordUser", "DiscordUser")
+                    b.HasOne("ActivityArchiveService.Database.Entities.User", "User")
                         .WithMany("Guilds")
-                        .HasForeignKey("DiscordUserId")
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_guild_members_discord_users_discord_user_id");
+                        .HasConstraintName("fk_guild_members_users_user_id");
 
-                    b.Navigation("DiscordGuild");
+                    b.Navigation("Guild");
 
-                    b.Navigation("DiscordUser");
+                    b.Navigation("User");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordMessage", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Message", b =>
                 {
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordUser", "Author")
+                    b.HasOne("ActivityArchiveService.Database.Entities.User", "Author")
                         .WithMany("Messages")
                         .HasForeignKey("AuthorId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_messages_discord_users_author_id");
+                        .HasConstraintName("fk_messages_users_author_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordChannel", "Channel")
+                    b.HasOne("ActivityArchiveService.Database.Entities.Channel", "Channel")
                         .WithMany("Messages")
                         .HasForeignKey("ChannelId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_messages_discord_channels_channel_id");
+                        .HasConstraintName("fk_messages_channels_channel_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordMessage", "ReplyToMessage")
+                    b.HasOne("ActivityArchiveService.Database.Entities.Message", "ReplyToMessage")
                         .WithMany()
                         .HasForeignKey("ReplyToMessageId")
-                        .HasConstraintName("fk_discord_messages_discord_messages_reply_to_message_id");
+                        .HasConstraintName("fk_messages_messages_reply_to_message_id");
 
                     b.Navigation("Author");
 
@@ -847,40 +847,40 @@ namespace ActivityArchiveService.Migrations
                     b.Navigation("ReplyToMessage");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordMessageContentEdit", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.MessageContentEdit", b =>
                 {
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordMessage", "Message")
+                    b.HasOne("ActivityArchiveService.Database.Entities.Message", "Message")
                         .WithMany("ContentEdits")
                         .HasForeignKey("MessageId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_message_content_edits_discord_messages_message_id");
+                        .HasConstraintName("fk_message_content_edits_messages_message_id");
 
                     b.Navigation("Message");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordPresenceStatus", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.PresenceStatus", b =>
                 {
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordPresenceStatusDetails", "After")
+                    b.HasOne("ActivityArchiveService.Database.Entities.PresenceStatusDetails", "After")
                         .WithMany()
                         .HasForeignKey("AfterId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_presence_statuses_discord_presence_status_details_a");
+                        .HasConstraintName("fk_presence_statuses_presence_status_details_after_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordPresenceStatusDetails", "Before")
+                    b.HasOne("ActivityArchiveService.Database.Entities.PresenceStatusDetails", "Before")
                         .WithMany()
                         .HasForeignKey("BeforeId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_presence_statuses_discord_presence_status_details_b");
+                        .HasConstraintName("fk_presence_statuses_presence_status_details_before_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordUser", "User")
+                    b.HasOne("ActivityArchiveService.Database.Entities.User", "User")
                         .WithMany("PresenceStatuses")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_presence_statuses_discord_users_user_id");
+                        .HasConstraintName("fk_presence_statuses_users_user_id");
 
                     b.Navigation("After");
 
@@ -889,28 +889,28 @@ namespace ActivityArchiveService.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordReaction", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Reaction", b =>
                 {
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordEmote", "Emote")
+                    b.HasOne("ActivityArchiveService.Database.Entities.Emote", "Emote")
                         .WithMany("Reactions")
                         .HasForeignKey("EmoteId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_reactions_discord_emotes_emote_id");
+                        .HasConstraintName("fk_reactions_emotes_emote_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordMessage", "Message")
+                    b.HasOne("ActivityArchiveService.Database.Entities.Message", "Message")
                         .WithMany("Reactions")
                         .HasForeignKey("MessageId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_reactions_discord_messages_message_id");
+                        .HasConstraintName("fk_reactions_messages_message_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordUser", "User")
+                    b.HasOne("ActivityArchiveService.Database.Entities.User", "User")
                         .WithMany("Reactions")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_reactions_discord_users_user_id");
+                        .HasConstraintName("fk_reactions_users_user_id");
 
                     b.Navigation("Emote");
 
@@ -919,56 +919,56 @@ namespace ActivityArchiveService.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordTypingStatus", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.TypingStatus", b =>
                 {
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordChannel", "Channel")
+                    b.HasOne("ActivityArchiveService.Database.Entities.Channel", "Channel")
                         .WithMany()
                         .HasForeignKey("ChannelId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_typing_statuses_discord_channels_channel_id");
+                        .HasConstraintName("fk_typing_statuses_channels_channel_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordUser", "User")
+                    b.HasOne("ActivityArchiveService.Database.Entities.User", "User")
                         .WithMany("TypingStatuses")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_typing_statuses_discord_users_user_id");
+                        .HasConstraintName("fk_typing_statuses_users_user_id");
 
                     b.Navigation("Channel");
 
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordVoiceStatus", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.VoiceStatus", b =>
                 {
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordVoiceStatusDetails", "After")
+                    b.HasOne("ActivityArchiveService.Database.Entities.VoiceStatusDetails", "After")
                         .WithMany()
                         .HasForeignKey("AfterId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_voice_statuses_discord_voice_status_details_after_id");
+                        .HasConstraintName("fk_voice_statuses_voice_status_details_after_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordVoiceStatusDetails", "Before")
+                    b.HasOne("ActivityArchiveService.Database.Entities.VoiceStatusDetails", "Before")
                         .WithMany()
                         .HasForeignKey("BeforeId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_voice_statuses_discord_voice_status_details_before_id");
+                        .HasConstraintName("fk_voice_statuses_voice_status_details_before_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordChannel", "Channel")
+                    b.HasOne("ActivityArchiveService.Database.Entities.Channel", "Channel")
                         .WithMany("VoiceStatuses")
                         .HasForeignKey("ChannelId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_voice_statuses_discord_channels_channel_id");
+                        .HasConstraintName("fk_voice_statuses_channels_channel_id");
 
-                    b.HasOne("ActivityArchiveService.Database.Entities.DiscordUser", "User")
+                    b.HasOne("ActivityArchiveService.Database.Entities.User", "User")
                         .WithMany("VoiceStatuses")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_voice_statuses_discord_users_user_id");
+                        .HasConstraintName("fk_voice_statuses_users_user_id");
 
                     b.Navigation("After");
 
@@ -979,38 +979,38 @@ namespace ActivityArchiveService.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordChannel", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Channel", b =>
                 {
                     b.Navigation("Messages");
 
                     b.Navigation("VoiceStatuses");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordEmote", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Emote", b =>
                 {
                     b.Navigation("Reactions");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordGuild", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Guild", b =>
                 {
                     b.Navigation("Channels");
 
                     b.Navigation("Members");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordMessage", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.Message", b =>
                 {
                     b.Navigation("ContentEdits");
 
                     b.Navigation("Reactions");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordPresenceStatusDetails", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.PresenceStatusDetails", b =>
                 {
                     b.Navigation("Activities");
                 });
 
-            modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordUser", b =>
+            modelBuilder.Entity("ActivityArchiveService.Database.Entities.User", b =>
                 {
                     b.Navigation("Guilds");
 

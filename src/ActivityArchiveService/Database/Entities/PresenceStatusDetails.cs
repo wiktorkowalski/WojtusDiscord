@@ -1,13 +1,13 @@
 ﻿namespace ActivityArchiveService.Database.Entities
 {
-    public class DiscordPresenceStatusDetails : BaseEntity
+    public class PresenceStatusDetails : BaseEntity
     {
         public DiscordStatus DesktopStatus { get; set; }
         public DiscordStatus MobileStatus { get; set; }
         public DiscordStatus WebStatus { get; set; }
 
         //public DiscordPresenceStatus PresenceStatus { get; set; }
-        public ICollection<DiscordActivity> Activities { get; set; }
+        public ICollection<Activity> Activities { get; set; }
     }
 
     #region Enums

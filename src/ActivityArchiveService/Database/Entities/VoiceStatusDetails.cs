@@ -1,6 +1,6 @@
 ﻿namespace ActivityArchiveService.Database.Entities;
 
-public class DiscordVoiceStatusDetails : BaseEntity
+public class VoiceStatusDetails : BaseEntity
 {
     public bool IsSelfMuted { get; set; }
     public bool IsSelfDeafened { get; set; }
