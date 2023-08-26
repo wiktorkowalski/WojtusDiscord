@@ -1,8 +1,9 @@
-﻿namespace ActivityArchiveService.Database.Entities;
+﻿using ActivityArchiveService.Database.Entities.Base;
 
-public class Emote : BaseEntity
+namespace ActivityArchiveService.Database.Entities;
+
+public class Emote : BaseDiscordEntity
 {
-    public ulong DiscordId { get; set; }
     public string Name { get; set; }
     public string? Url { get; set; }
     public bool IsAnimated { get; set; }

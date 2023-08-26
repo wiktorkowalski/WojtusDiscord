@@ -1,8 +1,9 @@
-﻿namespace ActivityArchiveService.Database.Entities;
+﻿using ActivityArchiveService.Database.Entities.Base;
 
-public class User : BaseEntity
+namespace ActivityArchiveService.Database.Entities;
+
+public class User : BaseDiscordEntity
 {
-    public ulong DiscordId { get; set; }
     public string Username { get; set; }
     public string? Discriminator { set; get; }
     public string? AvatarUrl { get; set; }

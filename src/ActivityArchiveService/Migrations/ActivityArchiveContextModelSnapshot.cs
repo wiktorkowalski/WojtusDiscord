@@ -20,6 +20,9 @@ namespace ActivityArchiveService.Migrations
                 .HasAnnotation("ProductVersion", "7.0.10")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "activity_type", new[] { "playing", "streaming", "listening_to", "watching", "custom", "competing" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "channel_type", new[] { "text", "private", "voice", "group", "category", "news", "store", "news_thread", "public_thread", "private_thread", "stage", "unknown" });
+            NpgsqlModelBuilderExtensions.HasPostgresEnum(modelBuilder, "user_status", new[] { "offline", "online", "idle", "do_not_disturb", "invisible" });
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
             modelBuilder.Entity("ActivityArchiveService.Database.Entities.Activity", b =>
@@ -29,9 +32,8 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
-                    b.Property<string>("ActivityType")
-                        .IsRequired()
-                        .HasColumnType("text")
+                    b.Property<int>("ActivityType")
+                        .HasColumnType("integer")
                         .HasColumnName("activity_type");
 
                     b.Property<string>("ApplicationId")
@@ -50,9 +52,9 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnType("text")
                         .HasColumnName("details");
 
-                    b.Property<DateTime?>("End")
+                    b.Property<DateTime?>("EndTime")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("end");
+                        .HasColumnName("end_time");
 
                     b.Property<string>("LargeImage")
                         .IsRequired()
@@ -87,9 +89,9 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnType("text")
                         .HasColumnName("small_image_text");
 
-                    b.Property<DateTime?>("Start")
+                    b.Property<DateTime?>("StartTime")
                         .HasColumnType("timestamp with time zone")
-                        .HasColumnName("start");
+                        .HasColumnName("start_time");
 
                     b.Property<string>("State")
                         .HasColumnType("text")
@@ -152,9 +154,8 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnType("text")
                         .HasColumnName("topic");
 
-                    b.Property<string>("Type")
-                        .IsRequired()
-                        .HasColumnType("text")
+                    b.Property<int>("Type")
+                        .HasColumnType("integer")
                         .HasColumnName("type");
 
                     b.Property<DateTime>("UpdatedAt")
@@ -282,6 +283,10 @@ namespace ActivityArchiveService.Migrations
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deleted_at");
+
+                    b.Property<decimal>("DiscordId")
+                        .HasColumnType("numeric(20,0)")
+                        .HasColumnName("discord_id");
 
                     b.Property<Guid>("GuildId")
                         .HasColumnType("uuid")
@@ -487,23 +492,20 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deleted_at");
 
-                    b.Property<string>("DesktopStatus")
-                        .IsRequired()
-                        .HasColumnType("text")
+                    b.Property<int>("DesktopStatus")
+                        .HasColumnType("integer")
                         .HasColumnName("desktop_status");
 
-                    b.Property<string>("MobileStatus")
-                        .IsRequired()
-                        .HasColumnType("text")
+                    b.Property<int>("MobileStatus")
+                        .HasColumnType("integer")
                         .HasColumnName("mobile_status");
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
 
-                    b.Property<string>("WebStatus")
-                        .IsRequired()
-                        .HasColumnType("text")
+                    b.Property<int>("WebStatus")
+                        .HasColumnType("integer")
                         .HasColumnName("web_status");
 
                     b.HasKey("Id")

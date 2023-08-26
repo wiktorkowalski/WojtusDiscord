@@ -1,13 +1,15 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
+using ActivityArchiveService.Database.Entities.Base;
+using ActivityArchiveService.Database.Entities.Enums;
 
 namespace ActivityArchiveService.Database.Entities;
 
 public class Activity : BaseEntity
 {
     public string Name { get; set; }
-    public DiscordActivityType ActivityType { get; set; }
-    public DateTime? Start { get; set; }
-    public DateTime? End { get; set; }
+    public ActivityType ActivityType { get; set; }
+    public DateTime? StartTime { get; set; }
+    public DateTime? EndTime { get; set; }
     public string LargeImageText { get; set; }
     public string LargeImage { get; set; }
     public string SmallImageText { get; set; }
@@ -18,14 +20,4 @@ public class Activity : BaseEntity
     public string? Party { get; set; }
 
     public PresenceStatusDetails Presence { get; set; }
-}
-
-public enum DiscordActivityType
-{
-    Playing,
-    Streaming,
-    ListeningTo,
-    Watching,
-    Custom,
-    Competing,
 }

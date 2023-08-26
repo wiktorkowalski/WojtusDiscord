@@ -1,10 +1,10 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
+using ActivityArchiveService.Database.Entities.Base;
 
 namespace ActivityArchiveService.Database.Entities;
 
-public class Guild : BaseEntity
+public class Guild : BaseDiscordEntity
 {
-    public ulong DiscordId { get; set; }
     public string Name { get; set; }
     public string? IconUrl { get; set; }
 

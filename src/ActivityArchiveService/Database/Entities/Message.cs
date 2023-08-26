@@ -1,10 +1,10 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
+using ActivityArchiveService.Database.Entities.Base;
 
 namespace ActivityArchiveService.Database.Entities;
 
-public class Message : BaseEntity
+public class Message : BaseDiscordEntity
 {
-    public ulong DiscordId { get; set; }
     public string? Content { get; set; }
     public bool HasAttatchment { get; set; }
     public bool IsEdited { get; set; }

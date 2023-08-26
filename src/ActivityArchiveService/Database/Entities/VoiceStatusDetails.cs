@@ -1,4 +1,6 @@
-﻿namespace ActivityArchiveService.Database.Entities;
+﻿using ActivityArchiveService.Database.Entities.Base;
+
+namespace ActivityArchiveService.Database.Entities;
 
 public class VoiceStatusDetails : BaseEntity
 {

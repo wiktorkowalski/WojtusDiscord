@@ -11,18 +11,23 @@ namespace ActivityArchiveService.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.AlterDatabase()
+                .Annotation("Npgsql:Enum:activity_type", "playing,streaming,listening_to,watching,custom,competing")
+                .Annotation("Npgsql:Enum:channel_type", "text,private,voice,group,category,news,store,news_thread,public_thread,private_thread,stage,unknown")
+                .Annotation("Npgsql:Enum:user_status", "offline,online,idle,do_not_disturb,invisible");
+
             migrationBuilder.CreateTable(
                 name: "emotes",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
-                    discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false),
                     name = table.Column<string>(type: "text", nullable: false),
                     url = table.Column<string>(type: "text", nullable: true),
                     is_animated = table.Column<bool>(type: "boolean", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -34,9 +39,9 @@ namespace ActivityArchiveService.Migrations
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
-                    desktop_status = table.Column<string>(type: "text", nullable: false),
-                    mobile_status = table.Column<string>(type: "text", nullable: false),
-                    web_status = table.Column<string>(type: "text", nullable: false),
+                    desktop_status = table.Column<int>(type: "integer", nullable: false),
+                    mobile_status = table.Column<int>(type: "integer", nullable: false),
+                    web_status = table.Column<int>(type: "integer", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
@@ -51,7 +56,6 @@ namespace ActivityArchiveService.Migrations
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
-                    discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false),
                     username = table.Column<string>(type: "text", nullable: false),
                     discriminator = table.Column<string>(type: "text", nullable: true),
                     avatar_url = table.Column<string>(type: "text", nullable: true),
@@ -59,7 +63,8 @@ namespace ActivityArchiveService.Migrations
                     is_webhook = table.Column<bool>(type: "boolean", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -93,9 +98,9 @@ namespace ActivityArchiveService.Migrations
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
                     name = table.Column<string>(type: "text", nullable: false),
-                    activity_type = table.Column<string>(type: "text", nullable: false),
-                    start = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
-                    end = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    activity_type = table.Column<int>(type: "integer", nullable: false),
+                    start_time = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    end_time = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
                     large_image_text = table.Column<string>(type: "text", nullable: false),
                     large_image = table.Column<string>(type: "text", nullable: false),
                     small_image_text = table.Column<string>(type: "text", nullable: false),
@@ -125,13 +130,13 @@ namespace ActivityArchiveService.Migrations
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
-                    discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false),
                     name = table.Column<string>(type: "text", nullable: false),
                     icon_url = table.Column<string>(type: "text", nullable: true),
                     owner_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -184,18 +189,18 @@ namespace ActivityArchiveService.Migrations
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
-                    discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false),
                     name = table.Column<string>(type: "text", nullable: false),
                     topic = table.Column<string>(type: "text", nullable: true),
                     bit_rate = table.Column<int>(type: "integer", nullable: true),
                     user_limit = table.Column<int>(type: "integer", nullable: true),
                     rtc_region = table.Column<string>(type: "text", nullable: true),
-                    type = table.Column<string>(type: "text", nullable: false),
+                    type = table.Column<int>(type: "integer", nullable: false),
                     parent_channel_id = table.Column<Guid>(type: "uuid", nullable: true),
                     guild_id = table.Column<Guid>(type: "uuid", nullable: true),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -223,7 +228,8 @@ namespace ActivityArchiveService.Migrations
                     guild_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -247,7 +253,6 @@ namespace ActivityArchiveService.Migrations
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
-                    discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false),
                     content = table.Column<string>(type: "text", nullable: true),
                     has_attatchment = table.Column<bool>(type: "boolean", nullable: false),
                     is_edited = table.Column<bool>(type: "boolean", nullable: false),
@@ -258,7 +263,8 @@ namespace ActivityArchiveService.Migrations
                     author_id = table.Column<Guid>(type: "uuid", nullable: false),
                     created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
                     updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    discord_id = table.Column<decimal>(type: "numeric(20,0)", nullable: false)
                 },
                 constraints: table =>
                 {

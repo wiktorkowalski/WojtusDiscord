@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
+using ActivityArchiveService.Database.Entities.Base;
 
 namespace ActivityArchiveService.Database.Entities
 {

@@ -1,5 +1,7 @@
 ﻿using ActivityArchiveService.Configuration;
 using ActivityArchiveService.Database.Entities;
+using ActivityArchiveService.Database.Entities.Base;
+using ActivityArchiveService.Database.Entities.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -28,22 +30,30 @@ public class ActivityArchiveContext : DbContext
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            #region enums
+
+            modelBuilder.HasPostgresEnum<ActivityType>();
+            modelBuilder.HasPostgresEnum<ChannelType>();
+            modelBuilder.HasPostgresEnum<UserStatus>();
+            
+            #endregion
+            
             #region enum conversions
             
-            modelBuilder.Entity<PresenceStatusDetails>(p =>
-            {
-                p.Property(p => p.DesktopStatus).HasConversion<string>();
-                p.Property(p => p.MobileStatus).HasConversion<string>();
-                p.Property(p => p.WebStatus).HasConversion<string>();
-            });
-
-            modelBuilder.Entity<Activity>()
-                .Property(p => p.ActivityType)
-                .HasConversion<string>();
-
-            modelBuilder.Entity<Channel>()
-                .Property(p => p.Type)
-                .HasConversion<string>();
+            // modelBuilder.Entity<PresenceStatusDetails>(p =>
+            // {
+            //     p.Property(p => p.DesktopStatus).HasConversion<string>();
+            //     p.Property(p => p.MobileStatus).HasConversion<string>();
+            //     p.Property(p => p.WebStatus).HasConversion<string>();
+            // });
+            //
+            // modelBuilder.Entity<Activity>()
+            //     .Property(p => p.ActivityType)
+            //     .HasConversion<string>();
+            //
+            // modelBuilder.Entity<Channel>()
+            //     .Property(p => p.Type)
+            //     .HasConversion<string>();
 
             #endregion
             

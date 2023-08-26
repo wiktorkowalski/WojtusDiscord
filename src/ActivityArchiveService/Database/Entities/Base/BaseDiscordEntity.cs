@@ -1,4 +1,4 @@
-﻿namespace ActivityArchiveService.Database.Entities;
+﻿namespace ActivityArchiveService.Database.Entities.Base;
 
 public class BaseDiscordEntity : BaseEntity
 {

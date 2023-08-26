@@ -1,8 +1,9 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
+using ActivityArchiveService.Database.Entities.Base;
 
 namespace ActivityArchiveService.Database.Entities
 {
-    public class GuildMember : BaseEntity
+    public class GuildMember : BaseDiscordEntity
     {
         public string Username { get; set; }
         public string? AvatarUrl { get; set; }
