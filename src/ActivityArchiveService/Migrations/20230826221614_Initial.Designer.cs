@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace ActivityArchiveService.Migrations
 {
     [DbContext(typeof(ActivityArchiveContext))]
-    [Migration("20230808210730_Initial")]
+    [Migration("20230826221614_Initial")]
     partial class Initial
     {
         /// <inheritdoc />
@@ -421,12 +421,12 @@ namespace ActivityArchiveService.Migrations
                         .HasColumnName("updated_at");
 
                     b.HasKey("Id")
-                        .HasName("pk_discord_message_content_edit");
+                        .HasName("pk_discord_message_content_edits");
 
                     b.HasIndex("MessageId")
-                        .HasDatabaseName("ix_discord_message_content_edit_message_id");
+                        .HasDatabaseName("ix_discord_message_content_edits_message_id");
 
-                    b.ToTable("discord_message_content_edit", (string)null);
+                    b.ToTable("discord_message_content_edits", (string)null);
                 });
 
             modelBuilder.Entity("ActivityArchiveService.Database.Entities.DiscordPresenceStatus", b =>
@@ -857,7 +857,7 @@ namespace ActivityArchiveService.Migrations
                         .HasForeignKey("MessageId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
-                        .HasConstraintName("fk_discord_message_content_edit_discord_messages_message_id");
+                        .HasConstraintName("fk_discord_message_content_edits_discord_messages_message_id");
 
                     b.Navigation("Message");
                 });

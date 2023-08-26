@@ -353,7 +353,7 @@ namespace ActivityArchiveService.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "discord_message_content_edit",
+                name: "discord_message_content_edits",
                 columns: table => new
                 {
                     id = table.Column<Guid>(type: "uuid", nullable: false),
@@ -367,9 +367,9 @@ namespace ActivityArchiveService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_discord_message_content_edit", x => x.id);
+                    table.PrimaryKey("pk_discord_message_content_edits", x => x.id);
                     table.ForeignKey(
-                        name: "fk_discord_message_content_edit_discord_messages_message_id",
+                        name: "fk_discord_message_content_edits_discord_messages_message_id",
                         column: x => x.message_id,
                         principalTable: "discord_messages",
                         principalColumn: "id",
@@ -443,8 +443,8 @@ namespace ActivityArchiveService.Migrations
                 column: "owner_id");
 
             migrationBuilder.CreateIndex(
-                name: "ix_discord_message_content_edit_message_id",
-                table: "discord_message_content_edit",
+                name: "ix_discord_message_content_edits_message_id",
+                table: "discord_message_content_edits",
                 column: "message_id");
 
             migrationBuilder.CreateIndex(
@@ -533,7 +533,7 @@ namespace ActivityArchiveService.Migrations
                 name: "discord_guild_members");
 
             migrationBuilder.DropTable(
-                name: "discord_message_content_edit");
+                name: "discord_message_content_edits");
 
             migrationBuilder.DropTable(
                 name: "discord_presence_statuses");

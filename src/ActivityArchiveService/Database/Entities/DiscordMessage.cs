@@ -1,4 +1,6 @@
-﻿namespace ActivityArchiveService.Database.Entities;
+﻿using System.ComponentModel.DataAnnotations.Schema;
+
+namespace ActivityArchiveService.Database.Entities;
 
 public class DiscordMessage : BaseEntity
 {

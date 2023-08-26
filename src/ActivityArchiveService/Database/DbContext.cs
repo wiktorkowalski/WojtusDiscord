@@ -45,7 +45,23 @@ public class ActivityArchiveContext : DbContext
                 .HasConversion<string>();
             
             // soft delete filter
-            // modelBuilder.Entity<BaseEntity>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            //modelBuilder.Entity<BaseEntity>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordActivity>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordChannel>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordEmote>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordGuild>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordGuildMember>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordMessage>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordMessageContentEdit>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordPresenceStatus>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordPresenceStatusDetails>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordReaction>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordTypingStatus>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordUser>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordVoiceStatus>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            modelBuilder.Entity<DiscordVoiceStatusDetails>().HasQueryFilter(p => !p.DeletedAt.HasValue);
+            
+            
             base.OnModelCreating(modelBuilder);
         }
 
@@ -59,12 +75,14 @@ public class ActivityArchiveContext : DbContext
                 {
                     item.State = EntityState.Modified;
                     item.Entity.DeletedAt = DateTime.UtcNow;
+                    continue;
                 }
                 
                 if (item.State == EntityState.Added)
                 {
                     item.Entity.CreatedAt = DateTime.UtcNow;
                     item.Entity.UpdatedAt = DateTime.UtcNow;
+                    continue;
                 }
                 
                 if (item.State == EntityState.Modified)
@@ -84,7 +102,7 @@ public class ActivityArchiveContext : DbContext
         public DbSet<DiscordGuild> DiscordGuilds { get; set; }
         public DbSet<DiscordGuildMember> DiscordGuildMembers { get; set; }
         public DbSet<DiscordMessage> DiscordMessages { get; set; }
-        public DbSet<DiscordMessageContentEdit> DiscordMessageContentEdit { get; set; }
+        public DbSet<DiscordMessageContentEdit> DiscordMessageContentEdits { get; set; }
         public DbSet<DiscordPresenceStatus> DiscordPresenceStatuses { get; set; }
         public DbSet<DiscordPresenceStatusDetails> DiscordPresenceStatusDetails { get; set; }
         public DbSet<DiscordReaction> DiscordReactions { get; set; }
