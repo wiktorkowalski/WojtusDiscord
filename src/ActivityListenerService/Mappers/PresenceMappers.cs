@@ -21,9 +21,7 @@ public static class PresenceMappers
     {
         return new DiscordPresenceStatusDetails
         {
-            DesktopStatus = (DiscordStatus)presence.ClientStatus.Desktop.Value,
-            MobileStatus = (DiscordStatus)presence.ClientStatus.Mobile.Value,
-            WebStatus = (DiscordStatus)presence.ClientStatus.Web.Value,
+            Status = (DiscordStatus)presence.Status,
             Activities = presence.Activities.Select(a => a.MapToDiscordActivity()).ToList()
         };
     }
@@ -34,16 +32,16 @@ public static class PresenceMappers
         {
             Name = activity.Name,
             ActivityType = (DiscordActivityType)activity.ActivityType,
-            Start = activity.RichPresence?.StartTimestamp?.UtcDateTime,
-            End = activity.RichPresence?.EndTimestamp?.UtcDateTime,
-            LargeImage = activity.RichPresence?.LargeImage.Id,
-            LargeImageText = activity.RichPresence?.LargeImageText,
-            SmallImage = activity.RichPresence?.SmallImage.Id,
-            SmallImageText = activity.RichPresence?.SmallImageText,
-            Details = activity.RichPresence?.Details,
-            State = activity.RichPresence?.State,
-            ApplicationId = activity.RichPresence?.Application.Id.ToString(),
-            Party = activity.RichPresence?.PartyId.ToString(),
+            Start = activity.RichPresence?.StartTimestamp?.UtcDateTime ?? null,
+            End = activity.RichPresence?.EndTimestamp?.UtcDateTime ?? null,
+            LargeImage = activity.RichPresence?.LargeImage?.Id ?? null,
+            LargeImageText = activity.RichPresence?.LargeImageText ?? null,
+            SmallImage = activity.RichPresence?.SmallImage?.Id ?? null,
+            SmallImageText = activity.RichPresence?.SmallImageText ?? null,
+            Details = activity.RichPresence?.Details ?? null,
+            State = activity.RichPresence?.State ?? null,
+            ApplicationId = activity.RichPresence?.Application?.Id.ToString() ?? null,
+            Party = activity.RichPresence?.PartyId?.ToString() ?? null,
             EmoteId = activity.CustomStatus?.Emoji?.Id ?? null,
         };
     }

@@ -1,10 +1,10 @@
-﻿using ActivityListenerService.Mappers;
+﻿using System.Text.Json;
+using ActivityListenerService.Mappers;
 using ActivityListenerService.Models;
-using ActivityListenerService.Services;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 
-namespace ActivityListenerService;
+namespace ActivityListenerService.Services;
 
 public class DiscordService : IHostedService
 {
@@ -12,10 +12,10 @@ public class DiscordService : IHostedService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly DiscordClient _discordClient;
 
-    public DiscordService(ILogger<DiscordService> _logger, IServiceScopeFactory _scopeFactory)
+    public DiscordService(ILogger<DiscordService> logger, IServiceScopeFactory scopeFactory)
     {
-        this._logger = _logger;
-        this._scopeFactory = _scopeFactory;
+        this._logger = logger;
+        this._scopeFactory = scopeFactory;
         _discordClient = new DiscordClient(new DiscordConfiguration
         {
             Token = Environment.GetEnvironmentVariable("DiscordToken"),
@@ -39,27 +39,84 @@ public class DiscordService : IHostedService
 
         _discordClient.PresenceUpdated += PresenceUpdated;
 
-        // _discordClient.GuildCreated += JoinedGuild;
+        _discordClient.GuildCreated += JoinedGuild;
         //_discordClient.GuildMemberAdded += GuildMemberAdded;
         //_discordClient.GuildMemberUpdated += GuildMemberUpdated;
         //_discordClient.ChannelCreated += ChannelCreated;
         //_discordClient.ChannelUpdated += ChannelUpdated;
         // and so on
-        _logger.LogInformation($"Done initializing {nameof(DiscordService)}");
+        logger.LogInformation($"Done initializing {nameof(DiscordService)}");
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Connecting to Discord...");
-        await _discordClient.ConnectAsync(status: DSharpPlus.Entities.UserStatus.DoNotDisturb);
+        //await _discordClient.ConnectAsync(status: DSharpPlus.Entities.UserStatus.DoNotDisturb);
         _logger.LogInformation("Connected to Discord");
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Disconnecting from Discord...");
-        await _discordClient.DisconnectAsync();
+        //await _discordClient.DisconnectAsync();
         _logger.LogInformation("Disconnected from Discord");
+    }
+
+    public async Task JoinedGuild(DiscordClient sender, GuildCreateEventArgs args)
+    {
+        var activityType = ActivityType.JoinedGuild;
+        _logger.LogInformation("Joined guild [{GuildName}]", args.Guild.Name);
+        using var scope = _scopeFactory.CreateScope();
+        var publisherService = scope.ServiceProvider.GetRequiredService<IMessagePublisherService>();
+        var guild = args.MapToDiscordGuild();
+
+        foreach (var channel in guild.Channels)
+        {
+            var discordChannel = await sender.GetChannelAsync(channel.DiscordId);
+            if(discordChannel.Type != ChannelType.Text) continue;
+            var messages = await discordChannel.GetMessagesAsync();
+
+            var mappedMessages = messages.Select(async x =>
+            {
+                var messageReactions = new List<DiscordReaction>();
+                foreach (var reaction in x.Reactions.DistinctBy(r => r.Emoji))
+                {
+                    var users = await x.GetReactionsAsync(reaction.Emoji, 100);
+                    messageReactions.AddRange(users.Select(u => new DiscordReaction
+                    {
+                        IsRemoved = false,
+                        MessageId = x.Id,
+                        UserId = u.Id,
+                        EmoteId = reaction.Emoji.Id,
+                    }));
+                }
+
+                return new DiscordMessageFull
+                {
+                    Id = x.Id,
+                    AuthorId = x.Author.Id,
+                    Content = x.Content,
+                    HasAttatchment = x.Attachments.Any(),
+                    IsEdited = x.EditedTimestamp.HasValue,
+                    IsRemoved = false,
+                    DiscordTimestamp = x.CreationTimestamp.UtcDateTime,
+                    ReplyToMessageId = x.ReferencedMessage?.Id,
+                    Reactions = messageReactions,
+                };
+            });
+            
+            channel.Messages = await Task.WhenAll(mappedMessages);
+        }
+        
+        var payload = new PublishedMessagePayload<DiscordGuild>
+        {
+            Payload = guild,
+            ActivityType = activityType,
+        };
+        
+        //await publisherService.PublishActivityAsync(payload);
+        File.WriteAllText("./payload.json", JsonSerializer.Serialize(payload));
+        _logger.LogInformation("Published [{ActivityType}][{GuildName}]", activityType, args.Guild.Name);
     }
 
     private async Task MessageCreated(DiscordClient sender, MessageCreateEventArgs messageCreateEventArgs)
@@ -181,7 +238,7 @@ public class DiscordService : IHostedService
     private async Task VoiceStateUpdated(DiscordClient sender, VoiceStateUpdateEventArgs voiceStateUpdateEventArgs)
     {
         var activityType = ActivityType.VoiceStateUpdated;
-        _logger.LogInformation("[Voice][State][Updated][{ChannelId}][{UserId}]", voiceStateUpdateEventArgs.Channel.Id, voiceStateUpdateEventArgs.User.Id);
+        _logger.LogInformation("[Voice][State][Updated][{ChannelId}][{UserId}]", voiceStateUpdateEventArgs.Channel?.Id, voiceStateUpdateEventArgs.User?.Id);
         var voiceState = voiceStateUpdateEventArgs.MapToDiscordVoiceState();
         using var scope = _scopeFactory.CreateScope();
         var publisherService = scope.ServiceProvider.GetRequiredService<IMessagePublisherService>();
@@ -194,7 +251,7 @@ public class DiscordService : IHostedService
         
         await publisherService.PublishActivityAsync(payload);
         _logger.LogInformation("Published [{ActivityType}][{ChannelId}]", activityType,
-            voiceStateUpdateEventArgs.Channel.Id);
+            voiceStateUpdateEventArgs.Channel?.Id);
     }
     
     private async Task PresenceUpdated(DiscordClient sender, PresenceUpdateEventArgs presenceUpdateEventArgs)

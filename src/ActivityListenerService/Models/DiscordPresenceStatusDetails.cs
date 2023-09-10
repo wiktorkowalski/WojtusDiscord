@@ -2,9 +2,7 @@
 
 public class DiscordPresenceStatusDetails
 {
-    public DiscordStatus DesktopStatus { get; set; }
-    public DiscordStatus MobileStatus { get; set; }
-    public DiscordStatus WebStatus { get; set; }
+    public DiscordStatus Status { get; set; }
 
     public ICollection<DiscordActivity> Activities { get; set; }
 }

@@ -11,8 +11,8 @@ public static class VoiceMappers
         {
             UserId = voiceStateUpdateEventArgs.User.Id,
             ChannelId = voiceStateUpdateEventArgs.Channel.Id,
-            Before = voiceStateUpdateEventArgs.Before.MapToDiscordVoiceStatusDetails(),
-            After = voiceStateUpdateEventArgs.After.MapToDiscordVoiceStatusDetails(),
+            Before = voiceStateUpdateEventArgs.Before?.MapToDiscordVoiceStatusDetails() ?? null,
+            After = voiceStateUpdateEventArgs.After?.MapToDiscordVoiceStatusDetails() ?? null,
         };
     }
     

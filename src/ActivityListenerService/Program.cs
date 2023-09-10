@@ -11,6 +11,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddHostedService<DiscordService>();
+builder.Services.AddHostedService<DiscordNetService>();
 builder.Services.AddScoped<IMessagePublisherService, ActivityPublisherService>();
 
 var app = builder.Build();
