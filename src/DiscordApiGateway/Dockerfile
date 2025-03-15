@@ -5,10 +5,9 @@ EXPOSE 443
 
 FROM mcr.microsoft.com/dotnet/sdk:7.0 AS build
 WORKDIR /src
-COPY ["src/DiscordApiGateway/DiscordApiGateway.csproj", "src/DiscordApiGateway/"]
-RUN dotnet restore "src/DiscordApiGateway/DiscordApiGateway.csproj"
+COPY ["DiscordApiGateway.csproj", "."]
+RUN dotnet restore "DiscordApiGateway.csproj"
 COPY . .
-WORKDIR "/src/src/DiscordApiGateway"
 RUN dotnet build "DiscordApiGateway.csproj" -c Release -o /app/build
 
 FROM build AS publish

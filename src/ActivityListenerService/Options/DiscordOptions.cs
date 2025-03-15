@@ -1,0 +1,7 @@
+﻿namespace ActivityListenerService.Services;
+
+public class DiscordOptions
+{
+    public const string Prefix = "Discord";
+    public string Token { get; set; }
+}

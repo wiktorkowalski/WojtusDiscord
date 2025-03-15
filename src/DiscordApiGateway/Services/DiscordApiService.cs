@@ -1,27 +1,27 @@
 ﻿using DiscordApiGateway.Mappers;
 using DiscordApiGateway.Models;
+using DiscordApiGateway.Options;
 using DSharpPlus;
+using Microsoft.Extensions.Options;
 
 namespace DiscordApiGateway.Services;
 
-public class DiscordApiService
+public class DiscordApiService : IHostedService
 {
     private readonly ILogger<DiscordApiService> _logger;
+    private readonly IOptions<DiscordOptions> _options;
     private readonly DiscordClient _discordClient;
 
-    public DiscordApiService(ILogger<DiscordApiService> logger)
+    public DiscordApiService(ILogger<DiscordApiService> logger, IOptions<DiscordOptions> options)
     {
         _logger = logger;
+        _options = options;
         _discordClient = new DiscordClient( new DiscordConfiguration
         {
-            Token = Environment.GetEnvironmentVariable("DiscordToken"),
+            Token = _options.Value.Token,
             TokenType = TokenType.Bot,
             Intents = DiscordIntents.All
         });
-        
-        _logger.LogInformation("Connecting to Discord...");
-        _discordClient.ConnectAsync().Wait();
-        _logger.LogInformation("Connected to Discord");
     }
 
     public async Task<DiscordUser> GetUserById(ulong userId)
@@ -64,5 +64,19 @@ public class DiscordApiService
         if (guild == null) return null;
         var emote = await guild.GetEmojiAsync(emojiId);
         return emote.MapEmote();
+    }
+
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Connecting to Discord...");
+        await _discordClient.ConnectAsync();
+        _logger.LogInformation("Connected to Discord");
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Disconnecting from Discord...");
+        await _discordClient.DisconnectAsync();
+        _logger.LogInformation("Disconnected from Discord");
     }
 }

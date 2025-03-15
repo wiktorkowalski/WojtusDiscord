@@ -133,7 +133,7 @@ public class DiscordService : IHostedService
             ActivityType = activityType,
         };
 
-        await publisherService.PublishActivityAsync(payload);
+        publisherService.PublishActivityAsync(payload);
         _logger.LogInformation("Published [{ActivityType}][{MessageId}]", activityType,
             messageCreateEventArgs.Message.Id);
     }
@@ -152,7 +152,7 @@ public class DiscordService : IHostedService
             ActivityType = activityType,
         };
 
-        await publisherService.PublishActivityAsync(payload);
+        publisherService.PublishActivityAsync(payload);
         _logger.LogInformation("Published [{ActivityType}][{MessageId}]", activityType,
             messageUpdateEventArgs.Message.Id);
     }
@@ -171,7 +171,7 @@ public class DiscordService : IHostedService
             ActivityType = activityType,
         };
 
-        await publisherService.PublishActivityAsync(payload);
+        publisherService.PublishActivityAsync(payload);
         _logger.LogInformation("Published [{ActivityType}][{MessageId}]", activityType,
             messageDeleteEventArgs.Message.Id);
     }
@@ -191,7 +191,7 @@ public class DiscordService : IHostedService
             ActivityType = activityType,
         };
         
-        await publisherService.PublishActivityAsync(payload);
+        publisherService.PublishActivityAsync(payload);
         _logger.LogInformation("Published [{ActivityType}][{MessageId}]", activityType,
             messageReactionAddEventArgs.Message.Id);
     }
@@ -211,7 +211,7 @@ public class DiscordService : IHostedService
             ActivityType = activityType,
         };
         
-        await publisherService.PublishActivityAsync(payload);
+        publisherService.PublishActivityAsync(payload);
         _logger.LogInformation("Published [{ActivityType}][{MessageId}]", activityType,
             messageReactionRemoveEventArgs.Message.Id);
     }
@@ -230,7 +230,7 @@ public class DiscordService : IHostedService
             ActivityType = activityType,
         };
         
-        await publisherService.PublishActivityAsync(payload);
+        publisherService.PublishActivityAsync(payload);
         _logger.LogInformation("Published [{ActivityType}][{ChannelId}][{UserId}]", activityType,
             typingStartEventArgs.Channel.Id, typingStartEventArgs.User.Id);
     }
@@ -249,7 +249,7 @@ public class DiscordService : IHostedService
             ActivityType = activityType,
         };
         
-        await publisherService.PublishActivityAsync(payload);
+        publisherService.PublishActivityAsync(payload);
         _logger.LogInformation("Published [{ActivityType}][{ChannelId}]", activityType,
             voiceStateUpdateEventArgs.Channel?.Id);
     }
@@ -268,7 +268,7 @@ public class DiscordService : IHostedService
             ActivityType = activityType,
         };
         
-        await publisherService.PublishActivityAsync(payload);
+        publisherService.PublishActivityAsync(payload);
         _logger.LogInformation("Published [{ActivityType}][{UserId}]", activityType,
             presenceUpdateEventArgs.User.Id);
     }

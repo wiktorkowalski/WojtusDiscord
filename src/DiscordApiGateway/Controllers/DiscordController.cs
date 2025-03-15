@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace DiscordApiGateway.Controllers;
 
+[ApiController]
+[Route("[controller]")]
 public class DiscordController : ControllerBase
 {
     private readonly ILogger<DiscordController> _logger;
