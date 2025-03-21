@@ -1,0 +1,1 @@
+key = "wojtus-discord/terraform.tfstate"
