@@ -1,5 +1,5 @@
-resource "aws_lb" "nginx_alb" {
-  name               = "nginx-alb-${local.project_name}"
+resource "aws_lb" "alb" {
+  name               = "alb-${local.project_name}"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb_sg.id]
@@ -7,7 +7,7 @@ resource "aws_lb" "nginx_alb" {
 }
 
 resource "aws_lb_listener" "http" {
-  load_balancer_arn = aws_lb.nginx_alb.arn
+  load_balancer_arn = aws_lb.alb.arn
   port              = 80
   protocol          = "HTTP"
 
