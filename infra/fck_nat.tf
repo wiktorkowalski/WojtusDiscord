@@ -9,8 +9,18 @@ module "fck-nat" {
   use_ssh             = true
   ssh_key_name        = "WiktorPC"
 
-  update_route_tables = true
-  route_tables_ids = {
-    for rt_id in module.vpc.private_route_table_ids : rt_id => rt_id
-  }
+  update_route_tables = false
+
+  depends_on = [ module.vpc ]
+}
+
+# manually created route table for nat gateway
+resource "aws_route" "nat_gateway" {
+  count = length(module.vpc.private_route_table_ids)
+  
+  route_table_id         = module.vpc.private_route_table_ids[count.index]
+  destination_cidr_block = "0.0.0.0/0"
+  network_interface_id   = module.fck-nat.eni_id
+  
+  depends_on = [module.fck-nat, module.vpc]
 }
