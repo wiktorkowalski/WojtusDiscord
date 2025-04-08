@@ -1,0 +1,15 @@
+{
+  "services": {
+    "nginx": {
+      "name": "nginx",
+      "image": "nginx:latest",
+      "cpu": 256,
+      "memory": 512,
+      "port": 80,
+      "health_check_path": "/",
+      "desired_count": 1,
+      "route53_record": "nginx.aws.wiktorkowalski.pl",
+      "container_name": "web-container"
+    }
+  }
+}

@@ -23,12 +23,13 @@ module "ecs" {
     }
   }
 
-  # Task definition
+  # Dynamically create services from JSON config
   services = {
-    web-service = {
-      cpu    = 256
-      memory = 512
+    for k, v in local.services : k => {
+      cpu    = v.cpu
+      memory = v.memory
 
+      # Common service settings for all services
       launch_type = "EC2"
       runtime_platform = {
         cpu_architecture = "ARM64"
@@ -37,18 +38,18 @@ module "ecs" {
 
       # Container definition(s)
       container_definitions = {
-        nginx = {
-          name      = "web-container"
-          image     = "nginx:latest"
-          cpu       = 256
-          memory    = 512
+        (k) = {
+          name      = v.container_name
+          image     = v.image
+          cpu       = v.cpu
+          memory    = v.memory
           essential = true
           readonly_root_filesystem = false
           
           port_mappings = [
             {
-              containerPort = 80
-              hostPort      = 80
+              containerPort = v.port
+              hostPort      = v.port
               protocol      = "tcp"
             }
           ]
@@ -56,18 +57,18 @@ module "ecs" {
       }
       
       # Service settings
-      desired_count = 1
+      desired_count = v.desired_count
       
       # Network configuration
       subnet_ids         = module.vpc.private_subnets
       security_group_ids = [aws_security_group.alb_sg.id]
       
-      # Load balancer
+      # Load balancer configuration
       load_balancer = {
         service = {
-          target_group_arn = aws_lb_target_group.nginx_tg.arn
-          container_name   = "web-container"
-          container_port   = 80
+          target_group_arn = aws_lb_target_group.service_tg[k].arn
+          container_name   = v.container_name
+          container_port   = v.port
         }
       }
 

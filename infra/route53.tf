@@ -1,6 +1,8 @@
-resource "aws_route53_record" "nginx_record" {
+resource "aws_route53_record" "service_records" {
+  for_each = local.services
+  
   zone_id = data.aws_route53_zone.aws.zone_id
-  name    = "nginx.aws.wiktorkowalski.pl"
+  name    = each.value.route53_record
   type    = "A"
 
   alias {

@@ -12,25 +12,52 @@ resource "aws_lb_listener" "http" {
   protocol          = "HTTP"
 
   default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.nginx_tg.arn
+    type = "fixed-response"
+    
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "No routes matched"
+      status_code  = "404"
+    }
   }
 }
 
-resource "aws_lb_target_group" "nginx_tg" {
-  name        = "nginx-tg-${local.project_name}"
-  port        = 80
+# Dynamically create target groups for each service
+resource "aws_lb_target_group" "service_tg" {
+  for_each = local.services
+  
+  name        = "${each.value.name}-tg-${local.project_name}"
+  port        = each.value.port
   protocol    = "HTTP"
   vpc_id      = module.vpc.vpc_id
   target_type = "ip"
 
   health_check {
     interval            = 30
-    path                = "/"
+    path                = each.value.health_check_path
     timeout             = 5
     healthy_threshold   = 2
     unhealthy_threshold = 2
     protocol            = "HTTP"
+  }
+}
+
+# Create listener rules for each service
+resource "aws_lb_listener_rule" "service_rules" {
+  for_each = local.services
+  
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 100 + index(keys(local.services), each.key)
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.service_tg[each.key].arn
+  }
+
+  condition {
+    host_header {
+      values = [each.value.route53_record]
+    }
   }
 }
 
