@@ -17,6 +17,21 @@ public class VoiceStateUpdateHandler(ILogger<VoiceStateUpdateHandler> logger, Re
         { 299247504481058817, "<:jamropointing:1232723835112128542>" }
     };
 
+    private async ValueTask UpdateChannelStatus(ulong channelId, IEnumerable<ulong> usersInChannel)
+    {
+        var channelStatus = new StringBuilder(string.Empty);
+        foreach (var userIdInChannel in usersInChannel)
+        {
+            channelStatus.Append(_userEmoji.GetValueOrDefault(userIdInChannel, string.Empty));
+        }
+
+        var payload = new { status = channelStatus.ToString() };
+        var jsonPayload = JsonSerializer.Serialize(payload);
+
+        using HttpContent content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+        await restClient.SendRequestAsync(HttpMethod.Put, content, $"/channels/{channelId}/voice-status");
+    }
+
     public async ValueTask HandleAsync(VoiceState voiceState)
     {
         var guild = gatewayClient.Cache.Guilds[voiceState.GuildId];
@@ -33,25 +48,28 @@ public class VoiceStateUpdateHandler(ILogger<VoiceStateUpdateHandler> logger, Re
                                      .Where(vs => vs.ChannelId == channelId && vs.UserId != voiceState.UserId)
                                      .Select(vs => vs.UserId);
         }
-        else
+        else // user eaither joins voice channel or switches voice channels
         {
-            // todo: cover case when user changes channels
+            var previousChannelId = guild.VoiceStates.Values
+                                        .Where(vs => vs.UserId == voiceState.UserId)
+                                        .Select(vs => vs.ChannelId)
+                                        .FirstOrDefault();
+
+            if (previousChannelId is not null)
+            {
+                // user switches voice channels
+                var usersInPreviousChannel = guild.VoiceStates.Values
+                                     .Where(vs => vs.ChannelId == previousChannelId && vs.UserId != voiceState.UserId)
+                                     .Select(vs => vs.UserId);
+                await UpdateChannelStatus(previousChannelId.Value, usersInPreviousChannel);
+            }
+
             usersInChannel = guild.VoiceStates.Values
                                       .Where(vs => vs.ChannelId == voiceState.ChannelId)
                                       .Select(vs => vs.UserId)
                                       .Append(voiceState.UserId);
         }
 
-        var channelStatus = new StringBuilder(string.Empty);
-        foreach (var userIdInChannel in usersInChannel)
-        {
-            channelStatus.Append(_userEmoji.GetValueOrDefault(userIdInChannel, string.Empty));
-        }
-
-        var payload = new { status = channelStatus.ToString() };
-        var jsonPayload = JsonSerializer.Serialize(payload);
-
-        using HttpContent content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-        await restClient.SendRequestAsync(HttpMethod.Put, content, $"/channels/{channelId}/voice-status");
+        await UpdateChannelStatus(channelId.Value, usersInChannel);
     }
 }
