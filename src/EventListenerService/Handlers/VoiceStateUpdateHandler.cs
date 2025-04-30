@@ -4,24 +4,18 @@ using System.Net.Mime;
 using NetCord.Gateway;
 using NetCord.Hosting.Gateway;
 using NetCord.Rest;
+using Microsoft.EntityFrameworkCore;
+using EventListenerService.Data;
 
 namespace EventListenerService.Handlers;
 
 [GatewayEvent(nameof(GatewayClient.VoiceStateUpdate))]
-public class VoiceStateUpdateHandler(ILogger<VoiceStateUpdateHandler> logger, RestClient restClient, GatewayClient gatewayClient) : IGatewayEventHandler<VoiceState>
+public class VoiceStateUpdateHandler(ILogger<VoiceStateUpdateHandler> logger, RestClient restClient, GatewayClient gatewayClient, IServiceScopeFactory scopeFactory) : IGatewayEventHandler<VoiceState>
 {
-    // this will eventually be moved to a database I guess
-    private readonly Dictionary<ulong, string> _userEmoji = new()
+    private async ValueTask UpdateChannelStatus(WojtusContext scopedWojtusContext, ulong channelId, IEnumerable<ulong> usersInChannel)
     {
-        { 172012484306141184, "<:biankaHead:1038959242754928743>" },
-        { 170921674840080384, "<:heimkek:1038959260094185472>" },
-        { 299247504481058817, "<:jamropointing:1232723835112128542>" }
-    };
-
-    private async ValueTask UpdateChannelStatus(ulong channelId, IEnumerable<ulong> usersInChannel)
-    {
-        var channelStatus = string.Join(string.Empty,
-            usersInChannel.Select(userId => _userEmoji.GetValueOrDefault(userId, string.Empty)));
+        var emojis = await scopedWojtusContext.UserEmojis.Where(userEmoji => usersInChannel.Contains(userEmoji.ID)).Select(userEmoji => userEmoji.Emoji).ToListAsync();
+        var channelStatus = string.Join(string.Empty, emojis);
 
         var payload = new { status = channelStatus };
         var jsonPayload = JsonSerializer.Serialize(payload);
@@ -39,11 +33,19 @@ public class VoiceStateUpdateHandler(ILogger<VoiceStateUpdateHandler> logger, Re
 
     public async ValueTask HandleAsync(VoiceState voiceState)
     {
+        using var scope = scopeFactory.CreateScope();
+        var scopedWojtusContext = scope.ServiceProvider.GetRequiredService<WojtusContext>();
+
         // Assumption: gatewayClient.Cache.Guilds[voiceState.GuildId].VoiceStates reflects the state *before* this specific update.
         // This assumption is crucial and might depend on NetCord's internal implementation.
         if (!gatewayClient.Cache.Guilds.TryGetValue(voiceState.GuildId, out var guild))
         {
             logger.LogWarning("Guild {GuildId} not found in cache for VoiceStateUpdate.", voiceState.GuildId);
+            return;
+        }
+
+        if (await scopedWojtusContext.UserEmojis.FindAsync(voiceState.UserId) is null) {
+            logger.LogDebug("No emoji configured for user {UserId}", voiceState.UserId);
             return;
         }
 
@@ -62,7 +64,7 @@ public class VoiceStateUpdateHandler(ILogger<VoiceStateUpdateHandler> logger, Re
             var usersRemainingInOldChannel = guild.VoiceStates.Values
                                                  .Where(vs => vs.ChannelId == oldChannelId && vs.UserId != voiceState.UserId)
                                                  .Select(vs => vs.UserId);
-            await UpdateChannelStatus(oldChannelId, usersRemainingInOldChannel);
+            await UpdateChannelStatus(scopedWojtusContext, oldChannelId, usersRemainingInOldChannel);
             logger.LogInformation("Updated status for channel {ChannelId} after user {UserId} left/moved.", oldChannelId, voiceState.UserId);
         }
 
@@ -82,7 +84,7 @@ public class VoiceStateUpdateHandler(ILogger<VoiceStateUpdateHandler> logger, Re
             // Add the current user (who just joined/moved into this channel)
             var allUsersInNewChannel = otherUsersInNewChannel.Append(voiceState.UserId);
 
-            await UpdateChannelStatus(newChannelId, allUsersInNewChannel);
+            await UpdateChannelStatus(scopedWojtusContext, newChannelId, allUsersInNewChannel);
             logger.LogInformation("Updated status for channel {ChannelId} after user {UserId} joined/moved.", newChannelId, voiceState.UserId);
         }
     }

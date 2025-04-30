@@ -8,11 +8,16 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.3" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.4">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="NetCord" Version="1.0.0-alpha.365" />
     <PackageReference Include="NetCord.Hosting" Version="1.0.0-alpha.365" />
     <PackageReference Include="NetCord.Hosting.AspNetCore" Version="1.0.0-alpha.365" />
     <PackageReference Include="NetCord.Hosting.Services" Version="1.0.0-alpha.365" />
     <PackageReference Include="NetCord.Services" Version="1.0.0-alpha.365" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
   </ItemGroup>
 
 </Project>
