@@ -11,7 +11,7 @@ namespace EventListenerService.Migrations
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "user_emoji",
+                name: "user_emojis",
                 columns: table => new
                 {
                     id = table.Column<decimal>(type: "numeric(20,0)", nullable: false),
@@ -19,7 +19,7 @@ namespace EventListenerService.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("pk_user_emoji", x => x.id);
+                    table.PrimaryKey("pk_user_emojis", x => x.id);
                 });
         }
 
@@ -27,7 +27,7 @@ namespace EventListenerService.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "user_emoji");
+                name: "user_emojis");
         }
     }
 }

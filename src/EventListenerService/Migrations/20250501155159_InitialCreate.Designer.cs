@@ -11,7 +11,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace EventListenerService.Migrations
 {
     [DbContext(typeof(WojtusContext))]
-    [Migration("20250501102148_InitialCreate")]
+    [Migration("20250501155159_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -37,9 +37,9 @@ namespace EventListenerService.Migrations
                         .HasColumnName("emoji");
 
                     b.HasKey("ID")
-                        .HasName("pk_user_emoji");
+                        .HasName("pk_user_emojis");
 
-                    b.ToTable("user_emoji", (string)null);
+                    b.ToTable("user_emojis", (string)null);
                 });
 #pragma warning restore 612, 618
         }

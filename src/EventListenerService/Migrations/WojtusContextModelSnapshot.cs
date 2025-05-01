@@ -34,9 +34,9 @@ namespace EventListenerService.Migrations
                         .HasColumnName("emoji");
 
                     b.HasKey("ID")
-                        .HasName("pk_user_emoji");
+                        .HasName("pk_user_emojis");
 
-                    b.ToTable("user_emoji", (string)null);
+                    b.ToTable("user_emojis", (string)null);
                 });
 #pragma warning restore 612, 618
         }

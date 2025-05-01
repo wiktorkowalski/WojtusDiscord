@@ -9,6 +9,6 @@ public class WojtusContext(DbContextOptions<WojtusContext> options) : DbContext(
 
   protected override void OnModelCreating(ModelBuilder modelBuilder)
   {
-    modelBuilder.Entity<UserEmoji>().ToTable("user_emoji");
+    modelBuilder.Entity<UserEmoji>();
   }
 }
