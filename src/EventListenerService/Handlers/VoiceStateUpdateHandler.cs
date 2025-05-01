@@ -12,29 +12,30 @@ namespace EventListenerService.Handlers;
 [GatewayEvent(nameof(GatewayClient.VoiceStateUpdate))]
 public class VoiceStateUpdateHandler(ILogger<VoiceStateUpdateHandler> logger, RestClient restClient, GatewayClient gatewayClient, IServiceScopeFactory scopeFactory) : IGatewayEventHandler<VoiceState>
 {
-    private async ValueTask UpdateChannelStatus(WojtusContext scopedWojtusContext, ulong channelId, IEnumerable<ulong> usersInChannel)
+    private async ValueTask UpdateChannelStatus(ulong id, string status)
     {
-        var emojis = await scopedWojtusContext.UserEmojis.Where(userEmoji => usersInChannel.Contains(userEmoji.ID)).Select(userEmoji => userEmoji.Emoji).ToListAsync();
-        var channelStatus = string.Join(string.Empty, emojis);
-
-        var payload = new { status = channelStatus };
-        var jsonPayload = JsonSerializer.Serialize(payload);
-
-        using HttpContent content = new StringContent(jsonPayload, Encoding.UTF8, MediaTypeNames.Application.Json);
+        using HttpContent content = new StringContent(JsonSerializer.Serialize(new { status }), Encoding.UTF8, MediaTypeNames.Application.Json);
         try
         {
-            await restClient.SendRequestAsync(HttpMethod.Put, content, $"/channels/{channelId}/voice-status");
+            await restClient.SendRequestAsync(HttpMethod.Put, content, $"/channels/{id}/voice-status");
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to update voice status for channel {ChannelId}.", channelId);
+            logger.LogError(ex, "Failed to update voice status for channel {ChannelId}.", id);
         }
+    }
+
+    private static async Task<string> GenerateChannelStatus(WojtusContext db, IEnumerable<ulong> users)
+    {
+        var userEmojis = await db.UserEmojis.Where(ue => users.Contains(ue.ID)).ToListAsync();
+        return string.Join(string.Empty, userEmojis.Select(ue => ue.Emoji).ToList());
+
     }
 
     public async ValueTask HandleAsync(VoiceState voiceState)
     {
         using var scope = scopeFactory.CreateScope();
-        var scopedWojtusContext = scope.ServiceProvider.GetRequiredService<WojtusContext>();
+        var db = scope.ServiceProvider.GetRequiredService<WojtusContext>();
 
         // Assumption: gatewayClient.Cache.Guilds[voiceState.GuildId].VoiceStates reflects the state *before* this specific update.
         // This assumption is crucial and might depend on NetCord's internal implementation.
@@ -44,7 +45,8 @@ public class VoiceStateUpdateHandler(ILogger<VoiceStateUpdateHandler> logger, Re
             return;
         }
 
-        if (await scopedWojtusContext.UserEmojis.FindAsync(voiceState.UserId) is null) {
+        if (await db.UserEmojis.FindAsync(voiceState.UserId) is null)
+        {
             logger.LogDebug("No emoji configured for user {UserId}", voiceState.UserId);
             return;
         }
@@ -64,7 +66,8 @@ public class VoiceStateUpdateHandler(ILogger<VoiceStateUpdateHandler> logger, Re
             var usersRemainingInOldChannel = guild.VoiceStates.Values
                                                  .Where(vs => vs.ChannelId == oldChannelId && vs.UserId != voiceState.UserId)
                                                  .Select(vs => vs.UserId);
-            await UpdateChannelStatus(scopedWojtusContext, oldChannelId, usersRemainingInOldChannel);
+            var status = await GenerateChannelStatus(db, usersRemainingInOldChannel);
+            await UpdateChannelStatus(oldChannelId, status);
             logger.LogInformation("Updated status for channel {ChannelId} after user {UserId} left/moved.", oldChannelId, voiceState.UserId);
         }
 
@@ -83,8 +86,8 @@ public class VoiceStateUpdateHandler(ILogger<VoiceStateUpdateHandler> logger, Re
 
             // Add the current user (who just joined/moved into this channel)
             var allUsersInNewChannel = otherUsersInNewChannel.Append(voiceState.UserId);
-
-            await UpdateChannelStatus(scopedWojtusContext, newChannelId, allUsersInNewChannel);
+            var status = await GenerateChannelStatus(db, allUsersInNewChannel);
+            await UpdateChannelStatus(newChannelId, status);
             logger.LogInformation("Updated status for channel {ChannelId} after user {UserId} joined/moved.", newChannelId, voiceState.UserId);
         }
     }
