@@ -11,7 +11,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace EventListenerService.Migrations
 {
     [DbContext(typeof(WojtusContext))]
-    [Migration("20250430092438_InitialCreate")]
+    [Migration("20250501102148_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -24,17 +24,20 @@ namespace EventListenerService.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("UserEmoji", b =>
+            modelBuilder.Entity("EventListenerService.Models.UserEmoji", b =>
                 {
                     b.Property<decimal>("ID")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("numeric(20,0)");
+                        .HasColumnType("numeric(20,0)")
+                        .HasColumnName("id");
 
                     b.Property<string>("Emoji")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasColumnType("text")
+                        .HasColumnName("emoji");
 
-                    b.HasKey("ID");
+                    b.HasKey("ID")
+                        .HasName("pk_user_emoji");
 
                     b.ToTable("user_emoji", (string)null);
                 });

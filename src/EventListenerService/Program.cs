@@ -21,7 +21,9 @@ builder.Services
     .AddApplicationCommands();
 
 builder.Services.AddDbContext<WojtusContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("WojtusDatabase")));
+    options
+    .UseNpgsql(builder.Configuration.GetConnectionString("WojtusDatabase"))
+    .UseSnakeCaseNamingConvention());
 
 var app = builder.Build();
 

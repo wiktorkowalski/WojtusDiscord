@@ -14,12 +14,12 @@ namespace EventListenerService.Migrations
                 name: "user_emoji",
                 columns: table => new
                 {
-                    ID = table.Column<decimal>(type: "numeric(20,0)", nullable: false),
-                    Emoji = table.Column<string>(type: "text", nullable: false)
+                    id = table.Column<decimal>(type: "numeric(20,0)", nullable: false),
+                    emoji = table.Column<string>(type: "text", nullable: false)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_user_emoji", x => x.ID);
+                    table.PrimaryKey("pk_user_emoji", x => x.id);
                 });
         }
 
