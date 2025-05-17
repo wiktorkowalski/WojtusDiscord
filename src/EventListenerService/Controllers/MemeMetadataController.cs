@@ -10,9 +10,9 @@ namespace EventListenerService.Controllers
     public class MemeMetadataController : ControllerBase
     {
         private readonly WojtusContext _context;
-        private readonly MemeMetadataGenerationService _metadataService;
+        private readonly IMemeMetadataGenerationService _metadataService;
 
-        public MemeMetadataController(WojtusContext context, MemeMetadataGenerationService metadataService)
+        public MemeMetadataController(WojtusContext context, IMemeMetadataGenerationService metadataService)
         {
             _context = context;
             _metadataService = metadataService;
@@ -30,7 +30,6 @@ namespace EventListenerService.Controllers
                 .Where(m => m.Metadata == null)
                 .ToListAsync();
 
-            // Start metadata generation process for these memes (one by one)
             await _metadataService.GenerateMetadataForMemesAsync(latestMemes, HttpContext.RequestAborted);
             
             return Ok(new { Message = $"Started metadata generation for {latestMemes.Count} latest memes." });
