@@ -7,6 +7,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="DSharpPlus.Rest" Version="5.0.0-nightly-02504" />
     <PackageReference Include="EFCore.NamingConventions" Version="9.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.3" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.4">
@@ -19,6 +20,7 @@
     <PackageReference Include="NetCord.Hosting.Services" Version="1.0.0-alpha.365" />
     <PackageReference Include="NetCord.Services" Version="1.0.0-alpha.365" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
+    <PackageReference Include="OpenAI" Version="2.2.0-beta.4" />
   </ItemGroup>
 
 </Project>

@@ -1,9 +1,13 @@
+using System.ClientModel;
 using EventListenerService.Data;
 using Microsoft.EntityFrameworkCore;
+using OpenAI;
+using NetCord;
 using NetCord.Gateway;
 using NetCord.Hosting.Gateway;
 using NetCord.Hosting.Services;
 using NetCord.Hosting.Services.ApplicationCommands;
+using EventListenerService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,14 +20,32 @@ builder.Services
     {
         options.Token = builder.Configuration["Discord:BotToken"];
         options.Intents = GatewayIntents.All;
+        options.Presence = new PresenceProperties(UserStatusType.Online);
     })
     .AddGatewayEventHandlers(typeof(Program).Assembly)
     .AddApplicationCommands();
+
+// builder.Services.AddDiscordClient(builder.Configuration["Discord:BotToken"] ?? throw new ArgumentNullException(), DiscordIntents.All);
 
 builder.Services.AddDbContext<WojtusContext>(options =>
     options
     .UseNpgsql(builder.Configuration.GetConnectionString("WojtusDatabase"))
     .UseSnakeCaseNamingConvention());
+
+ // Register OpenAIClient for OpenRouter
+builder.Services.AddScoped(provider =>
+{
+    var configuration = provider.GetRequiredService<IConfiguration>();
+    var apiKey = configuration["OpenRouter:ApiKey"];
+    var baseUrl = configuration["OpenRouter:BaseUrl"];
+    var client = new OpenAIClient(new ApiKeyCredential(apiKey), new OpenAIClientOptions()
+    {
+        Endpoint = new Uri(baseUrl),
+    });
+    return client;
+});
+
+builder.Services.AddScoped<IMemeMetadataGenerationService, MemeMetadataGenerationService>();
 
 var app = builder.Build();
 

@@ -3,6 +3,7 @@ using System;
 using EventListenerService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace EventListenerService.Migrations
 {
     [DbContext(typeof(WojtusContext))]
-    partial class WojtusContextModelSnapshot : ModelSnapshot
+    [Migration("20250517140747_AddMemeMessage")]
+    partial class AddMemeMessage
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -65,47 +68,6 @@ namespace EventListenerService.Migrations
                     b.ToTable("meme_messages", (string)null);
                 });
 
-            modelBuilder.Entity("EventListenerService.Models.MemeMetadata", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("Description")
-                        .HasColumnType("text")
-                        .HasColumnName("description");
-
-                    b.PrimitiveCollection<string[]>("Keywords")
-                        .HasColumnType("text[]")
-                        .HasColumnName("keywords");
-
-                    b.Property<decimal>("MessageId")
-                        .HasColumnType("numeric(20,0)")
-                        .HasColumnName("message_id");
-
-                    b.PrimitiveCollection<string[]>("Objects")
-                        .HasColumnType("text[]")
-                        .HasColumnName("objects");
-
-                    b.Property<string>("TextContent")
-                        .HasColumnType("text")
-                        .HasColumnName("text_content");
-
-                    b.Property<string>("Tone")
-                        .HasColumnType("text")
-                        .HasColumnName("tone");
-
-                    b.HasKey("Id")
-                        .HasName("pk_meme_metadata");
-
-                    b.HasIndex("MessageId")
-                        .IsUnique()
-                        .HasDatabaseName("ix_meme_metadata_message_id");
-
-                    b.ToTable("meme_metadata", (string)null);
-                });
-
             modelBuilder.Entity("EventListenerService.Models.UserEmoji", b =>
                 {
                     b.Property<decimal>("ID")
@@ -122,23 +84,6 @@ namespace EventListenerService.Migrations
                         .HasName("pk_user_emojis");
 
                     b.ToTable("user_emojis", (string)null);
-                });
-
-            modelBuilder.Entity("EventListenerService.Models.MemeMetadata", b =>
-                {
-                    b.HasOne("EventListenerService.Models.MemeMessage", "MemeMessage")
-                        .WithOne("Metadata")
-                        .HasForeignKey("EventListenerService.Models.MemeMetadata", "MessageId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("fk_meme_metadata_meme_messages_message_id");
-
-                    b.Navigation("MemeMessage");
-                });
-
-            modelBuilder.Entity("EventListenerService.Models.MemeMessage", b =>
-                {
-                    b.Navigation("Metadata");
                 });
 #pragma warning restore 612, 618
         }
