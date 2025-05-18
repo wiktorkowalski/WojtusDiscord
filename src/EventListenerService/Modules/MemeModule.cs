@@ -2,6 +2,7 @@ using System.Text.Json;
 using DSharpPlus;
 using NetCord.Services.ApplicationCommands;
 using EventListenerService.Data;
+using Microsoft.EntityFrameworkCore;
 using NetCord.Rest;
 
 namespace EventListenerService.Modules;
@@ -9,8 +10,9 @@ namespace EventListenerService.Modules;
 public class MemeModule(WojtusContext dbContext, ILogger<MemeModule> logger) : ApplicationCommandModule<ApplicationCommandContext>
 {
     [SlashCommand("scanmemes", "Scan last 10 messages in the memes channel and save to database")]
-    public async Task ScanMemesAsync()
+    public async Task<string> ScanMemesAsync()
     {
+        return "temporarily disabled";
         // #memes channel ID
         ulong memesChannelId = 344854522704822282;
 
@@ -61,5 +63,28 @@ public class MemeModule(WojtusContext dbContext, ILogger<MemeModule> logger) : A
         {
             logger.LogWarning(ex, "Could not fetch messages from memes channel");
         }
+    }
+
+    [SlashCommand("memesearch", "Search memes by keyword")]
+    public async Task<string> MemeSearchAsync(string keyword)
+    {
+        var guildId = "341531063920754700";
+        var memesMetadata = await dbContext.MemeMetadata
+            .FromSqlRaw(@"
+SELECT *
+FROM meme_metadata
+WHERE EXISTS (SELECT 1 FROM unnest(keywords) AS kw WHERE kw % {0})
+OR EXISTS (SELECT 1 FROM unnest(objects) AS obj WHERE obj % {0})
+                ", keyword)
+            .Include(m => m.MemeMessage)
+            .ToListAsync();
+
+        if (memesMetadata.Count == 0)
+        {
+            return "No memes found with the given keyword.";
+        }
+
+        // Return the found memes
+        return string.Join(Environment.NewLine, memesMetadata.Select(m => $"https://discord.com/channels/{guildId}/{m.MemeMessage.ChannelId}/{m.MemeMessage.MessageId}"));
     }
 }

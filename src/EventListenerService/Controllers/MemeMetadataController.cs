@@ -34,5 +34,26 @@ namespace EventListenerService.Controllers
             
             return Ok(new { Message = $"Started metadata generation for {latestMemes.Count} latest memes." });
         }
+
+        // GET: api/MemeMetadata/search?query=someword
+        [HttpGet("search")]
+        public async Task<IActionResult> Search([FromQuery] string query)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+                return BadRequest("Query parameter is required.");
+
+            // Use raw SQL to leverage pg_trgm similarity on keywords
+            var memesMetadata = await _context.MemeMetadata
+                .FromSqlRaw(@"
+SELECT *
+FROM meme_metadata
+WHERE EXISTS (SELECT 1 FROM unnest(keywords) AS kw WHERE kw % {0})
+OR EXISTS (SELECT 1 FROM unnest(objects) AS obj WHERE obj % {0})
+                ", query)
+                .Include(m => m.MemeMessage)
+                .ToListAsync();
+
+            return Ok(memesMetadata.Select(m => m.MemeMessage));
+        }
     }
 }
