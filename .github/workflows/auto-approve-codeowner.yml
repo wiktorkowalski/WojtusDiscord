@@ -149,7 +149,7 @@ jobs:
           }
 
           let attempt = 0;
-          let result;
+          let result = { otherChecks: [], pendingChecks: [], failedChecks: [] };
 
           while (attempt < maxRetries) {
             attempt++;
@@ -181,6 +181,16 @@ jobs:
 
           const allPassed = result.pendingChecks.length === 0 && result.failedChecks.length === 0 && result.otherChecks.length > 0;
           console.log(`All checks passed: ${allPassed}`);
+
+          if (!allPassed) {
+            if (result.otherChecks.length === 0) {
+              console.log('Approval skipped: no checks found for this PR');
+            } else if (result.failedChecks.length > 0) {
+              console.log('Approval skipped: one or more checks failed');
+            } else if (result.pendingChecks.length > 0) {
+              console.log(`Approval skipped: checks did not complete within ${(maxRetries * retryInterval) / 1000}s`);
+            }
+          }
 
           core.setOutput('all_checks_passed', allPassed);
           core.setOutput('total_checks', result.otherChecks.length);
