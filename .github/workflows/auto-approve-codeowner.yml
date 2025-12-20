@@ -4,7 +4,7 @@ on:
   check_suite:
     types: [completed]
   workflow_run:
-    workflows: ["CodeQL"]
+    workflows: ["CodeQL Advanced"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -220,7 +220,7 @@ jobs:
               repo: context.repo.repo,
               pull_number: prNumber,
               event: 'APPROVE',
-              body: `🤖 **Auto-approved by GitHub Actions**\n\n✅ **Conditions met:**\n- PR author (@${prAuthor}) is listed in CODEOWNERS\n- All required checks passed (${totalChecks} checks completed successfully)\n\nThis PR has been automatically approved because the author is a code owner and all CI checks have passed.`
+              body: `🤖 **Auto-approved by GitHub Actions**\n\n✅ **Conditions met:**\n- PR author (${prAuthor}) is listed in CODEOWNERS\n- All required checks passed (${totalChecks} checks completed successfully)\n\nThis PR has been automatically approved because the author is a code owner and all CI checks have passed.`
             });
 
             console.log(`Successfully approved PR #${prNumber} by code owner @${prAuthor}`);
