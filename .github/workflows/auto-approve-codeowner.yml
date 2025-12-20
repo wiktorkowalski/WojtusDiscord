@@ -116,7 +116,7 @@ jobs:
             core.setOutput('is_codeowner', false);
           }
 
-    - name: Check all checks passed
+    - name: Wait for checks and verify all passed
       id: check-status
       if: steps.get-pr.outputs.pr_number && steps.check-codeowner.outputs.is_codeowner == 'true'
       uses: actions/github-script@v7
@@ -124,47 +124,66 @@ jobs:
         script: |
           const prNumber = ${{ steps.get-pr.outputs.pr_number }};
           const headSha = '${{ steps.get-pr.outputs.head_sha }}';
+          const maxRetries = 10;
+          const retryInterval = 30000; // 30 seconds
 
-          // Get check runs for this commit
-          const checkRuns = await github.rest.checks.listForRef({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            ref: headSha
-          });
+          async function checkStatus() {
+            const checkRuns = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: headSha
+            });
 
-          const checks = checkRuns.data.check_runs;
-          console.log(`Found ${checks.length} check runs`);
+            const checks = checkRuns.data.check_runs;
+            const otherChecks = checks.filter(c => c.name !== 'Auto Approve PR');
 
-          // Filter out this workflow's own check
-          const otherChecks = checks.filter(c => c.name !== 'Auto Approve PR');
+            const pendingChecks = otherChecks.filter(c => c.status !== 'completed');
+            const failedChecks = otherChecks.filter(c =>
+              c.status === 'completed' &&
+              c.conclusion !== 'success' &&
+              c.conclusion !== 'skipped' &&
+              c.conclusion !== 'neutral'
+            );
 
-          const pendingChecks = otherChecks.filter(c =>
-            c.status !== 'completed'
-          );
-
-          const failedChecks = otherChecks.filter(c =>
-            c.status === 'completed' &&
-            c.conclusion !== 'success' &&
-            c.conclusion !== 'skipped' &&
-            c.conclusion !== 'neutral'
-          );
-
-          console.log(`Pending checks: ${pendingChecks.length}`);
-          console.log(`Failed checks: ${failedChecks.length}`);
-
-          if (pendingChecks.length > 0) {
-            console.log('Pending checks:', pendingChecks.map(c => c.name).join(', '));
+            return { otherChecks, pendingChecks, failedChecks };
           }
 
-          if (failedChecks.length > 0) {
-            console.log('Failed checks:', failedChecks.map(c => `${c.name}: ${c.conclusion}`).join(', '));
+          let attempt = 0;
+          let result;
+
+          while (attempt < maxRetries) {
+            attempt++;
+            result = await checkStatus();
+
+            console.log(`Attempt ${attempt}/${maxRetries}`);
+            console.log(`Found ${result.otherChecks.length} check runs`);
+            console.log(`Pending: ${result.pendingChecks.length}, Failed: ${result.failedChecks.length}`);
+
+            if (result.pendingChecks.length > 0) {
+              console.log('Pending checks:', result.pendingChecks.map(c => c.name).join(', '));
+            }
+
+            if (result.failedChecks.length > 0) {
+              console.log('Failed checks:', result.failedChecks.map(c => `${c.name}: ${c.conclusion}`).join(', '));
+              break; // No point waiting if checks failed
+            }
+
+            if (result.pendingChecks.length === 0) {
+              console.log('All checks completed!');
+              break;
+            }
+
+            if (attempt < maxRetries) {
+              console.log(`Waiting ${retryInterval/1000}s before retry...`);
+              await new Promise(r => setTimeout(r, retryInterval));
+            }
           }
 
-          const allPassed = pendingChecks.length === 0 && failedChecks.length === 0 && otherChecks.length > 0;
+          const allPassed = result.pendingChecks.length === 0 && result.failedChecks.length === 0 && result.otherChecks.length > 0;
           console.log(`All checks passed: ${allPassed}`);
 
           core.setOutput('all_checks_passed', allPassed);
-          core.setOutput('total_checks', otherChecks.length);
+          core.setOutput('total_checks', result.otherChecks.length);
 
     - name: Auto-approve PR
       if: steps.check-codeowner.outputs.is_codeowner == 'true' && steps.check-status.outputs.all_checks_passed == 'true'
