@@ -84,7 +84,14 @@ jobs:
 
           try {
             const codeownersContent = fs.readFileSync('.github/CODEOWNERS', 'utf8');
-            const isCodeOwner = codeownersContent.includes(`@${prAuthor}`);
+            // Remove comments and match the PR author as a standalone CODEOWNERS entry
+            const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const contentWithoutComments = codeownersContent
+              .split('\n')
+              .map(line => line.replace(/#.*/, ''))
+              .join('\n');
+            const ownerPattern = new RegExp(`(^|\\s)@${escapeRegExp(prAuthor)}(?=\\s|$)`, 'm');
+            const isCodeOwner = ownerPattern.test(contentWithoutComments);
 
             console.log(`Is Code Owner: ${isCodeOwner}`);
 
@@ -152,7 +159,7 @@ jobs:
           const prNumber = ${{ steps.get-pr.outputs.pr_number }};
           const prAuthor = '${{ steps.get-pr.outputs.pr_author }}';
           const headSha = '${{ steps.get-pr.outputs.head_sha }}';
-          const totalChecks = '${{ steps.check-status.outputs.total_checks }}';
+          const totalChecks = Number('${{ steps.check-status.outputs.total_checks }}');
 
           try {
             // Check if already approved for this commit
@@ -185,8 +192,8 @@ jobs:
             console.log(`Successfully approved PR #${prNumber} by code owner @${prAuthor}`);
 
           } catch (error) {
-            console.log('Error approving PR:', error);
-            core.setFailed(`Failed to approve PR: ${error.message}`);
+            // Use warning instead of setFailed to allow retry on next trigger
+            core.warning(`Failed to approve PR: ${error.message}`);
           }
 
     - name: Log decision
