@@ -1,0 +1,240 @@
+name: Auto Approve Codeowner PR
+
+on:
+  check_suite:
+    types: [completed]
+  workflow_run:
+    workflows: ["CodeQL"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to auto-approve'
+        required: true
+        type: number
+
+permissions:
+  pull-requests: write
+  checks: read
+  statuses: read
+  contents: read
+
+jobs:
+  auto-approve:
+    name: 'Auto Approve PR'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.check_suite.pull_requests[0] || github.event.workflow_run.pull_requests[0]
+
+    steps:
+    - name: Get PR number
+      id: get-pr
+      uses: actions/github-script@v7
+      with:
+        script: |
+          let prNumber;
+          let prAuthor;
+          let headSha;
+
+          if (context.eventName === 'workflow_dispatch') {
+            prNumber = ${{ github.event.inputs.pr_number || 0 }};
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            prAuthor = pr.data.user.login;
+            headSha = pr.data.head.sha;
+          } else if (context.eventName === 'check_suite') {
+            const prs = context.payload.check_suite.pull_requests;
+            if (!prs || prs.length === 0) {
+              console.log('No PRs associated with this check suite');
+              return;
+            }
+            prNumber = prs[0].number;
+            headSha = context.payload.check_suite.head_sha;
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            prAuthor = pr.data.user.login;
+          } else if (context.eventName === 'workflow_run') {
+            const prs = context.payload.workflow_run.pull_requests;
+            if (!prs || prs.length === 0) {
+              console.log('No PRs associated with this workflow run');
+              return;
+            }
+            prNumber = prs[0].number;
+            headSha = context.payload.workflow_run.head_sha;
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+            prAuthor = pr.data.user.login;
+          }
+
+          console.log(`PR Number: ${prNumber}`);
+          console.log(`PR Author: ${prAuthor}`);
+          console.log(`Head SHA: ${headSha}`);
+
+          core.setOutput('pr_number', prNumber);
+          core.setOutput('pr_author', prAuthor);
+          core.setOutput('head_sha', headSha);
+
+    - name: Checkout
+      if: steps.get-pr.outputs.pr_number
+      uses: actions/checkout@v4
+
+    - name: Check if author is code owner
+      id: check-codeowner
+      if: steps.get-pr.outputs.pr_number
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const prAuthor = '${{ steps.get-pr.outputs.pr_author }}';
+
+          console.log(`PR Author: ${prAuthor}`);
+
+          try {
+            const codeownersContent = fs.readFileSync('.github/CODEOWNERS', 'utf8');
+            // Remove comments and match the PR author as a standalone CODEOWNERS entry
+            const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const contentWithoutComments = codeownersContent
+              .split('\n')
+              .map(line => line.replace(/#.*/, ''))
+              .join('\n');
+            const ownerPattern = new RegExp(`(^|\\s)@${escapeRegExp(prAuthor)}(?=\\s|$)`, 'm');
+            const isCodeOwner = ownerPattern.test(contentWithoutComments);
+
+            console.log(`Is Code Owner: ${isCodeOwner}`);
+
+            core.setOutput('is_codeowner', isCodeOwner);
+          } catch (error) {
+            console.log('CODEOWNERS file not found or error reading it');
+            core.setOutput('is_codeowner', false);
+          }
+
+    - name: Check all checks passed
+      id: check-status
+      if: steps.get-pr.outputs.pr_number && steps.check-codeowner.outputs.is_codeowner == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const prNumber = ${{ steps.get-pr.outputs.pr_number }};
+          const headSha = '${{ steps.get-pr.outputs.head_sha }}';
+
+          // Get check runs for this commit
+          const checkRuns = await github.rest.checks.listForRef({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            ref: headSha
+          });
+
+          const checks = checkRuns.data.check_runs;
+          console.log(`Found ${checks.length} check runs`);
+
+          // Filter out this workflow's own check
+          const otherChecks = checks.filter(c => c.name !== 'Auto Approve PR');
+
+          const pendingChecks = otherChecks.filter(c =>
+            c.status !== 'completed'
+          );
+
+          const failedChecks = otherChecks.filter(c =>
+            c.status === 'completed' &&
+            c.conclusion !== 'success' &&
+            c.conclusion !== 'skipped' &&
+            c.conclusion !== 'neutral'
+          );
+
+          console.log(`Pending checks: ${pendingChecks.length}`);
+          console.log(`Failed checks: ${failedChecks.length}`);
+
+          if (pendingChecks.length > 0) {
+            console.log('Pending checks:', pendingChecks.map(c => c.name).join(', '));
+          }
+
+          if (failedChecks.length > 0) {
+            console.log('Failed checks:', failedChecks.map(c => `${c.name}: ${c.conclusion}`).join(', '));
+          }
+
+          const allPassed = pendingChecks.length === 0 && failedChecks.length === 0 && otherChecks.length > 0;
+          console.log(`All checks passed: ${allPassed}`);
+
+          core.setOutput('all_checks_passed', allPassed);
+          core.setOutput('total_checks', otherChecks.length);
+
+    - name: Auto-approve PR
+      if: steps.check-codeowner.outputs.is_codeowner == 'true' && steps.check-status.outputs.all_checks_passed == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const prNumber = ${{ steps.get-pr.outputs.pr_number }};
+          const prAuthor = '${{ steps.get-pr.outputs.pr_author }}';
+          const headSha = '${{ steps.get-pr.outputs.head_sha }}';
+          const totalChecks = Number('${{ steps.check-status.outputs.total_checks }}');
+
+          try {
+            // Check if already approved for this commit
+            const reviews = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            const existingApproval = reviews.data.find(review =>
+              review.user.login === 'github-actions[bot]' &&
+              review.state === 'APPROVED' &&
+              review.commit_id === headSha
+            );
+
+            if (existingApproval) {
+              console.log('PR already approved by bot for this commit');
+              return;
+            }
+
+            // Approve the PR
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              event: 'APPROVE',
+              body: `🤖 **Auto-approved by GitHub Actions**\n\n✅ **Conditions met:**\n- PR author (@${prAuthor}) is listed in CODEOWNERS\n- All required checks passed (${totalChecks} checks completed successfully)\n\nThis PR has been automatically approved because the author is a code owner and all CI checks have passed.`
+            });
+
+            console.log(`Successfully approved PR #${prNumber} by code owner @${prAuthor}`);
+
+          } catch (error) {
+            // Use warning instead of setFailed to allow retry on next trigger
+            core.warning(`Failed to approve PR: ${error.message}`);
+          }
+
+    - name: Log decision
+      if: always() && steps.get-pr.outputs.pr_number
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const prNumber = '${{ steps.get-pr.outputs.pr_number }}';
+          const prAuthor = '${{ steps.get-pr.outputs.pr_author }}';
+          const isCodeOwner = '${{ steps.check-codeowner.outputs.is_codeowner }}';
+          const allChecksPassed = '${{ steps.check-status.outputs.all_checks_passed }}';
+
+          console.log('=== Auto-Approval Decision ===');
+          console.log(`PR Number: ${prNumber}`);
+          console.log(`PR Author: ${prAuthor}`);
+          console.log(`Is Code Owner: ${isCodeOwner}`);
+          console.log(`All Checks Passed: ${allChecksPassed}`);
+
+          if (isCodeOwner === 'true' && allChecksPassed === 'true') {
+            console.log('✅ PR auto-approved');
+          } else {
+            console.log('❌ PR does not meet auto-approval criteria');
+            if (isCodeOwner !== 'true') {
+              console.log('  - Author is not a code owner');
+            }
+            if (allChecksPassed !== 'true') {
+              console.log('  - Not all checks have passed yet');
+            }
+          }
