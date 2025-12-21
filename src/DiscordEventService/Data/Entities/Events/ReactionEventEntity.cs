@@ -7,7 +7,8 @@ public enum ReactionEventType
     Added = 0,
     Removed = 1,
     Cleared = 2,
-    EmojiCleared = 3
+    EmojiCleared = 3,
+    Backfilled = 4
 }
 
 public class ReactionEventEntity
