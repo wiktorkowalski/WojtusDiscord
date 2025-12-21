@@ -8,7 +8,7 @@ using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<AutoModRuleEventHandler> logger) :
+public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<AutoModRuleEventHandler> logger, FailedEventService failedEventService) :
     IEventHandler<AutoModerationRuleCreatedEventArgs>,
     IEventHandler<AutoModerationRuleUpdatedEventArgs>,
     IEventHandler<AutoModerationRuleDeletedEventArgs>
@@ -35,8 +35,8 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
             db.AutoModRules.Add(new AutoModRuleEntity
             {
                 DiscordId = e.Rule.Id,
-                GuildId = guild?.Id ?? Guid.Empty,
-                CreatorId = creator?.Id ?? Guid.Empty,
+                GuildId = guild?.Id,
+                CreatorId = creator?.Id,
                 Name = e.Rule.Name ?? string.Empty,
                 EventType = (int)e.Rule.EventType,
                 TriggerType = (int)e.Rule.TriggerType,
@@ -63,6 +63,9 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling automod rule created");
+            await failedEventService.RecordFailureAsync(
+                "AutoModRuleCreated", nameof(AutoModRuleEventHandler), ex,
+                e.Rule.Guild?.Id, null, e.Rule.Creator?.Id);
         }
     }
 
@@ -106,6 +109,9 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling automod rule updated");
+            await failedEventService.RecordFailureAsync(
+                "AutoModRuleUpdated", nameof(AutoModRuleEventHandler), ex,
+                e.Rule.Guild?.Id, null, e.Rule.Creator?.Id);
         }
     }
 
@@ -144,6 +150,9 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling automod rule deleted");
+            await failedEventService.RecordFailureAsync(
+                "AutoModRuleDeleted", nameof(AutoModRuleEventHandler), ex,
+                e.Rule.Guild?.Id, null, e.Rule.Creator?.Id);
         }
     }
 }

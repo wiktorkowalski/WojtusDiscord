@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
-public class UserService(DiscordDbContext db)
+public class UserService(DiscordDbContext db, ILogger<UserService> logger)
 {
     public async Task UpsertUserAsync(DiscordUser user)
     {
@@ -56,7 +56,12 @@ public class UserService(DiscordDbContext db)
         var userEntity = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == member.Id);
         var guildEntity = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == member.Guild.Id);
 
-        if (userEntity is null || guildEntity is null) return;
+        if (userEntity is null || guildEntity is null)
+        {
+            logger.LogWarning("Cannot upsert member: User={UserFound} Guild={GuildFound} for MemberId={MemberId} GuildId={GuildId}",
+                userEntity != null, guildEntity != null, member.Id, member.Guild.Id);
+            return;
+        }
 
         var rowsAffected = await db.Members
             .Where(m => m.UserId == userEntity.Id && m.GuildId == guildEntity.Id)

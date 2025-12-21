@@ -818,6 +818,24 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
         modelBuilder.Entity<RawEventLogEntity>()
             .Property(r => r.EventJson)
             .HasColumnType("jsonb");
+
+        // =====================================================
+        // FailedEventEntity configuration (dead-letter queue)
+        // =====================================================
+        modelBuilder.Entity<FailedEventEntity>()
+            .HasIndex(f => f.IsResolved);
+
+        modelBuilder.Entity<FailedEventEntity>()
+            .HasIndex(f => f.FailedAtUtc);
+
+        modelBuilder.Entity<FailedEventEntity>()
+            .HasIndex(f => new { f.IsResolved, f.FailedAtUtc });
+
+        modelBuilder.Entity<FailedEventEntity>()
+            .HasIndex(f => f.EventType);
+
+        modelBuilder.Entity<FailedEventEntity>()
+            .HasIndex(f => f.GuildDiscordId);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

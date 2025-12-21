@@ -6,8 +6,8 @@ public class AutoModRuleEntity : ITimestamped
 {
     public Guid Id { get; set; }
     public ulong DiscordId { get; set; }
-    public Guid GuildId { get; set; }
-    public Guid CreatorId { get; set; }
+    public Guid? GuildId { get; set; }
+    public Guid? CreatorId { get; set; }
     public string Name { get; set; } = string.Empty;
     public int EventType { get; set; }
     public int TriggerType { get; set; }
@@ -22,7 +22,8 @@ public class AutoModRuleEntity : ITimestamped
     public DateTime LastUpdatedUtc { get; set; }
 
     // Navigation properties - Core
-    public GuildEntity Guild { get; set; } = null!;
+    public GuildEntity? Guild { get; set; }
+    public UserEntity? Creator { get; set; }
 
     // Navigation properties - Events (soft relations)
     public ICollection<AutoModEventEntity> AutoModEvents { get; set; } = [];

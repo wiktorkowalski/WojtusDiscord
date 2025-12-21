@@ -5,7 +5,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class VoiceServerEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceServerEventHandler> logger) :
+public class VoiceServerEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceServerEventHandler> logger, FailedEventService failedEventService) :
     IEventHandler<VoiceServerUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, VoiceServerUpdatedEventArgs args)
@@ -41,6 +41,9 @@ public class VoiceServerEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling voice server update for guild {GuildId}", args.Guild.Id);
+            await failedEventService.RecordFailureAsync(
+                "VoiceServerUpdated", nameof(VoiceServerEventHandler), ex,
+                args.Guild.Id, null, null);
         }
     }
 }

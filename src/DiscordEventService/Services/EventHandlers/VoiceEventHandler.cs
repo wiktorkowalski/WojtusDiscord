@@ -82,7 +82,12 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
         var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == args.User.Id);
         var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == args.Guild.Id);
 
-        if (user == null || guild == null) return;
+        if (user == null || guild == null)
+        {
+            logger.LogWarning("Cannot upsert voice state: User={UserFound} Guild={GuildFound} for UserId={UserId} GuildId={GuildId}",
+                user != null, guild != null, args.User.Id, args.Guild.Id);
+            return;
+        }
 
         var afterState = args.After;
         if (afterState is null || afterState.Channel is null)
@@ -134,8 +139,23 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
             catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
             {
                 // Unique constraint violation - race condition, another request inserted first
-                logger.LogDebug("Voice state race condition for User={UserId} Guild={GuildId}", user.Id, guild.Id);
+                logger.LogDebug("Voice state race condition for User={UserId} Guild={GuildId}, retrying with update", user.Id, guild.Id);
                 db.ChangeTracker.Clear();
+
+                // Retry with update to ensure latest data is persisted
+                await db.VoiceStates
+                    .Where(v => v.UserId == user.Id && v.GuildId == guild.Id)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(v => v.ChannelId, channel != null ? channel.Id : (Guid?)null)
+                        .SetProperty(v => v.SessionId, afterState.SessionId)
+                        .SetProperty(v => v.IsSelfMuted, afterState.IsSelfMuted)
+                        .SetProperty(v => v.IsSelfDeafened, afterState.IsSelfDeafened)
+                        .SetProperty(v => v.IsServerMuted, afterState.IsServerMuted)
+                        .SetProperty(v => v.IsServerDeafened, afterState.IsServerDeafened)
+                        .SetProperty(v => v.IsStreaming, afterState.IsSelfStream)
+                        .SetProperty(v => v.IsVideo, afterState.IsSelfVideo)
+                        .SetProperty(v => v.IsSuppressed, afterState.IsSuppressed)
+                        .SetProperty(v => v.LastUpdatedUtc, now));
             }
         }
     }

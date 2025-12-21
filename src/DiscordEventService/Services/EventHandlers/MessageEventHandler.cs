@@ -150,7 +150,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
             {
                 db.MessageEditHistory.Add(new MessageEditHistoryEntity
                 {
-                    MessageId = message?.Id ?? Guid.Empty,
+                    MessageId = message?.Id,
                     MessageDiscordId = e.Message.Id,
                     ContentBefore = e.MessageBefore?.Content,
                     ContentAfter = e.Message.Content,
@@ -164,6 +164,9 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling message updated for MessageId={MessageId}", e.Message.Id);
+            await failedEventService.RecordFailureAsync(
+                "MessageUpdated", nameof(MessageEventHandler), ex,
+                e.Guild?.Id, e.Channel.Id, e.Author?.Id);
         }
     }
 
@@ -206,6 +209,9 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling message deleted for MessageId={MessageId}", e.Message.Id);
+            await failedEventService.RecordFailureAsync(
+                "MessageDeleted", nameof(MessageEventHandler), ex,
+                e.Guild?.Id, e.Channel.Id, e.Message.Author?.Id);
         }
     }
 
@@ -250,6 +256,9 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling bulk message delete in ChannelId={ChannelId}", e.Channel.Id);
+            await failedEventService.RecordFailureAsync(
+                "MessagesBulkDeleted", nameof(MessageEventHandler), ex,
+                e.Guild?.Id, e.Channel.Id, null);
         }
     }
 }

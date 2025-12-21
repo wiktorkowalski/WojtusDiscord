@@ -10,7 +10,7 @@ using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<PresenceEventHandler> logger) :
+public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<PresenceEventHandler> logger, FailedEventService failedEventService) :
     IEventHandler<PresenceUpdatedEventArgs>
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -66,6 +66,9 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling presence update for user {UserId}", args.User.Id);
+            await failedEventService.RecordFailureAsync(
+                "PresenceUpdated", nameof(PresenceEventHandler), ex,
+                null, null, args.User.Id);
         }
     }
 

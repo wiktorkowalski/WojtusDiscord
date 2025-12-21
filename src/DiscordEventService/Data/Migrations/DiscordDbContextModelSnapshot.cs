@@ -213,7 +213,7 @@ namespace DiscordEventService.Data.Migrations
                         .HasColumnType("jsonb")
                         .HasColumnName("actions_json");
 
-                    b.Property<Guid>("CreatorId")
+                    b.Property<Guid?>("CreatorId")
                         .HasColumnType("uuid")
                         .HasColumnName("creator_id");
 
@@ -237,7 +237,7 @@ namespace DiscordEventService.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("first_seen_utc");
 
-                    b.Property<Guid>("GuildId")
+                    b.Property<Guid?>("GuildId")
                         .HasColumnType("uuid")
                         .HasColumnName("guild_id");
 
@@ -268,6 +268,9 @@ namespace DiscordEventService.Data.Migrations
 
                     b.HasKey("Id")
                         .HasName("pk_auto_mod_rules");
+
+                    b.HasIndex("CreatorId")
+                        .HasDatabaseName("ix_auto_mod_rules_creator_id");
 
                     b.HasIndex("DiscordId")
                         .IsUnique()
@@ -858,7 +861,7 @@ namespace DiscordEventService.Data.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("message_discord_id");
 
-                    b.Property<Guid>("MessageId")
+                    b.Property<Guid?>("MessageId")
                         .HasColumnType("uuid")
                         .HasColumnName("message_id");
 
@@ -1926,6 +1929,21 @@ namespace DiscordEventService.Data.Migrations
 
                     b.HasKey("Id")
                         .HasName("pk_failed_events");
+
+                    b.HasIndex("EventType")
+                        .HasDatabaseName("ix_failed_events_event_type");
+
+                    b.HasIndex("FailedAtUtc")
+                        .HasDatabaseName("ix_failed_events_failed_at_utc");
+
+                    b.HasIndex("GuildDiscordId")
+                        .HasDatabaseName("ix_failed_events_guild_discord_id");
+
+                    b.HasIndex("IsResolved")
+                        .HasDatabaseName("ix_failed_events_is_resolved");
+
+                    b.HasIndex("IsResolved", "FailedAtUtc")
+                        .HasDatabaseName("ix_failed_events_is_resolved_failed_at_utc");
 
                     b.ToTable("failed_events", (string)null);
                 });
@@ -3608,12 +3626,17 @@ namespace DiscordEventService.Data.Migrations
 
             modelBuilder.Entity("DiscordEventService.Data.Entities.Core.AutoModRuleEntity", b =>
                 {
+                    b.HasOne("DiscordEventService.Data.Entities.Core.UserEntity", "Creator")
+                        .WithMany()
+                        .HasForeignKey("CreatorId")
+                        .HasConstraintName("fk_auto_mod_rules_users_creator_id");
+
                     b.HasOne("DiscordEventService.Data.Entities.Core.GuildEntity", "Guild")
                         .WithMany()
                         .HasForeignKey("GuildId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
                         .HasConstraintName("fk_auto_mod_rules_guilds_guild_id");
+
+                    b.Navigation("Creator");
 
                     b.Navigation("Guild");
                 });
@@ -3754,7 +3777,6 @@ namespace DiscordEventService.Data.Migrations
                         .WithMany("EditHistory")
                         .HasForeignKey("MessageId")
                         .OnDelete(DeleteBehavior.NoAction)
-                        .IsRequired()
                         .HasConstraintName("fk_message_edit_history_messages_message_id");
 
                     b.Navigation("Message");
