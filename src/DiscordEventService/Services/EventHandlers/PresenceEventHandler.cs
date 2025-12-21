@@ -126,18 +126,18 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
         }
 
         // Update existing activities that are still active
-        foreach (var current in activitiesAfter ?? Enumerable.Empty<DiscordActivity>())
-        {
-            if (activitiesBefore?.Any(b => IsSameActivity(current, b)) == true)
-            {
-                var existingActivity = await dbContext.Activities
-                    .Where(a => a.UserDiscordId == userId && a.IsActive && a.Name == current.Name && a.ActivityType == (int)current.ActivityType)
-                    .FirstOrDefaultAsync();
+        var continuingActivities = (activitiesAfter ?? Enumerable.Empty<DiscordActivity>())
+            .Where(current => activitiesBefore?.Any(b => IsSameActivity(current, b)) == true);
 
-                if (existingActivity != null)
-                {
-                    existingActivity.LastSeenAtUtc = now;
-                }
+        foreach (var current in continuingActivities)
+        {
+            var existingActivity = await dbContext.Activities
+                .Where(a => a.UserDiscordId == userId && a.IsActive && a.Name == current.Name && a.ActivityType == (int)current.ActivityType)
+                .FirstOrDefaultAsync();
+
+            if (existingActivity != null)
+            {
+                existingActivity.LastSeenAtUtc = now;
             }
         }
     }
