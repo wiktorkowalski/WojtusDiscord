@@ -6,9 +6,9 @@ public class MessageEntity : ITimestamped
 {
     public Guid Id { get; set; }
     public ulong DiscordId { get; set; }
-    public Guid ChannelId { get; set; }
-    public Guid GuildId { get; set; }
-    public Guid AuthorId { get; set; }
+    public Guid? ChannelId { get; set; }
+    public Guid? GuildId { get; set; }
+    public Guid? AuthorId { get; set; }
 
     public string? Content { get; set; }
     public ulong? ReplyToDiscordId { get; set; }
@@ -26,10 +26,10 @@ public class MessageEntity : ITimestamped
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastUpdatedUtc { get; set; }
 
-    // Navigation properties - Core
-    public GuildEntity Guild { get; set; } = null!;
-    public ChannelEntity Channel { get; set; } = null!;
-    public UserEntity Author { get; set; } = null!;
+    // Navigation properties - Core (nullable since FKs are nullable)
+    public GuildEntity? Guild { get; set; }
+    public ChannelEntity? Channel { get; set; }
+    public UserEntity? Author { get; set; }
 
     // Navigation properties - Events (soft relations)
     public ICollection<MessageEventEntity> MessageEvents { get; set; } = [];

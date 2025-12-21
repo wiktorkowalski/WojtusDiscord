@@ -22,8 +22,8 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var guildDiscordId = e.Rule.Guild?.Id ?? 0;
-            var creatorDiscordId = e.Rule.Creator?.Id ?? 0;
+            var guildDiscordId = e.Rule.Guild?.Id ?? 0UL;
+            var creatorDiscordId = e.Rule.Creator?.Id ?? 0UL;
 
             var rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "AutoModRuleCreatedRule", guildDiscordId, null, creatorDiscordId);
@@ -75,7 +75,7 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var guildDiscordId = e.Rule.Guild?.Id ?? 0;
+            var guildDiscordId = e.Rule.Guild?.Id ?? 0UL;
 
             var rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "AutoModRuleUpdatedRule", guildDiscordId, null, e.Rule.Creator?.Id);

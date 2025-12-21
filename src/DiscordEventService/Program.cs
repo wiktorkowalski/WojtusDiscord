@@ -6,14 +6,15 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Database with connection resiliency
+// Database with connection resiliency and snake_case naming
 builder.Services.AddDbContext<DiscordDbContext>(options =>
     options.UseNpgsql(
         builder.Configuration.GetConnectionString("Discord"),
         npgsqlOptions => npgsqlOptions.EnableRetryOnFailure(
             maxRetryCount: 3,
             maxRetryDelay: TimeSpan.FromSeconds(5),
-            errorCodesToAdd: null)));
+            errorCodesToAdd: null))
+    .UseSnakeCaseNamingConvention());
 
 // Discord Client
 builder.Services.AddSingleton(sp =>
@@ -75,6 +76,7 @@ builder.Services.AddMemoryCache();
 // Shared services
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<RawEventLogService>();
+builder.Services.AddScoped<FailedEventService>();
 
 // Health checks
 builder.Services.AddHealthChecks()
@@ -82,8 +84,8 @@ builder.Services.AddHealthChecks()
 
 var app = builder.Build();
 
-// Apply migrations in development
-if (app.Environment.IsDevelopment())
+// Apply migrations if configured
+if (builder.Configuration.GetValue<bool>("Database:AutoMigrate"))
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();

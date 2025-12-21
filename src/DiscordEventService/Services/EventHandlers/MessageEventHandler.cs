@@ -1,6 +1,7 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
@@ -8,7 +9,7 @@ using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<MessageEventHandler> logger) :
+public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<MessageEventHandler> logger, FailedEventService failedEventService) :
     IEventHandler<MessageCreatedEventArgs>,
     IEventHandler<MessageUpdatedEventArgs>,
     IEventHandler<MessageDeletedEventArgs>,
@@ -18,6 +19,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
     {
         if (e.Guild is null) return;
 
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
@@ -25,7 +27,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
             var userService = scope.ServiceProvider.GetRequiredService<UserService>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "MessageCreated", e.Guild.Id, e.Channel.Id, e.Author.Id);
 
             await userService.UpsertUserAsync(e.Author);
@@ -46,9 +48,9 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
             db.Messages.Add(new MessageEntity
             {
                 DiscordId = e.Message.Id,
-                ChannelId = channel?.Id ?? Guid.Empty,
-                GuildId = guild?.Id ?? Guid.Empty,
-                AuthorId = author?.Id ?? Guid.Empty,
+                ChannelId = channel?.Id,
+                GuildId = guild?.Id,
+                AuthorId = author?.Id,
                 Content = e.Message.Content,
                 ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
                 HasAttachments = e.Message.Attachments.Count > 0,
@@ -81,6 +83,9 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling message created for MessageId={MessageId}", e.Message.Id);
+            await failedEventService.RecordFailureAsync(
+                "MessageCreated", nameof(MessageEventHandler), ex,
+                e.Guild?.Id, e.Channel.Id, e.Author.Id, rawJson);
         }
     }
 

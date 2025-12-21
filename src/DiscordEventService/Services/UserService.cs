@@ -33,9 +33,9 @@ public class UserService(DiscordDbContext db)
                 });
                 await db.SaveChangesAsync();
             }
-            catch (DbUpdateException)
+            catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
             {
-                // Race condition: another request inserted first, update instead
+                // Unique constraint violation - race condition, another request inserted first
                 db.ChangeTracker.Clear();
                 await db.Users
                     .Where(u => u.DiscordId == user.Id)
@@ -88,9 +88,9 @@ public class UserService(DiscordDbContext db)
                 });
                 await db.SaveChangesAsync();
             }
-            catch (DbUpdateException)
+            catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
             {
-                // Race condition: another request inserted first, update instead
+                // Unique constraint violation - race condition, another request inserted first
                 db.ChangeTracker.Clear();
                 await db.Members
                     .Where(m => m.UserId == userEntity.Id && m.GuildId == guildEntity.Id)

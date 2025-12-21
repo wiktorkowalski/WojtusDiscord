@@ -113,19 +113,10 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
                 LastSeenAtUtc = now
             };
 
-            // Try to extract rich presence data from the activity
-            // DSharpPlus 5.x exposes activity data differently - store what's available
-            try
+            // For Spotify/Listening activities, try to get additional data
+            if (started is { ActivityType: DiscordActivityType.ListeningTo, Name: "Spotify" })
             {
-                // For Spotify/Listening activities, try to get additional data
-                if (started.ActivityType == DiscordActivityType.ListeningTo && started.Name == "Spotify")
-                {
-                    activity.SpotifySongTitle = started.Name;
-                }
-            }
-            catch
-            {
-                // Ignore any property access issues
+                activity.SpotifySongTitle = started.Name;
             }
 
             await dbContext.Activities.AddAsync(activity);

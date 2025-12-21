@@ -68,9 +68,15 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     // Raw event logging for debugging
     public DbSet<RawEventLogEntity> RawEventLogs => Set<RawEventLogEntity>();
 
+    // Dead-letter queue for failed events
+    public DbSet<FailedEventEntity> FailedEvents => Set<FailedEventEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // PostgreSQL extensions
+        modelBuilder.HasPostgresExtension("pg_uuidv7");
 
         // Apply snowflake converter to all ulong properties
         var snowflakeConverter = new ValueConverter<ulong, long>(

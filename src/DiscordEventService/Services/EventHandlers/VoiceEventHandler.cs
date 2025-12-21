@@ -1,13 +1,14 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceEventHandler> logger) :
+public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceEventHandler> logger, FailedEventService failedEventService) :
     IEventHandler<VoiceStateUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, VoiceStateUpdatedEventArgs args)
@@ -69,10 +70,13 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
         {
             logger.LogError(ex, "Error handling voice state update for user {UserId} in guild {GuildId}",
                 args.User.Id, args.Guild.Id);
+            await failedEventService.RecordFailureAsync(
+                "VoiceStateUpdated", nameof(VoiceEventHandler), ex,
+                args.Guild.Id, args.After?.Channel?.Id, args.User.Id);
         }
     }
 
-    private static async Task UpsertVoiceStateAsync(DiscordDbContext db, VoiceStateUpdatedEventArgs args, DateTime now)
+    private async Task UpsertVoiceStateAsync(DiscordDbContext db, VoiceStateUpdatedEventArgs args, DateTime now)
     {
         // Look up Guid FKs
         var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == args.User.Id);
@@ -127,8 +131,10 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
                 });
                 await db.SaveChangesAsync();
             }
-            catch (DbUpdateException)
+            catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
             {
+                // Unique constraint violation - race condition, another request inserted first
+                logger.LogDebug("Voice state race condition for User={UserId} Guild={GuildId}", user.Id, guild.Id);
                 db.ChangeTracker.Clear();
             }
         }
