@@ -1,10 +1,9 @@
-using DSharpPlus;
 using DSharpPlus.Exceptions;
 
 namespace DiscordEventService.Services;
 
 public class DiscordHostedService(
-    DiscordClient client,
+    DiscordClientWrapper clientWrapper,
     ILogger<DiscordHostedService> logger) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -12,32 +11,24 @@ public class DiscordHostedService(
         logger.LogInformation("Connecting to Discord...");
         try
         {
-            await client.ConnectAsync();
-            logger.LogInformation("Connected to Discord as {Username}", client.CurrentUser?.Username ?? "Unknown");
+            await clientWrapper.Client.ConnectAsync();
+            clientWrapper.WasConnected = true;
+            logger.LogInformation("Connected to Discord as {Username}", clientWrapper.Client.CurrentUser?.Username ?? "Unknown");
         }
         catch (UnauthorizedException ex)
         {
-            logger.LogCritical(ex, "Invalid Discord bot token - check Discord:Token configuration");
-            throw;
+            logger.LogCritical(ex, "Invalid Discord bot token - check Discord:Token configuration. Service will continue without Discord connection.");
         }
         catch (Exception ex)
         {
-            logger.LogCritical(ex, "Failed to connect to Discord");
-            throw;
+            logger.LogCritical(ex, "Failed to connect to Discord. Service will continue without Discord connection.");
         }
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken)
+    public Task StopAsync(CancellationToken cancellationToken)
     {
-        logger.LogInformation("Disconnecting from Discord...");
-        await client.DisconnectAsync();
-
-        if (client is IDisposable disposable)
-        {
-            disposable.Dispose();
-            logger.LogDebug("DiscordClient disposed");
-        }
-
-        logger.LogInformation("Disconnected from Discord");
+        // Disposal is handled by DiscordClientWrapper.DisposeAsync()
+        logger.LogInformation("Discord hosted service stopping");
+        return Task.CompletedTask;
     }
 }

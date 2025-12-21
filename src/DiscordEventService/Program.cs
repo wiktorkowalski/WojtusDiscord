@@ -16,8 +16,8 @@ builder.Services.AddDbContext<DiscordDbContext>(options =>
             errorCodesToAdd: null))
     .UseSnakeCaseNamingConvention());
 
-// Discord Client
-builder.Services.AddSingleton(sp =>
+// Discord Client with safe disposal wrapper
+builder.Services.AddSingleton<DiscordClientWrapper>(sp =>
 {
     var token = builder.Configuration["Discord:Token"]
         ?? throw new InvalidOperationException("Discord:Token is required");
@@ -64,8 +64,10 @@ builder.Services.AddSingleton(sp =>
         .AddEventHandlers<AuditLogEventHandler>(ServiceLifetime.Scoped)
     );
 
-    return clientBuilder.Build();
+    var client = clientBuilder.Build();
+    return new DiscordClientWrapper(client, sp.GetRequiredService<ILogger<DiscordClientWrapper>>());
 });
+builder.Services.AddSingleton(sp => sp.GetRequiredService<DiscordClientWrapper>().Client);
 
 // Hosted Service
 builder.Services.AddHostedService<DiscordHostedService>();

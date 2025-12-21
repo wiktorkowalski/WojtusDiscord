@@ -75,9 +75,6 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     {
         base.OnModelCreating(modelBuilder);
 
-        // PostgreSQL extensions
-        modelBuilder.HasPostgresExtension("pg_uuidv7");
-
         // Apply snowflake converter to all ulong properties
         var snowflakeConverter = new ValueConverter<ulong, long>(
             v => unchecked((long)v),
