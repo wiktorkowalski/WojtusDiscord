@@ -8,7 +8,7 @@ using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<AutoModRuleEventHandler> logger, FailedEventService failedEventService) :
+public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<AutoModRuleEventHandler> logger) :
     IEventHandler<AutoModerationRuleCreatedEventArgs>,
     IEventHandler<AutoModerationRuleUpdatedEventArgs>,
     IEventHandler<AutoModerationRuleDeletedEventArgs>
@@ -63,6 +63,8 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling automod rule created");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
             await failedEventService.RecordFailureAsync(
                 "AutoModRuleCreated", nameof(AutoModRuleEventHandler), ex,
                 e.Rule.Guild?.Id, null, e.Rule.Creator?.Id);
@@ -109,6 +111,8 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling automod rule updated");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
             await failedEventService.RecordFailureAsync(
                 "AutoModRuleUpdated", nameof(AutoModRuleEventHandler), ex,
                 e.Rule.Guild?.Id, null, e.Rule.Creator?.Id);
@@ -150,6 +154,8 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling automod rule deleted");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
             await failedEventService.RecordFailureAsync(
                 "AutoModRuleDeleted", nameof(AutoModRuleEventHandler), ex,
                 e.Rule.Guild?.Id, null, e.Rule.Creator?.Id);

@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceEventHandler> logger, FailedEventService failedEventService) :
+public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceEventHandler> logger) :
     IEventHandler<VoiceStateUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, VoiceStateUpdatedEventArgs args)
@@ -70,6 +70,8 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
         {
             logger.LogError(ex, "Error handling voice state update for user {UserId} in guild {GuildId}",
                 args.User.Id, args.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
             await failedEventService.RecordFailureAsync(
                 "VoiceStateUpdated", nameof(VoiceEventHandler), ex,
                 args.Guild.Id, args.After?.Channel?.Id, args.User.Id);

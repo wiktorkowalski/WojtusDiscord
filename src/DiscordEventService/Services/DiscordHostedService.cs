@@ -1,9 +1,10 @@
+using DSharpPlus;
 using DSharpPlus.Exceptions;
 
 namespace DiscordEventService.Services;
 
 public class DiscordHostedService(
-    DiscordClientWrapper clientWrapper,
+    DiscordClient client,
     ILogger<DiscordHostedService> logger) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -11,9 +12,8 @@ public class DiscordHostedService(
         logger.LogInformation("Connecting to Discord...");
         try
         {
-            await clientWrapper.Client.ConnectAsync();
-            clientWrapper.WasConnected = true;
-            logger.LogInformation("Connected to Discord as {Username}", clientWrapper.Client.CurrentUser?.Username ?? "Unknown");
+            await client.ConnectAsync();
+            logger.LogInformation("Connected to Discord as {Username}", client.CurrentUser?.Username ?? "Unknown");
         }
         catch (UnauthorizedException ex)
         {
@@ -25,10 +25,16 @@ public class DiscordHostedService(
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
-        // Disposal is handled by DiscordClientWrapper.DisposeAsync()
         logger.LogInformation("Discord hosted service stopping");
-        return Task.CompletedTask;
+        try
+        {
+            await client.DisconnectAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Error during Discord disconnect");
+        }
     }
 }

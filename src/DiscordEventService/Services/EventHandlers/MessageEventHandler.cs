@@ -9,7 +9,7 @@ using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<MessageEventHandler> logger, FailedEventService failedEventService) :
+public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<MessageEventHandler> logger) :
     IEventHandler<MessageCreatedEventArgs>,
     IEventHandler<MessageUpdatedEventArgs>,
     IEventHandler<MessageDeletedEventArgs>,
@@ -83,6 +83,8 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling message created for MessageId={MessageId}", e.Message.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
             await failedEventService.RecordFailureAsync(
                 "MessageCreated", nameof(MessageEventHandler), ex,
                 e.Guild?.Id, e.Channel.Id, e.Author.Id, rawJson);
@@ -164,6 +166,8 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling message updated for MessageId={MessageId}", e.Message.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
             await failedEventService.RecordFailureAsync(
                 "MessageUpdated", nameof(MessageEventHandler), ex,
                 e.Guild?.Id, e.Channel.Id, e.Author?.Id);
@@ -209,6 +213,8 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling message deleted for MessageId={MessageId}", e.Message.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
             await failedEventService.RecordFailureAsync(
                 "MessageDeleted", nameof(MessageEventHandler), ex,
                 e.Guild?.Id, e.Channel.Id, e.Message.Author?.Id);
@@ -256,6 +262,8 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling bulk message delete in ChannelId={ChannelId}", e.Channel.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
             await failedEventService.RecordFailureAsync(
                 "MessagesBulkDeleted", nameof(MessageEventHandler), ex,
                 e.Guild?.Id, e.Channel.Id, null);

@@ -10,7 +10,7 @@ using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<PresenceEventHandler> logger, FailedEventService failedEventService) :
+public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<PresenceEventHandler> logger) :
     IEventHandler<PresenceUpdatedEventArgs>
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -56,8 +56,16 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
 
             await dbContext.PresenceEvents.AddAsync(presenceEvent);
 
-            // Track activities in ActivityEntity table
-            await UpdateActivityTracking(dbContext, args.User.Id, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, now);
+            // Track activities in ActivityEntity table (requires User to exist)
+            var user = await dbContext.Users.FirstOrDefaultAsync(u => u.DiscordId == args.User.Id);
+            if (user != null)
+            {
+                await UpdateActivityTracking(dbContext, user.Id, args.User.Id, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, now);
+            }
+            else
+            {
+                logger.LogDebug("Skipping activity tracking: User {UserId} not in database", args.User.Id);
+            }
 
             await dbContext.SaveChangesAsync();
 
@@ -66,6 +74,8 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling presence update for user {UserId}", args.User.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
             await failedEventService.RecordFailureAsync(
                 "PresenceUpdated", nameof(PresenceEventHandler), ex,
                 null, null, args.User.Id);
@@ -74,7 +84,8 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
 
     private async Task UpdateActivityTracking(
         DiscordDbContext dbContext,
-        ulong userId,
+        Guid userGuid,
+        ulong userDiscordId,
         IReadOnlyList<DiscordActivity>? activitiesBefore,
         IReadOnlyList<DiscordActivity>? activitiesAfter,
         DateTime now)
@@ -91,7 +102,7 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
         foreach (var ended in endedActivities)
         {
             var existingActivity = await dbContext.Activities
-                .Where(a => a.UserDiscordId == userId && a.IsActive && a.Name == ended.Name && a.ActivityType == (int)ended.ActivityType)
+                .Where(a => a.UserDiscordId == userDiscordId && a.IsActive && a.Name == ended.Name && a.ActivityType == (int)ended.ActivityType)
                 .FirstOrDefaultAsync();
 
             if (existingActivity != null)
@@ -107,7 +118,8 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
         {
             var activity = new ActivityEntity
             {
-                UserDiscordId = userId,
+                UserId = userGuid,
+                UserDiscordId = userDiscordId,
                 ActivityType = (int)started.ActivityType,
                 Name = started.Name,
                 StreamUrl = started.StreamUrl,
@@ -132,7 +144,7 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
         foreach (var current in continuingActivities)
         {
             var existingActivity = await dbContext.Activities
-                .Where(a => a.UserDiscordId == userId && a.IsActive && a.Name == current.Name && a.ActivityType == (int)current.ActivityType)
+                .Where(a => a.UserDiscordId == userDiscordId && a.IsActive && a.Name == current.Name && a.ActivityType == (int)current.ActivityType)
                 .FirstOrDefaultAsync();
 
             if (existingActivity != null)

@@ -7,7 +7,13 @@ using DSharpPlus;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
-Env.Load();
+// Load .env from repo root (two levels up from project directory)
+var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+var envPath = Path.Combine(repoRoot, ".env");
+if (File.Exists(envPath))
+{
+    Env.Load(envPath);
+}
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,12 +39,31 @@ builder.Services.AddDbContext<DiscordDbContext>(options =>
             errorCodesToAdd: null))
     .UseSnakeCaseNamingConvention());
 
-// Discord Client with safe disposal wrapper
-builder.Services.AddSingleton<DiscordClientWrapper>(sp =>
-{
-    var discordOptions = sp.GetRequiredService<IOptions<DiscordOptions>>().Value;
+// Discord Client with services configured for DI
+var discordToken = builder.Configuration.GetSection(DiscordOptions.SectionName).Get<DiscordOptions>()?.Token
+    ?? throw new InvalidOperationException("Discord:Token is required");
 
-    var clientBuilder = DiscordClientBuilder.CreateDefault(discordOptions.Token, DiscordIntents.All);
+builder.Services.AddSingleton(sp =>
+{
+    var clientBuilder = DiscordClientBuilder.CreateDefault(discordToken, DiscordIntents.All);
+
+    // Register ASP.NET Core services in DSharpPlus's DI container
+    clientBuilder.ConfigureServices(services =>
+    {
+        services.AddDbContext<DiscordDbContext>(options =>
+            options.UseNpgsql(
+                connectionString,
+                npgsqlOptions => npgsqlOptions.EnableRetryOnFailure(
+                    maxRetryCount: 3,
+                    maxRetryDelay: TimeSpan.FromSeconds(5),
+                    errorCodesToAdd: null))
+            .UseSnakeCaseNamingConvention());
+
+        services.AddScoped<UserService>();
+        services.AddScoped<RawEventLogService>();
+        services.AddScoped<FailedEventService>();
+        services.AddMemoryCache();
+    });
 
     // Event handlers
     clientBuilder.ConfigureEventHandlers(b => b
@@ -80,10 +105,8 @@ builder.Services.AddSingleton<DiscordClientWrapper>(sp =>
         .AddEventHandlers<AuditLogEventHandler>(ServiceLifetime.Scoped)
     );
 
-    var client = clientBuilder.Build();
-    return new DiscordClientWrapper(client, sp.GetRequiredService<ILogger<DiscordClientWrapper>>());
+    return clientBuilder.Build();
 });
-builder.Services.AddSingleton(sp => sp.GetRequiredService<DiscordClientWrapper>().Client);
 
 // Hosted Service
 builder.Services.AddHostedService<DiscordHostedService>();
