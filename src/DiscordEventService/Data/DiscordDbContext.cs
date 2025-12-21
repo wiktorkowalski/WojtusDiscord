@@ -71,6 +71,9 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     // Dead-letter queue for failed events
     public DbSet<FailedEventEntity> FailedEvents => Set<FailedEventEntity>();
 
+    // Backfill checkpoints
+    public DbSet<BackfillCheckpointEntity> BackfillCheckpoints => Set<BackfillCheckpointEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -833,6 +836,18 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
 
         modelBuilder.Entity<FailedEventEntity>()
             .HasIndex(f => f.GuildDiscordId);
+
+        // =====================================================
+        // BackfillCheckpoint configuration
+        // =====================================================
+        modelBuilder.Entity<BackfillCheckpointEntity>()
+            .HasIndex(b => new { b.GuildDiscordId, b.Type }).IsUnique();
+
+        modelBuilder.Entity<BackfillCheckpointEntity>()
+            .HasIndex(b => b.Status);
+
+        modelBuilder.Entity<BackfillCheckpointEntity>()
+            .HasIndex(b => b.HangfireJobId);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

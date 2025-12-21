@@ -1,7 +1,11 @@
 using DiscordEventService.Data;
+using DiscordEventService.Endpoints;
+using DiscordEventService.Jobs;
 using DiscordEventService.Services;
 using DiscordEventService.Services.EventHandlers;
 using DSharpPlus;
+using Hangfire;
+using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -84,6 +88,33 @@ builder.Services.AddScoped<FailedEventService>();
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<DiscordDbContext>();
 
+// Hangfire
+var connectionString = builder.Configuration.GetConnectionString("Discord")
+    ?? throw new InvalidOperationException("Discord connection string is required");
+
+builder.Services.AddHangfire(config => config
+    .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
+    .UseSimpleAssemblyNameTypeSerializer()
+    .UseRecommendedSerializerSettings()
+    .UsePostgreSqlStorage(options =>
+        options.UseNpgsqlConnection(connectionString)));
+
+builder.Services.AddHangfireServer(options =>
+{
+    options.WorkerCount = 2;
+    options.Queues = ["backfill", "default"];
+});
+
+// Backfill jobs
+builder.Services.AddScoped<RolesBackfillJob>();
+builder.Services.AddScoped<EmojisBackfillJob>();
+builder.Services.AddScoped<StickersBackfillJob>();
+builder.Services.AddScoped<ChannelsBackfillJob>();
+builder.Services.AddScoped<MembersBackfillJob>();
+builder.Services.AddScoped<MessagesBackfillJob>();
+builder.Services.AddScoped<ReactionsBackfillJob>();
+builder.Services.AddScoped<GuildBackfillOrchestrator>();
+
 var app = builder.Build();
 
 // Apply migrations if configured
@@ -95,5 +126,11 @@ if (builder.Configuration.GetValue<bool>("Database:AutoMigrate"))
 }
 
 app.MapHealthChecks("/health");
+
+// Hangfire dashboard
+app.MapHangfireDashboard("/hangfire");
+
+// Backfill API
+app.MapBackfillEndpoints();
 
 app.Run();

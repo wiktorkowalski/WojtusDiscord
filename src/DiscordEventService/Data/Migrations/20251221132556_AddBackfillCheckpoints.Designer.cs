@@ -3,6 +3,7 @@ using System;
 using DiscordEventService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace DiscordEventService.Data.Migrations
 {
     [DbContext(typeof(DiscordDbContext))]
-    partial class DiscordDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251221132556_AddBackfillCheckpoints")]
+    partial class AddBackfillCheckpoints
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
