@@ -9,12 +9,14 @@ namespace DiscordEventService.Services.EventHandlers;
 
 public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildEventHandler> logger) :
     IEventHandler<GuildCreatedEventArgs>,
+    IEventHandler<GuildAvailableEventArgs>,
     IEventHandler<GuildUpdatedEventArgs>,
     IEventHandler<GuildDeletedEventArgs>,
     IEventHandler<GuildEmojisUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildCreatedEventArgs e)
     {
+        logger.LogInformation("GuildCreated event received for GuildId={GuildId} Name={GuildName}", e.Guild.Id, e.Guild.Name);
         try
         {
             using var scope = scopeFactory.CreateScope();
@@ -131,6 +133,12 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
         {
             logger.LogError(ex, "Error handling guild created for GuildId={GuildId}", e.Guild.Id);
         }
+    }
+
+    public Task HandleEventAsync(DiscordClient sender, GuildAvailableEventArgs e)
+    {
+        // GuildAvailable fires during initial connection - delegate to GuildCreated handler
+        return HandleEventAsync(sender, (GuildCreatedEventArgs)e);
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildUpdatedEventArgs e)
