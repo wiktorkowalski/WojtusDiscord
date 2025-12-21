@@ -1,15 +1,32 @@
+using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Services;
 using DiscordEventService.Services.EventHandlers;
+using DotNetEnv;
 using DSharpPlus;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+
+Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configuration with validation
+builder.Services.AddOptions<DatabaseOptions>()
+    .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName));
+
+builder.Services.AddOptions<DiscordOptions>()
+    .Bind(builder.Configuration.GetSection(DiscordOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
+var connectionString = builder.Configuration.GetConnectionString("Postgres")
+    ?? throw new InvalidOperationException("ConnectionStrings:Postgres is required");
 
 // Database with connection resiliency and snake_case naming
 builder.Services.AddDbContext<DiscordDbContext>(options =>
     options.UseNpgsql(
-        builder.Configuration.GetConnectionString("Discord"),
+        connectionString,
         npgsqlOptions => npgsqlOptions.EnableRetryOnFailure(
             maxRetryCount: 3,
             maxRetryDelay: TimeSpan.FromSeconds(5),
@@ -19,10 +36,9 @@ builder.Services.AddDbContext<DiscordDbContext>(options =>
 // Discord Client with safe disposal wrapper
 builder.Services.AddSingleton<DiscordClientWrapper>(sp =>
 {
-    var token = builder.Configuration["Discord:Token"]
-        ?? throw new InvalidOperationException("Discord:Token is required");
+    var discordOptions = sp.GetRequiredService<IOptions<DiscordOptions>>().Value;
 
-    var clientBuilder = DiscordClientBuilder.CreateDefault(token, DiscordIntents.All);
+    var clientBuilder = DiscordClientBuilder.CreateDefault(discordOptions.Token, DiscordIntents.All);
 
     // Event handlers
     clientBuilder.ConfigureEventHandlers(b => b
@@ -87,7 +103,8 @@ builder.Services.AddHealthChecks()
 var app = builder.Build();
 
 // Apply migrations if configured
-if (builder.Configuration.GetValue<bool>("Database:AutoMigrate"))
+var dbOptions = app.Services.GetRequiredService<IOptions<DatabaseOptions>>().Value;
+if (dbOptions.AutoMigrate)
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
