@@ -27,10 +27,11 @@ public class DiscordHostedService(
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        logger.LogInformation("Discord hosted service stopping");
+        logger.LogInformation("Disconnecting from Discord...");
         try
         {
             await client.DisconnectAsync();
+            logger.LogInformation("Disconnected from Discord successfully");
         }
         catch (Exception ex)
         {
