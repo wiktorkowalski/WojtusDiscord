@@ -29,14 +29,37 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
             var dbContext = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
+            var guildId = args.PresenceAfter?.Guild?.Id ?? args.PresenceBefore?.Guild?.Id ?? 0;
+
+            // Create DTO to avoid serialization issues with DSharpPlus internals
+            var eventDto = new
+            {
+                UserId = args.User.Id,
+                GuildId = guildId,
+                Before = args.PresenceBefore == null ? null : new
+                {
+                    Desktop = GetStatusValue(args.PresenceBefore.ClientStatus?.Desktop),
+                    Mobile = GetStatusValue(args.PresenceBefore.ClientStatus?.Mobile),
+                    Web = GetStatusValue(args.PresenceBefore.ClientStatus?.Web),
+                    Activities = args.PresenceBefore.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
+                },
+                After = args.PresenceAfter == null ? null : new
+                {
+                    Desktop = GetStatusValue(args.PresenceAfter.ClientStatus?.Desktop),
+                    Mobile = GetStatusValue(args.PresenceAfter.ClientStatus?.Mobile),
+                    Web = GetStatusValue(args.PresenceAfter.ClientStatus?.Web),
+                    Activities = args.PresenceAfter.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
+                }
+            };
+
             var rawJson = await rawEventService.SerializeAndLogAsync(
-                args, "PresenceUpdated", 0, null, args.User.Id);
+                eventDto, "PresenceUpdated", guildId, null, args.User.Id);
 
             // Record the presence event
             var presenceEvent = new PresenceEventEntity
             {
                 UserDiscordId = args.User.Id,
-                GuildDiscordId = 0,
+                GuildDiscordId = guildId,
 
                 DesktopStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Desktop),
                 MobileStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Mobile),
