@@ -1,0 +1,51 @@
+name: Claude Review Gate
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  review-gate:
+    runs-on: [self-hosted, homelab, deploy]
+    if: github.event.review.user.login == 'github-actions[bot]' || github.event.review.user.login == 'claude-code-action[bot]'
+    steps:
+      - name: Check Claude Review Status
+        env:
+          REVIEW_STATE: ${{ github.event.review.state }}
+        run: |
+          echo "Claude review state: $REVIEW_STATE"
+
+          if [ "$REVIEW_STATE" = "changes_requested" ]; then
+            echo "::error::Claude requested changes on this PR"
+            exit 1
+          elif [ "$REVIEW_STATE" = "approved" ]; then
+            echo "::notice::Claude approved this PR"
+            exit 0
+          else
+            echo "::notice::Claude review state: $REVIEW_STATE"
+            exit 0
+          fi
+
+      - name: Update PR Status
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          REVIEW_STATE: ${{ github.event.review.state }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const state = process.env.REVIEW_STATE;
+            const statusState = state === 'approved' ? 'success' :
+                               state === 'changes_requested' ? 'failure' : 'pending';
+            const description = state === 'approved' ? 'Claude approved this PR' :
+                               state === 'changes_requested' ? 'Claude requested changes' :
+                               'Awaiting Claude review';
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.HEAD_SHA,
+              state: statusState,
+              description: description,
+              context: 'Claude Review Gate'
+            });
