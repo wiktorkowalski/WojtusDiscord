@@ -19,6 +19,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+      id-token: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,16 +30,8 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          anthropic_base_url: ${{ secrets.ANTHROPIC_PROXY_URL }}
-          model: claude-opus-4-5-20251101
-          timeout_minutes: 30
-          allowed_tools: |
-            Read
-            Glob
-            Grep
-            WebFetch
-            WebSearch
-          direct_prompt: |
+          claude_args: --model claude-opus-4-5-20251101
+          prompt: |
             Review this PR thoroughly. Focus on:
             - Code correctness and potential bugs
             - Security vulnerabilities
