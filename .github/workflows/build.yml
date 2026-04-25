@@ -19,5 +19,5 @@ jobs:
       dockerfile: src/DiscordEventService/Dockerfile
       context: src/DiscordEventService
       deploy-compose-path: /home/ubuntu/docker/wojtusdiscord
-      deploy-runner-labels: '["self-hosted", "wojtus-discord"]'
+      deploy-runner-labels: '["self-hosted", "homelab"]'
     secrets: inherit
