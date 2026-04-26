@@ -30,63 +30,76 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
                 g.LeftAtUtc = null;
             }
 
-            // Upsert guild
-            var existingGuild = await db.Guilds
-                .Where(g => g.DiscordId == e.Guild.Id)
-                .FirstOrDefaultAsync();
-            if (existingGuild == null)
+            // Wrap the two-stage upsert (Guild flush for Guid, then channels/roles) in
+            // one transaction so a partial failure (e.g. FK error on roles after Guild
+            // already flushed) rolls back atomically. ExecutionStrategy is required
+            // because EnableRetryOnFailure is configured on the DbContext.
+            var strategy = db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
             {
-                existingGuild = new GuildEntity
+                db.ChangeTracker.Clear();
+                await using var tx = await db.Database.BeginTransactionAsync();
+
+                // Upsert guild
+                var existingGuild = await db.Guilds
+                    .Where(g => g.DiscordId == e.Guild.Id)
+                    .FirstOrDefaultAsync();
+                if (existingGuild == null)
                 {
-                    DiscordId = e.Guild.Id,
-                    Name = e.Guild.Name,
-                    IconHash = e.Guild.IconHash,
-                    OwnerId = e.Guild.OwnerId,
-                    LeftAtUtc = null
-                };
-                db.Guilds.Add(existingGuild);
+                    existingGuild = new GuildEntity
+                    {
+                        DiscordId = e.Guild.Id,
+                        Name = e.Guild.Name,
+                        IconHash = e.Guild.IconHash,
+                        OwnerId = e.Guild.OwnerId,
+                        LeftAtUtc = null
+                    };
+                    db.Guilds.Add(existingGuild);
+                    try
+                    {
+                        await db.SaveChangesAsync(); // Flush to get the Guid Id (committed atomically with the rest at tx.CommitAsync).
+                    }
+                    catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+                    {
+                        // Concurrent insert won the race. Re-fetch and update.
+                        db.ChangeTracker.Clear();
+                        existingGuild = await db.Guilds
+                            .Where(g => g.DiscordId == e.Guild.Id)
+                            .FirstOrDefaultAsync()
+                            ?? throw new InvalidOperationException($"Guild {e.Guild.Id} disappeared after 23505 conflict");
+                        ApplyGuildFields(existingGuild);
+                    }
+                }
+                else
+                {
+                    ApplyGuildFields(existingGuild);
+                }
+
+                var guildGuid = existingGuild.Id;
+
+                await UpsertChannelsAndRolesAsync(db, e.Guild, guildGuid);
+
                 try
                 {
-                    await db.SaveChangesAsync(); // Save to get the Guid Id
+                    await db.SaveChangesAsync();
                 }
                 catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
                 {
-                    // Concurrent insert won the race. Re-fetch and update.
+                    // Concurrent GuildCreated inserted a channel/role that wasn't in our batch lookup.
+                    // Clear drops the Guild field updates set above, so re-fetch and re-apply them
+                    // alongside the channel/role re-batch-load before saving.
                     db.ChangeTracker.Clear();
-                    existingGuild = await db.Guilds
-                        .Where(g => g.DiscordId == e.Guild.Id)
-                        .FirstOrDefaultAsync()
-                        ?? throw new InvalidOperationException($"Guild {e.Guild.Id} disappeared after 23505 conflict");
-                    ApplyGuildFields(existingGuild);
+                    var refreshedGuild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+                    if (refreshedGuild != null)
+                    {
+                        ApplyGuildFields(refreshedGuild);
+                    }
+                    await UpsertChannelsAndRolesAsync(db, e.Guild, guildGuid);
+                    await db.SaveChangesAsync();
                 }
-            }
-            else
-            {
-                ApplyGuildFields(existingGuild);
-            }
 
-            var guildGuid = existingGuild.Id;
-
-            await UpsertChannelsAndRolesAsync(db, e.Guild, guildGuid);
-
-            try
-            {
-                await db.SaveChangesAsync();
-            }
-            catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-            {
-                // Concurrent GuildCreated inserted a channel/role that wasn't in our batch lookup.
-                // Clear drops the Guild field updates set above, so re-fetch and re-apply them
-                // alongside the channel/role re-batch-load before saving.
-                db.ChangeTracker.Clear();
-                var refreshedGuild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
-                if (refreshedGuild != null)
-                {
-                    ApplyGuildFields(refreshedGuild);
-                }
-                await UpsertChannelsAndRolesAsync(db, e.Guild, guildGuid);
-                await db.SaveChangesAsync();
-            }
+                await tx.CommitAsync();
+            });
         }
         catch (Exception ex)
         {
