@@ -1,9 +1,10 @@
+using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
 
 namespace DiscordEventService.Services;
 
-public class FailedEventService(DiscordDbContext db, ILogger<FailedEventService> logger)
+public class FailedEventService(DiscordDbContext db, ILogger<FailedEventService> logger, IHostEnvironment env)
 {
     public async Task RecordFailureAsync(
         string eventType,
@@ -45,6 +46,37 @@ public class FailedEventService(DiscordDbContext db, ILogger<FailedEventService>
             logger.LogCritical(ex,
                 "CRITICAL: Failed to record event failure. Original error: {EventType} in {HandlerName} - {OriginalException}",
                 eventType, handlerName, exception.Message);
+
+            try
+            {
+                var failedAtUtc = DateTime.UtcNow;
+                var logsDir = Path.Combine(env.ContentRootPath, "logs");
+                Directory.CreateDirectory(logsDir);
+                var path = Path.Combine(logsDir, $"dead-letter-fallback-{failedAtUtc:yyyy-MM-dd}.jsonl");
+                var record = new
+                {
+                    failedAtUtc,
+                    eventType,
+                    handlerName,
+                    guildId,
+                    channelId,
+                    userId,
+                    exceptionType = exception.GetType().FullName,
+                    exceptionMessage = exception.Message,
+                    stackTrace = exception.StackTrace,
+                    eventJson,
+                    secondaryExceptionType = ex.GetType().FullName,
+                    secondaryExceptionMessage = ex.Message
+                };
+                var line = JsonSerializer.Serialize(record);
+                await File.AppendAllTextAsync(path, line + Environment.NewLine);
+            }
+            catch (Exception fallbackEx)
+            {
+                logger.LogCritical(fallbackEx,
+                    "JSONL fallback also failed for {EventType} in {HandlerName}",
+                    eventType, handlerName);
+            }
         }
     }
 }
