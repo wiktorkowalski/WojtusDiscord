@@ -61,6 +61,7 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
@@ -77,8 +78,8 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
                 RolesRemovedJson = e.Member.Roles.Any()
                     ? JsonSerializer.Serialize(e.Member.Roles.Select(r => r.Id))
                     : null,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             };
 
@@ -101,6 +102,7 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var userService = scope.ServiceProvider.GetRequiredService<UserService>();
@@ -139,8 +141,8 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
                         ? JsonSerializer.Serialize(rolesRemoved)
                         : null,
                     TimeoutUntilUtc = e.Member.CommunicationDisabledUntil?.UtcDateTime,
-                    EventTimestampUtc = DateTime.UtcNow,
-                    ReceivedAtUtc = DateTime.UtcNow,
+                    EventTimestampUtc = receivedAt,
+                    ReceivedAtUtc = receivedAt,
                     RawEventJson = rawJson
                 };
 
@@ -164,6 +166,7 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var userService = scope.ServiceProvider.GetRequiredService<UserService>();
@@ -179,8 +182,8 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
                 UserDiscordId = e.Member.Id,
                 GuildDiscordId = e.Guild.Id,
                 EventType = MemberEventType.Banned,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             };
 
@@ -203,6 +206,7 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var userService = scope.ServiceProvider.GetRequiredService<UserService>();
@@ -218,8 +222,8 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
                 UserDiscordId = e.Member.Id,
                 GuildDiscordId = e.Guild.Id,
                 EventType = MemberEventType.Unbanned,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             };
 

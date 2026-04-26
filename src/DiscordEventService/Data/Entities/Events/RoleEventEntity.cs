@@ -23,6 +23,7 @@ public class RoleEventEntity
     public int? ColorAfter { get; set; }
     public long? PermissionsBefore { get; set; }
     public long? PermissionsAfter { get; set; }
+    /// <summary>DSharpPlus does not expose a per-event timestamp for role events; equals ReceivedAtUtc by design.</summary>
     public DateTime EventTimestampUtc { get; set; }
     public DateTime ReceivedAtUtc { get; set; }
 

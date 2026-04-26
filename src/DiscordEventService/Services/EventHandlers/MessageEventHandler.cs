@@ -97,6 +97,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
 
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
@@ -110,8 +111,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
             var embedsJson = e.Message.Embeds.Count > 0
                 ? JsonSerializer.Serialize(e.Message.Embeds)
                 : null;
-            var editedAt = e.Message.EditedTimestamp?.UtcDateTime ?? DateTime.UtcNow;
-            var now = DateTime.UtcNow;
+            var editedAt = e.Message.EditedTimestamp?.UtcDateTime ?? receivedAt;
 
             // Get the message entity for FK reference
             var message = await db.Messages.FirstOrDefaultAsync(m => m.DiscordId == e.Message.Id);
@@ -143,7 +143,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 AttachmentsJson = attachmentsJson,
                 EmbedsJson = embedsJson,
                 EventTimestampUtc = editedAt,
-                ReceivedAtUtc = now,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             });
 
@@ -157,7 +157,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     ContentBefore = e.MessageBefore?.Content,
                     ContentAfter = e.Message.Content,
                     EditedAtUtc = editedAt,
-                    RecordedAtUtc = now
+                    RecordedAtUtc = receivedAt
                 });
             }
 
@@ -180,10 +180,10 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
 
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-            var now = DateTime.UtcNow;
 
             var rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "MessageDeleted", e.Guild.Id, e.Channel.Id, e.Message.Author?.Id);
@@ -193,7 +193,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 .Where(m => m.DiscordId == e.Message.Id)
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(m => m.IsDeleted, true)
-                    .SetProperty(m => m.DeletedAtUtc, now));
+                    .SetProperty(m => m.DeletedAtUtc, receivedAt));
 
             db.MessageEvents.Add(new MessageEventEntity
             {
@@ -203,8 +203,8 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 GuildDiscordId = e.Guild.Id,
                 EventType = MessageEventType.Deleted,
                 Content = e.Message.Content,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             });
 
@@ -227,10 +227,10 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
 
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-            var now = DateTime.UtcNow;
 
             var rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "MessagesBulkDeleted", e.Guild.Id, e.Channel.Id, null);
@@ -241,7 +241,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 .Where(m => messageIds.Contains(m.DiscordId))
                 .ExecuteUpdateAsync(s => s
                     .SetProperty(m => m.IsDeleted, true)
-                    .SetProperty(m => m.DeletedAtUtc, now));
+                    .SetProperty(m => m.DeletedAtUtc, receivedAt));
 
             var events = e.Messages.Select(msg => new MessageEventEntity
             {
@@ -251,8 +251,8 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 GuildDiscordId = e.Guild.Id,
                 EventType = MessageEventType.BulkDeleted,
                 Content = msg.Content,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             });
 

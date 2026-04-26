@@ -25,6 +25,7 @@ public class MemberEventEntity
     public string? RolesRemovedJson { get; set; }
     public DateTime? TimeoutUntilUtc { get; set; }
     public string? BanReason { get; set; }
+    /// <summary>For Joined events, populated from Member.JoinedAt. For Left/Updated/Banned/Unbanned, DSharpPlus does not expose a per-event timestamp; equals ReceivedAtUtc by design.</summary>
     public DateTime EventTimestampUtc { get; set; }
     public DateTime ReceivedAtUtc { get; set; }
 

@@ -18,6 +18,7 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
@@ -36,8 +37,8 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
                 IsAnimated = e.Emoji.IsAnimated,
                 IsBurst = false,
                 EventType = ReactionEventType.Added,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             };
 
@@ -62,6 +63,7 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
@@ -80,8 +82,8 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
                 IsAnimated = e.Emoji.IsAnimated,
                 IsBurst = false,
                 EventType = ReactionEventType.Removed,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             };
 
@@ -106,6 +108,7 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
@@ -124,8 +127,8 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
                 IsAnimated = false,
                 IsBurst = false,
                 EventType = ReactionEventType.Cleared,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             };
 
@@ -150,6 +153,7 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
@@ -168,8 +172,8 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
                 IsAnimated = e.Emoji.IsAnimated,
                 IsBurst = false,
                 EventType = ReactionEventType.EmojiCleared,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             };
 

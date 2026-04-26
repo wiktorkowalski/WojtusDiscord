@@ -42,6 +42,7 @@ public class VoiceStateEventEntity
     public bool IsSuppressed { get; set; }
 
     public string? SessionId { get; set; }
+    /// <summary>DSharpPlus does not expose a per-event timestamp for voice state updates; equals ReceivedAtUtc by design.</summary>
     public DateTime EventTimestampUtc { get; set; }
     public DateTime ReceivedAtUtc { get; set; }
 
