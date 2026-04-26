@@ -44,23 +44,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
             var channel = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
             var author = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == e.Author.Id);
 
-            // Upsert message entity
-            db.Messages.Add(new MessageEntity
-            {
-                DiscordId = e.Message.Id,
-                ChannelId = channel?.Id,
-                GuildId = guild?.Id,
-                AuthorId = author?.Id,
-                Content = e.Message.Content,
-                ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
-                HasAttachments = e.Message.Attachments.Count > 0,
-                HasEmbeds = e.Message.Embeds.Count > 0,
-                AttachmentsJson = attachmentsJson,
-                EmbedsJson = embedsJson,
-                CreatedAtUtc = e.Message.Timestamp.UtcDateTime
-            });
-
-            db.MessageEvents.Add(new MessageEventEntity
+            MessageEventEntity NewMessageEvent() => new()
             {
                 MessageDiscordId = e.Message.Id,
                 ChannelDiscordId = e.Channel.Id,
@@ -76,9 +60,44 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 EventTimestampUtc = e.Message.Timestamp.UtcDateTime,
                 ReceivedAtUtc = DateTime.UtcNow,
                 RawEventJson = rawJson
-            });
+            };
 
-            await db.SaveChangesAsync();
+            db.Messages.Add(new MessageEntity
+            {
+                DiscordId = e.Message.Id,
+                ChannelId = channel?.Id,
+                GuildId = guild?.Id,
+                AuthorId = author?.Id,
+                Content = e.Message.Content,
+                ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
+                HasAttachments = e.Message.Attachments.Count > 0,
+                HasEmbeds = e.Message.Embeds.Count > 0,
+                AttachmentsJson = attachmentsJson,
+                EmbedsJson = embedsJson,
+                CreatedAtUtc = e.Message.Timestamp.UtcDateTime
+            });
+            db.MessageEvents.Add(NewMessageEvent());
+
+            try
+            {
+                await db.SaveChangesAsync();
+            }
+            catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+            {
+                // Gateway redelivery: message already stored. Refresh mutable fields and record the event row.
+                db.ChangeTracker.Clear();
+                await db.Messages
+                    .Where(m => m.DiscordId == e.Message.Id)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(m => m.Content, e.Message.Content)
+                        .SetProperty(m => m.HasAttachments, e.Message.Attachments.Count > 0)
+                        .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
+                        .SetProperty(m => m.AttachmentsJson, attachmentsJson)
+                        .SetProperty(m => m.EmbedsJson, embedsJson)
+                        .SetProperty(m => m.ReplyToDiscordId, e.Message.ReferencedMessage?.Id));
+                db.MessageEvents.Add(NewMessageEvent());
+                await db.SaveChangesAsync();
+            }
         }
         catch (Exception ex)
         {

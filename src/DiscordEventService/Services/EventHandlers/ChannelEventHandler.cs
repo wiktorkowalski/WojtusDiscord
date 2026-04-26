@@ -29,6 +29,20 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
             // Look up Guild Guid
             var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
 
+            ChannelEventEntity NewChannelEvent() => new()
+            {
+                ChannelDiscordId = e.Channel.Id,
+                GuildDiscordId = e.Guild.Id,
+                ChannelType = (int)e.Channel.Type,
+                EventType = ChannelEventType.Created,
+                NameAfter = e.Channel.Name,
+                TopicAfter = e.Channel.Topic,
+                PositionAfter = e.Channel.Position,
+                EventTimestampUtc = DateTime.UtcNow,
+                ReceivedAtUtc = DateTime.UtcNow,
+                RawEventJson = rawJson
+            };
+
             var channelEntity = await db.Channels
                 .FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
 
@@ -43,23 +57,24 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
             }
 
             UpdateChannelEntity(channelEntity, e.Channel);
+            db.ChannelEvents.Add(NewChannelEvent());
 
-            var channelEvent = new ChannelEventEntity
+            try
             {
-                ChannelDiscordId = e.Channel.Id,
-                GuildDiscordId = e.Guild.Id,
-                ChannelType = (int)e.Channel.Type,
-                EventType = ChannelEventType.Created,
-                NameAfter = e.Channel.Name,
-                TopicAfter = e.Channel.Topic,
-                PositionAfter = e.Channel.Position,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
-                RawEventJson = rawJson
-            };
-
-            db.ChannelEvents.Add(channelEvent);
-            await db.SaveChangesAsync();
+                await db.SaveChangesAsync();
+            }
+            catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+            {
+                // Concurrent insert won the race. Re-fetch the now-existing row, update it, re-add the event.
+                db.ChangeTracker.Clear();
+                var existing = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
+                if (existing != null)
+                {
+                    UpdateChannelEntity(existing, e.Channel);
+                }
+                db.ChannelEvents.Add(NewChannelEvent());
+                await db.SaveChangesAsync();
+            }
         }
         catch (Exception ex)
         {
