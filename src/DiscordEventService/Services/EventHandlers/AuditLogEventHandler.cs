@@ -10,6 +10,7 @@ public class AuditLogEventHandler(IServiceScopeFactory scopeFactory, ILogger<Aud
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildAuditLogCreatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -17,7 +18,7 @@ public class AuditLogEventHandler(IServiceScopeFactory scopeFactory, ILogger<Aud
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "GuildAuditLogCreated", e.Guild.Id, null, e.AuditLogEntry.UserResponsible?.Id);
 
             db.AuditLogEvents.Add(new AuditLogEventEntity
@@ -40,6 +41,11 @@ public class AuditLogEventHandler(IServiceScopeFactory scopeFactory, ILogger<Aud
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling audit log entry");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildAuditLogCreated", nameof(AuditLogEventHandler), ex,
+                e.Guild?.Id, null, e.AuditLogEntry?.UserResponsible?.Id, rawJson);
         }
     }
 }

@@ -13,6 +13,7 @@ public class AutoModEventHandler(IServiceScopeFactory scopeFactory, ILogger<Auto
 {
     public async Task HandleEventAsync(DiscordClient sender, AutoModerationRuleCreatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             if (e.Rule?.Guild is null) return;
@@ -22,7 +23,7 @@ public class AutoModEventHandler(IServiceScopeFactory scopeFactory, ILogger<Auto
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "AutoModRuleCreated", e.Rule.Guild.Id, null, e.Rule.Creator?.Id);
 
             var entity = new AutoModEventEntity
@@ -43,11 +44,17 @@ public class AutoModEventHandler(IServiceScopeFactory scopeFactory, ILogger<Auto
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling automod rule created");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "AutoModRuleCreated", nameof(AutoModEventHandler), ex,
+                e.Rule?.Guild?.Id, null, e.Rule?.Creator?.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, AutoModerationRuleUpdatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             if (e.Rule?.Guild is null) return;
@@ -57,7 +64,7 @@ public class AutoModEventHandler(IServiceScopeFactory scopeFactory, ILogger<Auto
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "AutoModRuleUpdated", e.Rule.Guild.Id, null, e.Rule.Creator?.Id);
 
             var entity = new AutoModEventEntity
@@ -78,11 +85,17 @@ public class AutoModEventHandler(IServiceScopeFactory scopeFactory, ILogger<Auto
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling automod rule updated");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "AutoModRuleUpdated", nameof(AutoModEventHandler), ex,
+                e.Rule?.Guild?.Id, null, e.Rule?.Creator?.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, AutoModerationRuleDeletedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             if (e.Rule?.Guild is null) return;
@@ -92,7 +105,7 @@ public class AutoModEventHandler(IServiceScopeFactory scopeFactory, ILogger<Auto
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "AutoModRuleDeleted", e.Rule.Guild.Id, null, e.Rule.Creator?.Id);
 
             var entity = new AutoModEventEntity
@@ -113,11 +126,17 @@ public class AutoModEventHandler(IServiceScopeFactory scopeFactory, ILogger<Auto
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling automod rule deleted");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "AutoModRuleDeleted", nameof(AutoModEventHandler), ex,
+                e.Rule?.Guild?.Id, null, e.Rule?.Creator?.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, AutoModerationRuleExecutedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -125,7 +144,7 @@ public class AutoModEventHandler(IServiceScopeFactory scopeFactory, ILogger<Auto
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "AutoModActionExecuted", e.Rule.GuildId, e.Rule.ChannelId, e.Rule.UserId);
 
             // Note: e.Rule is actually DiscordAutoModerationActionExecution
@@ -153,6 +172,11 @@ public class AutoModEventHandler(IServiceScopeFactory scopeFactory, ILogger<Auto
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling automod action executed");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "AutoModActionExecuted", nameof(AutoModEventHandler), ex,
+                e.Rule?.GuildId, e.Rule?.ChannelId, e.Rule?.UserId, rawJson);
         }
     }
 }
