@@ -24,6 +24,7 @@ public class PresenceEventEntity
     public string? ActivitiesBeforeJson { get; set; }
     public string? ActivitiesAfterJson { get; set; }
 
+    /// <summary>DSharpPlus does not expose a per-event timestamp for presence updates; equals ReceivedAtUtc by design.</summary>
     public DateTime EventTimestampUtc { get; set; }
     public DateTime ReceivedAtUtc { get; set; }
 

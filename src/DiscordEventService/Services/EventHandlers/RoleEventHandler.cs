@@ -18,6 +18,7 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
@@ -50,8 +51,8 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
                 EventType = RoleEventType.Created,
                 NameAfter = e.Role.Name,
                 ColorAfter = e.Role.Color.Value,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             };
 
@@ -74,6 +75,7 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
@@ -94,8 +96,8 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
                 RoleDiscordId = e.RoleAfter.Id,
                 GuildDiscordId = e.Guild.Id,
                 EventType = RoleEventType.Updated,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             };
 
@@ -130,6 +132,7 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
@@ -152,8 +155,8 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
                 EventType = RoleEventType.Deleted,
                 NameBefore = e.Role.Name,
                 ColorBefore = e.Role.Color.Value,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             };
 
