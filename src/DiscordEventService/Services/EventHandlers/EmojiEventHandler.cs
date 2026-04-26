@@ -13,6 +13,7 @@ public class EmojiEventHandler(IServiceScopeFactory scopeFactory, ILogger<EmojiE
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildEmojisUpdatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -20,7 +21,7 @@ public class EmojiEventHandler(IServiceScopeFactory scopeFactory, ILogger<EmojiE
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "GuildEmojisUpdated", e.Guild.Id, null, null);
 
             // Look up Guild Guid
@@ -91,6 +92,11 @@ public class EmojiEventHandler(IServiceScopeFactory scopeFactory, ILogger<EmojiE
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling emojis updated for GuildId={GuildId}", e.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildEmojisUpdated", nameof(EmojiEventHandler), ex,
+                e.Guild?.Id, null, null, rawJson);
         }
     }
 }

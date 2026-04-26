@@ -13,6 +13,7 @@ public class TypingEventHandler(IServiceScopeFactory scopeFactory, ILogger<Typin
 
     public async Task HandleEventAsync(DiscordClient sender, TypingStartedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             // Throttle: skip if we've seen this user+channel combo recently
@@ -27,7 +28,7 @@ public class TypingEventHandler(IServiceScopeFactory scopeFactory, ILogger<Typin
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "TypingStarted", e.Guild?.Id ?? 0, e.Channel.Id, e.User.Id);
 
             var entity = new TypingEventEntity
@@ -46,6 +47,11 @@ public class TypingEventHandler(IServiceScopeFactory scopeFactory, ILogger<Typin
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling typing started");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "TypingStarted", nameof(TypingEventHandler), ex,
+                e.Guild?.Id, e.Channel?.Id, e.User?.Id, rawJson);
         }
     }
 }

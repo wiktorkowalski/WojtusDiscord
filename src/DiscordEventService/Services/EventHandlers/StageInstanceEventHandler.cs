@@ -14,6 +14,7 @@ public class StageInstanceEventHandler(IServiceScopeFactory scopeFactory, ILogge
 {
     public async Task HandleEventAsync(DiscordClient sender, StageInstanceCreatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -21,7 +22,7 @@ public class StageInstanceEventHandler(IServiceScopeFactory scopeFactory, ILogge
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "StageInstanceCreated", e.StageInstance.GuildId, e.StageInstance.ChannelId, null);
 
             // Look up Guid FKs
@@ -55,11 +56,17 @@ public class StageInstanceEventHandler(IServiceScopeFactory scopeFactory, ILogge
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling stage instance created");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "StageInstanceCreated", nameof(StageInstanceEventHandler), ex,
+                e.StageInstance?.GuildId, e.StageInstance?.ChannelId, null, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, StageInstanceUpdatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -67,7 +74,7 @@ public class StageInstanceEventHandler(IServiceScopeFactory scopeFactory, ILogge
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "StageInstanceUpdated", e.StageInstanceAfter.GuildId, e.StageInstanceAfter.ChannelId, null);
 
             await db.StageInstances
@@ -96,11 +103,17 @@ public class StageInstanceEventHandler(IServiceScopeFactory scopeFactory, ILogge
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling stage instance updated");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "StageInstanceUpdated", nameof(StageInstanceEventHandler), ex,
+                e.StageInstanceAfter?.GuildId, e.StageInstanceAfter?.ChannelId, null, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, StageInstanceDeletedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -108,7 +121,7 @@ public class StageInstanceEventHandler(IServiceScopeFactory scopeFactory, ILogge
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "StageInstanceDeleted", e.StageInstance.GuildId, e.StageInstance.ChannelId, null);
 
             await db.StageInstances
@@ -133,6 +146,11 @@ public class StageInstanceEventHandler(IServiceScopeFactory scopeFactory, ILogge
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling stage instance deleted");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "StageInstanceDeleted", nameof(StageInstanceEventHandler), ex,
+                e.StageInstance?.GuildId, e.StageInstance?.ChannelId, null, rawJson);
         }
     }
 }

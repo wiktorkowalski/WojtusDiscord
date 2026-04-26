@@ -13,6 +13,7 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
 {
     public async Task HandleEventAsync(DiscordClient sender, InviteCreatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -20,7 +21,7 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "InviteCreated", e.Guild.Id, e.Channel.Id, e.Invite.Inviter?.Id);
 
             // Look up Guid FKs
@@ -72,11 +73,17 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling invite created");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "InviteCreated", nameof(InviteEventHandler), ex,
+                e.Guild?.Id, e.Channel?.Id, e.Invite?.Inviter?.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, InviteDeletedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -84,7 +91,7 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "InviteDeleted", e.Guild.Id, e.Channel.Id, null);
 
             // Mark invite as deleted
@@ -109,6 +116,11 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling invite deleted");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "InviteDeleted", nameof(InviteEventHandler), ex,
+                e.Guild?.Id, e.Channel?.Id, null, rawJson);
         }
     }
 }

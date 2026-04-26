@@ -14,6 +14,7 @@ public class IntegrationEventHandler(IServiceScopeFactory scopeFactory, ILogger<
 {
     public async Task HandleEventAsync(DiscordClient sender, IntegrationCreatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -21,7 +22,7 @@ public class IntegrationEventHandler(IServiceScopeFactory scopeFactory, ILogger<
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "IntegrationCreated", e.Guild.Id, null, null);
 
             // Look up Guid FK
@@ -54,11 +55,17 @@ public class IntegrationEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling integration created");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "IntegrationCreated", nameof(IntegrationEventHandler), ex,
+                e.Guild?.Id, null, null, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, IntegrationUpdatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -66,7 +73,7 @@ public class IntegrationEventHandler(IServiceScopeFactory scopeFactory, ILogger<
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "IntegrationUpdated", e.Guild.Id, null, null);
 
             await db.Integrations
@@ -93,11 +100,17 @@ public class IntegrationEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling integration updated");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "IntegrationUpdated", nameof(IntegrationEventHandler), ex,
+                e.Guild?.Id, null, null, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, IntegrationDeletedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -105,7 +118,7 @@ public class IntegrationEventHandler(IServiceScopeFactory scopeFactory, ILogger<
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "IntegrationDeleted", e.Guild.Id, null, null);
 
             await db.Integrations
@@ -127,6 +140,11 @@ public class IntegrationEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling integration deleted");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "IntegrationDeleted", nameof(IntegrationEventHandler), ex,
+                e.Guild?.Id, null, null, rawJson);
         }
     }
 }

@@ -13,6 +13,7 @@ public class PollEventHandler(IServiceScopeFactory scopeFactory, ILogger<PollEve
         var update = e.PollVoteUpdate;
         if (update.Guild is null) return;
 
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -20,7 +21,7 @@ public class PollEventHandler(IServiceScopeFactory scopeFactory, ILogger<PollEve
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "MessagePollVoted", update.Guild.Id, update.Message?.ChannelId, update.User?.Id);
 
             db.PollEvents.Add(new PollEventEntity
@@ -41,6 +42,11 @@ public class PollEventHandler(IServiceScopeFactory scopeFactory, ILogger<PollEve
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling poll vote");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "MessagePollVoted", nameof(PollEventHandler), ex,
+                update.Guild?.Id, update.Message?.ChannelId, update.User?.Id, rawJson);
         }
     }
 }

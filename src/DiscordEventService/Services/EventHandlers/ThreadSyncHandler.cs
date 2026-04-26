@@ -17,6 +17,7 @@ public class ThreadSyncHandler(IServiceScopeFactory scopeFactory, ILogger<Thread
 
     public async Task HandleEventAsync(DiscordClient sender, ThreadListSyncedEventArgs args)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -25,7 +26,7 @@ public class ThreadSyncHandler(IServiceScopeFactory scopeFactory, ILogger<Thread
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 args, "ThreadListSynced", args.Guild.Id, null, null);
 
             var syncEvent = new ThreadSyncEventEntity
@@ -50,6 +51,11 @@ public class ThreadSyncHandler(IServiceScopeFactory scopeFactory, ILogger<Thread
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling thread list sync for guild {GuildId}", args.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ThreadListSynced", nameof(ThreadSyncHandler), ex,
+                args.Guild?.Id, null, null, rawJson);
         }
     }
 }

@@ -12,6 +12,7 @@ public class PinEventHandler(IServiceScopeFactory scopeFactory, ILogger<PinEvent
     {
         if (e.Guild is null) return;
 
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -19,7 +20,7 @@ public class PinEventHandler(IServiceScopeFactory scopeFactory, ILogger<PinEvent
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ChannelPinsUpdated", e.Guild.Id, e.Channel.Id, null);
 
             db.PinEvents.Add(new PinEventEntity
@@ -37,6 +38,11 @@ public class PinEventHandler(IServiceScopeFactory scopeFactory, ILogger<PinEvent
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling pins updated for ChannelId={ChannelId}", e.Channel.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ChannelPinsUpdated", nameof(PinEventHandler), ex,
+                e.Guild?.Id, e.Channel?.Id, null, rawJson);
         }
     }
 }
