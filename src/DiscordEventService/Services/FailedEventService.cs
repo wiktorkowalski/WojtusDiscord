@@ -6,6 +6,8 @@ namespace DiscordEventService.Services;
 
 public class FailedEventService(DiscordDbContext db, ILogger<FailedEventService> logger, IHostEnvironment env)
 {
+    private static readonly SemaphoreSlim _fallbackFileLock = new(1, 1);
+
     public async Task RecordFailureAsync(
         string eventType,
         string handlerName,
@@ -69,7 +71,15 @@ public class FailedEventService(DiscordDbContext db, ILogger<FailedEventService>
                     secondaryExceptionMessage = ex.Message
                 };
                 var line = JsonSerializer.Serialize(record);
-                await File.AppendAllTextAsync(path, line + Environment.NewLine);
+                await _fallbackFileLock.WaitAsync();
+                try
+                {
+                    await File.AppendAllTextAsync(path, line + Environment.NewLine);
+                }
+                finally
+                {
+                    _fallbackFileLock.Release();
+                }
             }
             catch (Exception fallbackEx)
             {
