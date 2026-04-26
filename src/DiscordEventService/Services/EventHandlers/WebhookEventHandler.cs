@@ -10,6 +10,7 @@ public class WebhookEventHandler(IServiceScopeFactory scopeFactory, ILogger<Webh
 {
     public async Task HandleEventAsync(DiscordClient sender, WebhooksUpdatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -17,7 +18,7 @@ public class WebhookEventHandler(IServiceScopeFactory scopeFactory, ILogger<Webh
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "WebhooksUpdated", e.Guild.Id, e.Channel.Id, null);
 
             db.WebhookEvents.Add(new WebhookEventEntity
@@ -34,6 +35,11 @@ public class WebhookEventHandler(IServiceScopeFactory scopeFactory, ILogger<Webh
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling webhooks updated for ChannelId={ChannelId}", e.Channel.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "WebhooksUpdated", nameof(WebhookEventHandler), ex,
+                e.Guild?.Id, e.Channel?.Id, null, rawJson);
         }
     }
 }

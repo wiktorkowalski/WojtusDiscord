@@ -18,6 +18,7 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
 {
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventCreatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -25,7 +26,7 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ScheduledGuildEventCreated", e.Guild.Id, e.Channel?.Id, e.Creator?.Id);
 
             await UpsertScheduledEventAsync(db, e.Event, e.Creator?.Id);
@@ -54,11 +55,17 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling scheduled event created");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ScheduledGuildEventCreated", nameof(ScheduledEventHandler), ex,
+                e.Guild?.Id, e.Channel?.Id, e.Creator?.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventUpdatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -66,7 +73,7 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ScheduledGuildEventUpdated", e.EventAfter.GuildId, e.EventAfter.ChannelId, e.EventAfter.Creator?.Id);
 
             await UpsertScheduledEventAsync(db, e.EventAfter, e.EventAfter.Creator?.Id);
@@ -95,11 +102,17 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling scheduled event updated");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ScheduledGuildEventUpdated", nameof(ScheduledEventHandler), ex,
+                e.EventAfter?.GuildId, e.EventAfter?.ChannelId, e.EventAfter?.Creator?.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventDeletedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -107,7 +120,7 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ScheduledGuildEventDeleted", e.Event.GuildId, e.Event.ChannelId, null);
 
             // Mark as deleted
@@ -133,11 +146,17 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling scheduled event deleted");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ScheduledGuildEventDeleted", nameof(ScheduledEventHandler), ex,
+                e.Event?.GuildId, e.Event?.ChannelId, null, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventCompletedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -145,7 +164,7 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ScheduledGuildEventCompleted", e.Event.GuildId, e.Event.ChannelId, null);
 
             await UpsertScheduledEventAsync(db, e.Event, e.Event.Creator?.Id);
@@ -169,11 +188,17 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling scheduled event completed");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ScheduledGuildEventCompleted", nameof(ScheduledEventHandler), ex,
+                e.Event?.GuildId, e.Event?.ChannelId, null, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventUserAddedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -181,7 +206,7 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ScheduledGuildEventUserAdded", e.Guild.Id, null, e.User.Id);
 
             // Increment user count
@@ -206,11 +231,17 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling scheduled event user added");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ScheduledGuildEventUserAdded", nameof(ScheduledEventHandler), ex,
+                e.Guild?.Id, null, e.User?.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventUserRemovedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -218,7 +249,7 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ScheduledGuildEventUserRemoved", e.Guild.Id, null, e.User.Id);
 
             // Decrement user count
@@ -243,6 +274,11 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling scheduled event user removed");
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ScheduledGuildEventUserRemoved", nameof(ScheduledEventHandler), ex,
+                e.Guild?.Id, null, e.User?.Id, rawJson);
         }
     }
 

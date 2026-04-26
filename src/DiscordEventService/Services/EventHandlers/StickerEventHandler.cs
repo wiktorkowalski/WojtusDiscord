@@ -13,6 +13,7 @@ public class StickerEventHandler(IServiceScopeFactory scopeFactory, ILogger<Stic
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildStickersUpdatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -20,7 +21,7 @@ public class StickerEventHandler(IServiceScopeFactory scopeFactory, ILogger<Stic
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "GuildStickersUpdated", e.Guild.Id, null, null);
 
             // Look up Guild Guid
@@ -93,6 +94,11 @@ public class StickerEventHandler(IServiceScopeFactory scopeFactory, ILogger<Stic
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling stickers updated for GuildId={GuildId}", e.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildStickersUpdated", nameof(StickerEventHandler), ex,
+                e.Guild?.Id, null, null, rawJson);
         }
     }
 }
