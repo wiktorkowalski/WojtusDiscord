@@ -62,42 +62,54 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 RawEventJson = rawJson
             };
 
-            db.Messages.Add(new MessageEntity
+            // Wrap multi-row writes in a transaction so the 23505 retry path
+            // (ExecuteUpdate + insert) is atomic. ExecutionStrategy is required
+            // because EnableRetryOnFailure is configured on the DbContext.
+            var strategy = db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
             {
-                DiscordId = e.Message.Id,
-                ChannelId = channel?.Id,
-                GuildId = guild?.Id,
-                AuthorId = author?.Id,
-                Content = e.Message.Content,
-                ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
-                HasAttachments = e.Message.Attachments.Count > 0,
-                HasEmbeds = e.Message.Embeds.Count > 0,
-                AttachmentsJson = attachmentsJson,
-                EmbedsJson = embedsJson,
-                CreatedAtUtc = e.Message.Timestamp.UtcDateTime
-            });
-            db.MessageEvents.Add(NewMessageEvent());
-
-            try
-            {
-                await db.SaveChangesAsync();
-            }
-            catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-            {
-                // Gateway redelivery: message already stored. Refresh mutable fields and record the event row.
                 db.ChangeTracker.Clear();
-                await db.Messages
-                    .Where(m => m.DiscordId == e.Message.Id)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(m => m.Content, e.Message.Content)
-                        .SetProperty(m => m.HasAttachments, e.Message.Attachments.Count > 0)
-                        .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
-                        .SetProperty(m => m.AttachmentsJson, attachmentsJson)
-                        .SetProperty(m => m.EmbedsJson, embedsJson)
-                        .SetProperty(m => m.ReplyToDiscordId, e.Message.ReferencedMessage?.Id));
+                await using var tx = await db.Database.BeginTransactionAsync();
+
+                db.Messages.Add(new MessageEntity
+                {
+                    DiscordId = e.Message.Id,
+                    ChannelId = channel?.Id,
+                    GuildId = guild?.Id,
+                    AuthorId = author?.Id,
+                    Content = e.Message.Content,
+                    ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
+                    HasAttachments = e.Message.Attachments.Count > 0,
+                    HasEmbeds = e.Message.Embeds.Count > 0,
+                    AttachmentsJson = attachmentsJson,
+                    EmbedsJson = embedsJson,
+                    CreatedAtUtc = e.Message.Timestamp.UtcDateTime
+                });
                 db.MessageEvents.Add(NewMessageEvent());
-                await db.SaveChangesAsync();
-            }
+
+                try
+                {
+                    await db.SaveChangesAsync();
+                }
+                catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+                {
+                    // Gateway redelivery: message already stored. Refresh mutable fields and record the event row.
+                    db.ChangeTracker.Clear();
+                    await db.Messages
+                        .Where(m => m.DiscordId == e.Message.Id)
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(m => m.Content, e.Message.Content)
+                            .SetProperty(m => m.HasAttachments, e.Message.Attachments.Count > 0)
+                            .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
+                            .SetProperty(m => m.AttachmentsJson, attachmentsJson)
+                            .SetProperty(m => m.EmbedsJson, embedsJson)
+                            .SetProperty(m => m.ReplyToDiscordId, e.Message.ReferencedMessage?.Id));
+                    db.MessageEvents.Add(NewMessageEvent());
+                    await db.SaveChangesAsync();
+                }
+
+                await tx.CommitAsync();
+            });
         }
         catch (Exception ex)
         {
@@ -132,55 +144,63 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 : null;
             var editedAt = e.Message.EditedTimestamp?.UtcDateTime ?? receivedAt;
 
-            // Get the message entity for FK reference
+            // Get the message entity for FK reference (read-only snapshot, used inside the tx)
             var message = await db.Messages.FirstOrDefaultAsync(m => m.DiscordId == e.Message.Id);
+            var messageGuid = message?.Id;
 
-            // Update message entity
-            await db.Messages
-                .Where(m => m.DiscordId == e.Message.Id)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(m => m.Content, e.Message.Content)
-                    .SetProperty(m => m.HasAttachments, e.Message.Attachments.Count > 0)
-                    .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
-                    .SetProperty(m => m.AttachmentsJson, attachmentsJson)
-                    .SetProperty(m => m.EmbedsJson, embedsJson)
-                    .SetProperty(m => m.EditedAtUtc, editedAt));
-
-            // Record edit in event log
-            db.MessageEvents.Add(new MessageEventEntity
+            // Wrap the ExecuteUpdate (auto-commits without a tx) and the event-log inserts
+            // in one transaction so a failure between them rolls back atomically.
+            var strategy = db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
             {
-                MessageDiscordId = e.Message.Id,
-                ChannelDiscordId = e.Channel.Id,
-                AuthorDiscordId = e.Author?.Id,
-                GuildDiscordId = e.Guild.Id,
-                EventType = MessageEventType.Updated,
-                Content = e.Message.Content,
-                ContentBefore = e.MessageBefore?.Content,
-                HasAttachments = e.Message.Attachments.Count > 0,
-                HasEmbeds = e.Message.Embeds.Count > 0,
-                ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
-                AttachmentsJson = attachmentsJson,
-                EmbedsJson = embedsJson,
-                EventTimestampUtc = editedAt,
-                ReceivedAtUtc = receivedAt,
-                RawEventJson = rawJson
-            });
+                db.ChangeTracker.Clear();
+                await using var tx = await db.Database.BeginTransactionAsync();
 
-            // Record in edit history table (tracks all edits with before/after)
-            if (e.MessageBefore?.Content != e.Message.Content)
-            {
-                db.MessageEditHistory.Add(new MessageEditHistoryEntity
+                await db.Messages
+                    .Where(m => m.DiscordId == e.Message.Id)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(m => m.Content, e.Message.Content)
+                        .SetProperty(m => m.HasAttachments, e.Message.Attachments.Count > 0)
+                        .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
+                        .SetProperty(m => m.AttachmentsJson, attachmentsJson)
+                        .SetProperty(m => m.EmbedsJson, embedsJson)
+                        .SetProperty(m => m.EditedAtUtc, editedAt));
+
+                db.MessageEvents.Add(new MessageEventEntity
                 {
-                    MessageId = message?.Id,
                     MessageDiscordId = e.Message.Id,
+                    ChannelDiscordId = e.Channel.Id,
+                    AuthorDiscordId = e.Author?.Id,
+                    GuildDiscordId = e.Guild.Id,
+                    EventType = MessageEventType.Updated,
+                    Content = e.Message.Content,
                     ContentBefore = e.MessageBefore?.Content,
-                    ContentAfter = e.Message.Content,
-                    EditedAtUtc = editedAt,
-                    RecordedAtUtc = receivedAt
+                    HasAttachments = e.Message.Attachments.Count > 0,
+                    HasEmbeds = e.Message.Embeds.Count > 0,
+                    ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
+                    AttachmentsJson = attachmentsJson,
+                    EmbedsJson = embedsJson,
+                    EventTimestampUtc = editedAt,
+                    ReceivedAtUtc = receivedAt,
+                    RawEventJson = rawJson
                 });
-            }
 
-            await db.SaveChangesAsync();
+                if (e.MessageBefore?.Content != e.Message.Content)
+                {
+                    db.MessageEditHistory.Add(new MessageEditHistoryEntity
+                    {
+                        MessageId = messageGuid,
+                        MessageDiscordId = e.Message.Id,
+                        ContentBefore = e.MessageBefore?.Content,
+                        ContentAfter = e.Message.Content,
+                        EditedAtUtc = editedAt,
+                        RecordedAtUtc = receivedAt
+                    });
+                }
+
+                await db.SaveChangesAsync();
+                await tx.CommitAsync();
+            });
         }
         catch (Exception ex)
         {
