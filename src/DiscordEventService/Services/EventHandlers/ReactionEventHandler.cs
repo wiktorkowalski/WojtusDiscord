@@ -52,8 +52,6 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
             await failedEventService.RecordFailureAsync(
                 "MessageReactionAdded", nameof(ReactionEventHandler), ex,
                 e.Guild?.Id, e.Channel.Id, e.User.Id, rawJson);
-            logger.LogWarning("Failed event recorded for replay: {EventType} MessageId={MessageId}",
-                "MessageReactionAdded", e.Message.Id);
         }
     }
 
@@ -98,8 +96,6 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
             await failedEventService.RecordFailureAsync(
                 "MessageReactionRemoved", nameof(ReactionEventHandler), ex,
                 e.Guild?.Id, e.Channel.Id, e.User.Id, rawJson);
-            logger.LogWarning("Failed event recorded for replay: {EventType} MessageId={MessageId}",
-                "MessageReactionRemoved", e.Message.Id);
         }
     }
 
@@ -144,8 +140,6 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
             await failedEventService.RecordFailureAsync(
                 "MessageReactionsCleared", nameof(ReactionEventHandler), ex,
                 e.Guild?.Id, e.Channel.Id, null, rawJson);
-            logger.LogWarning("Failed event recorded for replay: {EventType} MessageId={MessageId}",
-                "MessageReactionsCleared", e.Message.Id);
         }
     }
 
@@ -190,8 +184,6 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
             await failedEventService.RecordFailureAsync(
                 "MessageReactionRemovedEmoji", nameof(ReactionEventHandler), ex,
                 e.Guild?.Id, e.Channel.Id, null, rawJson);
-            logger.LogWarning("Failed event recorded for replay: {EventType} MessageId={MessageId}",
-                "MessageReactionRemovedEmoji", e.Message.Id);
         }
     }
 }
