@@ -13,6 +13,7 @@ public class BanEventHandler(IServiceScopeFactory scopeFactory, ILogger<BanEvent
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildBanAddedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -21,7 +22,7 @@ public class BanEventHandler(IServiceScopeFactory scopeFactory, ILogger<BanEvent
             var userService = scope.ServiceProvider.GetRequiredService<UserService>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "GuildBanAdded", e.Guild.Id, null, e.Member.Id);
 
             await userService.UpsertUserAsync(e.Member);
@@ -63,11 +64,17 @@ public class BanEventHandler(IServiceScopeFactory scopeFactory, ILogger<BanEvent
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling ban added for UserId={UserId}", e.Member.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildBanAdded", nameof(BanEventHandler), ex,
+                e.Guild?.Id, null, e.Member?.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildBanRemovedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -75,7 +82,7 @@ public class BanEventHandler(IServiceScopeFactory scopeFactory, ILogger<BanEvent
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "GuildBanRemoved", e.Guild.Id, null, e.Member.Id);
 
             // Look up Guid FKs
@@ -107,6 +114,11 @@ public class BanEventHandler(IServiceScopeFactory scopeFactory, ILogger<BanEvent
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling ban removed for UserId={UserId}", e.Member.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildBanRemoved", nameof(BanEventHandler), ex,
+                e.Guild?.Id, null, e.Member?.Id, rawJson);
         }
     }
 }
