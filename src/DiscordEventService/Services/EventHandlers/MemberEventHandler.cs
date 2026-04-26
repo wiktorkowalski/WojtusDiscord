@@ -15,6 +15,7 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildMemberAddedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
@@ -22,7 +23,7 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
             var userService = scope.ServiceProvider.GetRequiredService<UserService>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "GuildMemberAdded", e.Guild.Id, null, e.Member.Id);
 
             await userService.UpsertMemberAsync(e.Member);
@@ -47,18 +48,24 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling member added for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildMemberAdded", nameof(MemberEventHandler), ex,
+                e.Guild?.Id, null, e.Member.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildMemberRemovedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "GuildMemberRemoved", e.Guild.Id, null, e.Member.Id);
 
             var memberEvent = new MemberEventEntity
@@ -81,11 +88,17 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling member removed for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildMemberRemoved", nameof(MemberEventHandler), ex,
+                e.Guild?.Id, null, e.Member.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildMemberUpdatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
@@ -93,7 +106,7 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
             var userService = scope.ServiceProvider.GetRequiredService<UserService>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "GuildMemberUpdated", e.Guild.Id, null, e.Member.Id);
 
             await userService.UpsertMemberAsync(e.Member);
@@ -138,11 +151,17 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling member updated for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildMemberUpdated", nameof(MemberEventHandler), ex,
+                e.Guild?.Id, null, e.Member.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildBanAddedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
@@ -150,7 +169,7 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
             var userService = scope.ServiceProvider.GetRequiredService<UserService>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "GuildBanAddedMember", e.Guild.Id, null, e.Member.Id);
 
             await userService.UpsertUserAsync(e.Member);
@@ -171,11 +190,17 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling ban added for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildBanAddedMember", nameof(MemberEventHandler), ex,
+                e.Guild?.Id, null, e.Member.Id, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildBanRemovedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
@@ -183,7 +208,7 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
             var userService = scope.ServiceProvider.GetRequiredService<UserService>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "GuildBanRemovedMember", e.Guild.Id, null, e.Member.Id);
 
             await userService.UpsertUserAsync(e.Member);
@@ -204,6 +229,11 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling ban removed for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildBanRemovedMember", nameof(MemberEventHandler), ex,
+                e.Guild?.Id, null, e.Member.Id, rawJson);
         }
     }
 }
