@@ -22,6 +22,14 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
 
+            void ApplyGuildFields(GuildEntity g)
+            {
+                g.Name = e.Guild.Name;
+                g.IconHash = e.Guild.IconHash;
+                g.OwnerId = e.Guild.OwnerId;
+                g.LeftAtUtc = null;
+            }
+
             // Upsert guild
             var existingGuild = await db.Guilds
                 .Where(g => g.DiscordId == e.Guild.Id)
@@ -49,18 +57,12 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
                         .Where(g => g.DiscordId == e.Guild.Id)
                         .FirstOrDefaultAsync()
                         ?? throw new InvalidOperationException($"Guild {e.Guild.Id} disappeared after 23505 conflict");
-                    existingGuild.Name = e.Guild.Name;
-                    existingGuild.IconHash = e.Guild.IconHash;
-                    existingGuild.OwnerId = e.Guild.OwnerId;
-                    existingGuild.LeftAtUtc = null;
+                    ApplyGuildFields(existingGuild);
                 }
             }
             else
             {
-                existingGuild.Name = e.Guild.Name;
-                existingGuild.IconHash = e.Guild.IconHash;
-                existingGuild.OwnerId = e.Guild.OwnerId;
-                existingGuild.LeftAtUtc = null;
+                ApplyGuildFields(existingGuild);
             }
 
             var guildGuid = existingGuild.Id;
@@ -74,8 +76,14 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
             catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
             {
                 // Concurrent GuildCreated inserted a channel/role that wasn't in our batch lookup.
-                // Clear, re-batch-load (now including the conflicting rows), and re-apply updates.
+                // Clear drops the Guild field updates set above, so re-fetch and re-apply them
+                // alongside the channel/role re-batch-load before saving.
                 db.ChangeTracker.Clear();
+                var refreshedGuild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+                if (refreshedGuild != null)
+                {
+                    ApplyGuildFields(refreshedGuild);
+                }
                 await UpsertChannelsAndRolesAsync(db, e.Guild, guildGuid);
                 await db.SaveChangesAsync();
             }
