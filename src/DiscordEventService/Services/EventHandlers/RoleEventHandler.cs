@@ -29,6 +29,18 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
             // Look up Guild Guid
             var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
 
+            RoleEventEntity NewRoleEvent() => new()
+            {
+                RoleDiscordId = e.Role.Id,
+                GuildDiscordId = e.Guild.Id,
+                EventType = RoleEventType.Created,
+                NameAfter = e.Role.Name,
+                ColorAfter = e.Role.Color.Value,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
+                RawEventJson = rawJson
+            };
+
             var roleEntity = await db.Roles
                 .FirstOrDefaultAsync(r => r.DiscordId == e.Role.Id);
 
@@ -43,21 +55,24 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
             }
 
             UpdateRoleEntity(roleEntity, e.Role);
+            db.RoleEvents.Add(NewRoleEvent());
 
-            var roleEvent = new RoleEventEntity
+            try
             {
-                RoleDiscordId = e.Role.Id,
-                GuildDiscordId = e.Guild.Id,
-                EventType = RoleEventType.Created,
-                NameAfter = e.Role.Name,
-                ColorAfter = e.Role.Color.Value,
-                EventTimestampUtc = receivedAt,
-                ReceivedAtUtc = receivedAt,
-                RawEventJson = rawJson
-            };
-
-            db.RoleEvents.Add(roleEvent);
-            await db.SaveChangesAsync();
+                await db.SaveChangesAsync();
+            }
+            catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+            {
+                // Concurrent insert won the race. Re-fetch, update, re-add the event.
+                db.ChangeTracker.Clear();
+                var existing = await db.Roles.FirstOrDefaultAsync(r => r.DiscordId == e.Role.Id);
+                if (existing != null)
+                {
+                    UpdateRoleEntity(existing, e.Role);
+                }
+                db.RoleEvents.Add(NewRoleEvent());
+                await db.SaveChangesAsync();
+            }
         }
         catch (Exception ex)
         {
