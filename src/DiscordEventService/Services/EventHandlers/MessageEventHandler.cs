@@ -63,8 +63,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
             };
 
             // SerializeAndLogAsync staged a RawEventLog row but did NOT save it; flush it
-            // (and any other pending work like UpsertUserAsync's tracked update) before
-            // the strategy lambda's ChangeTracker.Clear() detaches it.
+            // before the strategy lambda's ChangeTracker.Clear() detaches it.
             await db.SaveChangesAsync();
 
             // Wrap multi-row writes in a transaction so the 23505 retry path
