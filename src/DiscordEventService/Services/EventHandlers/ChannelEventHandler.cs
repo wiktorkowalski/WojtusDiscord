@@ -19,6 +19,7 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
         string? rawJson = null;
         try
         {
+            var receivedAt = DateTime.UtcNow;
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
@@ -38,8 +39,8 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
                 NameAfter = e.Channel.Name,
                 TopicAfter = e.Channel.Topic,
                 PositionAfter = e.Channel.Position,
-                EventTimestampUtc = DateTime.UtcNow,
-                ReceivedAtUtc = DateTime.UtcNow,
+                EventTimestampUtc = receivedAt,
+                ReceivedAtUtc = receivedAt,
                 RawEventJson = rawJson
             };
 
