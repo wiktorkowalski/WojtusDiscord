@@ -15,13 +15,14 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
     {
         if (e.Guild is null) return;
 
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "MessageReactionAdded", e.Guild.Id, e.Channel.Id, e.User.Id);
 
             var reactionEvent = new ReactionEventEntity
@@ -46,6 +47,13 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling reaction added for MessageId={MessageId}", e.Message.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "MessageReactionAdded", nameof(ReactionEventHandler), ex,
+                e.Guild?.Id, e.Channel.Id, e.User.Id, rawJson);
+            logger.LogWarning("Failed event recorded for replay: {EventType} MessageId={MessageId}",
+                "MessageReactionAdded", e.Message.Id);
         }
     }
 
@@ -53,13 +61,14 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
     {
         if (e.Guild is null) return;
 
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "MessageReactionRemoved", e.Guild.Id, e.Channel.Id, e.User.Id);
 
             var reactionEvent = new ReactionEventEntity
@@ -84,6 +93,13 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling reaction removed for MessageId={MessageId}", e.Message.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "MessageReactionRemoved", nameof(ReactionEventHandler), ex,
+                e.Guild?.Id, e.Channel.Id, e.User.Id, rawJson);
+            logger.LogWarning("Failed event recorded for replay: {EventType} MessageId={MessageId}",
+                "MessageReactionRemoved", e.Message.Id);
         }
     }
 
@@ -91,13 +107,14 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
     {
         if (e.Guild is null) return;
 
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "MessageReactionsCleared", e.Guild.Id, e.Channel.Id, null);
 
             var reactionEvent = new ReactionEventEntity
@@ -122,6 +139,13 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling reactions cleared for MessageId={MessageId}", e.Message.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "MessageReactionsCleared", nameof(ReactionEventHandler), ex,
+                e.Guild?.Id, e.Channel.Id, null, rawJson);
+            logger.LogWarning("Failed event recorded for replay: {EventType} MessageId={MessageId}",
+                "MessageReactionsCleared", e.Message.Id);
         }
     }
 
@@ -129,13 +153,14 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
     {
         if (e.Guild is null) return;
 
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "MessageReactionRemovedEmoji", e.Guild.Id, e.Channel.Id, null);
 
             var reactionEvent = new ReactionEventEntity
@@ -160,6 +185,13 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling emoji cleared for MessageId={MessageId}", e.Message.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "MessageReactionRemovedEmoji", nameof(ReactionEventHandler), ex,
+                e.Guild?.Id, e.Channel.Id, null, rawJson);
+            logger.LogWarning("Failed event recorded for replay: {EventType} MessageId={MessageId}",
+                "MessageReactionRemovedEmoji", e.Message.Id);
         }
     }
 }
