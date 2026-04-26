@@ -16,13 +16,14 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
 {
     public async Task HandleEventAsync(DiscordClient sender, ChannelCreatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ChannelCreated", e.Guild.Id, e.Channel.Id, null);
 
             // Look up Guild Guid
@@ -63,18 +64,24 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling channel created for ChannelId={ChannelId}", e.Channel.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ChannelCreated", nameof(ChannelEventHandler), ex,
+                e.Guild?.Id, e.Channel.Id, null, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelUpdatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ChannelUpdated", e.ChannelAfter.Guild.Id, e.ChannelAfter.Id, null);
 
             var channelEntity = await db.Channels
@@ -120,18 +127,24 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling channel updated for ChannelId={ChannelId}", e.ChannelAfter.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ChannelUpdated", nameof(ChannelEventHandler), ex,
+                e.ChannelAfter.Guild?.Id, e.ChannelAfter.Id, null, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelDeletedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ChannelDeleted", e.Guild.Id, e.Channel.Id, null);
 
             var channelEntity = await db.Channels
@@ -162,18 +175,24 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling channel deleted for ChannelId={ChannelId}", e.Channel.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ChannelDeleted", nameof(ChannelEventHandler), ex,
+                e.Guild?.Id, e.Channel.Id, null, rawJson);
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelPinsUpdatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ChannelPinsUpdatedChannel", e.Guild?.Id ?? 0, e.Channel.Id, null);
 
             var channelEvent = new ChannelEventEntity
@@ -193,6 +212,11 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling channel pins updated for ChannelId={ChannelId}", e.Channel.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "ChannelPinsUpdatedChannel", nameof(ChannelEventHandler), ex,
+                e.Guild?.Id, e.Channel.Id, null, rawJson);
         }
     }
 
