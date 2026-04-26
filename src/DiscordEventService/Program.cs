@@ -63,6 +63,7 @@ builder.Services.AddSingleton(sp =>
                     errorCodesToAdd: null))
             .UseSnakeCaseNamingConvention());
 
+        services.AddSingleton<IHostEnvironment>(builder.Environment);
         services.AddScoped<UserService>();
         services.AddScoped<RawEventLogService>();
         services.AddScoped<FailedEventService>();
