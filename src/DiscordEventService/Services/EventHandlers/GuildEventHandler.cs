@@ -132,6 +132,11 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling guild created for GuildId={GuildId}", e.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildCreated", nameof(GuildEventHandler), ex,
+                e.Guild?.Id, null, null);
         }
     }
 
@@ -163,6 +168,11 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling guild updated for GuildId={GuildId}", e.GuildAfter.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildUpdated", nameof(GuildEventHandler), ex,
+                e.GuildAfter?.Id, null, null);
         }
     }
 
@@ -185,6 +195,11 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling guild deleted for GuildId={GuildId}", e.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildDeleted", nameof(GuildEventHandler), ex,
+                e.Guild?.Id, null, null);
         }
     }
 
@@ -245,6 +260,11 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling guild emojis updated for GuildId={GuildId}", e.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildEmojisUpdated", nameof(GuildEventHandler), ex,
+                e.Guild?.Id, null, null);
         }
     }
 

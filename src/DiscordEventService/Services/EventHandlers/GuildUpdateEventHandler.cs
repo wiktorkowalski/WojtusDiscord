@@ -10,6 +10,7 @@ public class GuildUpdateEventHandler(IServiceScopeFactory scopeFactory, ILogger<
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildUpdatedEventArgs e)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -17,7 +18,7 @@ public class GuildUpdateEventHandler(IServiceScopeFactory scopeFactory, ILogger<
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "GuildUpdatedEvent", e.GuildAfter.Id, null, null);
 
             var guildEvent = new GuildEventEntity
@@ -53,6 +54,11 @@ public class GuildUpdateEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling guild updated for GuildId={GuildId}", e.GuildAfter.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildUpdatedEvent", nameof(GuildUpdateEventHandler), ex,
+                e.GuildAfter?.Id, null, null, rawJson);
         }
     }
 }
