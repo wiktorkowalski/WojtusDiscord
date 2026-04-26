@@ -17,6 +17,7 @@ public class GuildMembersChunkHandler(IServiceScopeFactory scopeFactory, ILogger
 
     public async Task HandleEventAsync(DiscordClient sender, GuildMembersChunkedEventArgs args)
     {
+        string? rawJson = null;
         try
         {
             var now = DateTime.UtcNow;
@@ -26,7 +27,7 @@ public class GuildMembersChunkHandler(IServiceScopeFactory scopeFactory, ILogger
             var userService = scope.ServiceProvider.GetRequiredService<UserService>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
+            rawJson = await rawEventService.SerializeAndLogAsync(
                 args, "GuildMembersChunked", args.Guild.Id, null, null);
 
             // Upsert all members received in this chunk
@@ -68,6 +69,11 @@ public class GuildMembersChunkHandler(IServiceScopeFactory scopeFactory, ILogger
         catch (Exception ex)
         {
             logger.LogError(ex, "Error handling guild members chunk for guild {GuildId}", args.Guild.Id);
+            using var failureScope = scopeFactory.CreateScope();
+            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+            await failedEventService.RecordFailureAsync(
+                "GuildMembersChunked", nameof(GuildMembersChunkHandler), ex,
+                args.Guild?.Id, null, null, rawJson);
         }
     }
 }
