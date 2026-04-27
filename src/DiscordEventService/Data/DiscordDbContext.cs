@@ -74,6 +74,9 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     // Backfill checkpoints
     public DbSet<BackfillCheckpointEntity> BackfillCheckpoints => Set<BackfillCheckpointEntity>();
 
+    // Bot downtime intervals
+    public DbSet<BotDowntimeIntervalEntity> BotDowntimeIntervals => Set<BotDowntimeIntervalEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -848,6 +851,16 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
 
         modelBuilder.Entity<BackfillCheckpointEntity>()
             .HasIndex(b => b.HangfireJobId);
+
+        // =====================================================
+        // BotDowntimeInterval configuration
+        // =====================================================
+        modelBuilder.Entity<BotDowntimeIntervalEntity>(b =>
+        {
+            b.HasIndex(x => new { x.StartedAtUtc, x.EndedAtUtc });
+            b.HasIndex(x => x.EndedAtUtc)
+                .HasFilter("ended_at_utc IS NULL");
+        });
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
