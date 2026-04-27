@@ -124,17 +124,24 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
             var pendingChanged = e.PendingBefore != e.PendingAfter;
             var timeoutChanged = e.CommunicationDisabledUntilBefore != e.CommunicationDisabledUntilAfter;
 
-            var premiumBefore = e.MemberBefore?.PremiumSince;
+            // Member-object deltas are only meaningful when MemberBefore is cached.
+            // Without it we can't distinguish "field changed" from "field newly known",
+            // so treat unknown-before as unchanged to avoid spurious filter triggers.
+            // (DSharpPlus annotates MemberBefore as non-nullable, but defensively check.)
+            var memberBefore = e.MemberBefore;
+            var hasBefore = memberBefore is not null;
+
+            var premiumBefore = memberBefore?.PremiumSince;
             var premiumAfter = e.Member.PremiumSince;
-            var premiumChanged = premiumBefore != premiumAfter;
+            var premiumChanged = hasBefore && premiumBefore != premiumAfter;
 
-            bool? mutedBefore = e.MemberBefore?.IsMuted;
+            bool? mutedBefore = memberBefore?.IsMuted;
             bool mutedAfter = e.Member.IsMuted;
-            var mutedChanged = mutedBefore != mutedAfter;
+            var mutedChanged = mutedBefore.HasValue && mutedBefore.Value != mutedAfter;
 
-            bool? deafenedBefore = e.MemberBefore?.IsDeafened;
+            bool? deafenedBefore = memberBefore?.IsDeafened;
             bool deafenedAfter = e.Member.IsDeafened;
-            var deafenedChanged = deafenedBefore != deafenedAfter;
+            var deafenedChanged = deafenedBefore.HasValue && deafenedBefore.Value != deafenedAfter;
 
             if (nicknameChanged || rolesAdded.Any() || rolesRemoved.Any() || timeoutChanged
                 || avatarHashChanged || pendingChanged || premiumChanged || mutedChanged || deafenedChanged)
