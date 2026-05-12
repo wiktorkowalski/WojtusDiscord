@@ -24,6 +24,16 @@ public class MemberEventEntity
     public string? RolesAddedJson { get; set; }
     public string? RolesRemovedJson { get; set; }
     public DateTime? TimeoutUntilUtc { get; set; }
+    public DateTime? PremiumSinceBefore { get; set; }
+    public DateTime? PremiumSinceAfter { get; set; }
+    public string? GuildAvatarHashBefore { get; set; }
+    public string? GuildAvatarHashAfter { get; set; }
+    public bool? IsPendingBefore { get; set; }
+    public bool? IsPendingAfter { get; set; }
+    public bool? IsMutedBefore { get; set; }
+    public bool? IsMutedAfter { get; set; }
+    public bool? IsDeafenedBefore { get; set; }
+    public bool? IsDeafenedAfter { get; set; }
     public string? BanReason { get; set; }
     /// <summary>For Joined events, populated from Member.JoinedAt. For Left/Updated/Banned/Unbanned, DSharpPlus does not expose a per-event timestamp; equals ReceivedAtUtc by design.</summary>
     public DateTime EventTimestampUtc { get; set; }

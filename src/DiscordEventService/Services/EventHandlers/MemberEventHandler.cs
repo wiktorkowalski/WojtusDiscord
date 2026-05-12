@@ -119,28 +119,57 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
             var rolesAdded = newRoleIds.Except(oldRoleIds).ToList();
             var rolesRemoved = oldRoleIds.Except(newRoleIds).ToList();
 
-            var nicknameBefore = e.NicknameBefore;
-            var nicknameAfter = e.NicknameAfter;
-            var nicknameChanged = nicknameBefore != nicknameAfter;
+            var nicknameChanged = e.NicknameBefore != e.NicknameAfter;
+            var avatarHashChanged = e.GuildAvatarHashBefore != e.GuildAvatarHashAfter;
+            var pendingChanged = e.PendingBefore != e.PendingAfter;
+            var timeoutChanged = e.CommunicationDisabledUntilBefore != e.CommunicationDisabledUntilAfter;
 
-            var timeoutChanged = e.PendingBefore != e.PendingAfter || e.Member.CommunicationDisabledUntil != null;
+            // Member-object deltas are only meaningful when MemberBefore is cached.
+            // Without it we can't distinguish "field changed" from "field newly known",
+            // so treat unknown-before as unchanged to avoid spurious filter triggers.
+            // (DSharpPlus annotates MemberBefore as non-nullable, but defensively check.)
+            var memberBefore = e.MemberBefore;
+            var hasBefore = memberBefore is not null;
 
-            if (nicknameChanged || rolesAdded.Any() || rolesRemoved.Any() || timeoutChanged)
+            var premiumBefore = memberBefore?.PremiumSince;
+            var premiumAfter = e.Member.PremiumSince;
+            var premiumChanged = hasBefore && premiumBefore != premiumAfter;
+
+            bool? mutedBefore = memberBefore?.IsMuted;
+            bool mutedAfter = e.Member.IsMuted;
+            var mutedChanged = mutedBefore.HasValue && mutedBefore.Value != mutedAfter;
+
+            bool? deafenedBefore = memberBefore?.IsDeafened;
+            bool deafenedAfter = e.Member.IsDeafened;
+            var deafenedChanged = deafenedBefore.HasValue && deafenedBefore.Value != deafenedAfter;
+
+            if (nicknameChanged || rolesAdded.Any() || rolesRemoved.Any() || timeoutChanged
+                || avatarHashChanged || pendingChanged || premiumChanged || mutedChanged || deafenedChanged)
             {
                 var memberEvent = new MemberEventEntity
                 {
                     UserDiscordId = e.Member.Id,
                     GuildDiscordId = e.Guild.Id,
                     EventType = MemberEventType.Updated,
-                    NicknameBefore = nicknameBefore,
-                    NicknameAfter = nicknameAfter,
+                    NicknameBefore = e.NicknameBefore,
+                    NicknameAfter = e.NicknameAfter,
                     RolesAddedJson = rolesAdded.Any()
                         ? JsonSerializer.Serialize(rolesAdded)
                         : null,
                     RolesRemovedJson = rolesRemoved.Any()
                         ? JsonSerializer.Serialize(rolesRemoved)
                         : null,
-                    TimeoutUntilUtc = e.Member.CommunicationDisabledUntil?.UtcDateTime,
+                    TimeoutUntilUtc = e.CommunicationDisabledUntilAfter?.UtcDateTime,
+                    PremiumSinceBefore = premiumBefore?.UtcDateTime,
+                    PremiumSinceAfter = premiumAfter?.UtcDateTime,
+                    GuildAvatarHashBefore = e.GuildAvatarHashBefore,
+                    GuildAvatarHashAfter = e.GuildAvatarHashAfter,
+                    IsPendingBefore = e.PendingBefore,
+                    IsPendingAfter = e.PendingAfter,
+                    IsMutedBefore = mutedBefore,
+                    IsMutedAfter = mutedAfter,
+                    IsDeafenedBefore = deafenedBefore,
+                    IsDeafenedAfter = deafenedAfter,
                     EventTimestampUtc = receivedAt,
                     ReceivedAtUtc = receivedAt,
                     RawEventJson = rawJson
