@@ -18,7 +18,10 @@ public class MessagesBackfillJob(
     private const int BatchSize = 100;
     private static readonly TimeSpan DelayBetweenBatches = TimeSpan.FromMilliseconds(500);
 
-    public async Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
+    public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
+        => ExecuteAsync(guildId, null, cancellationToken);
+
+    public async Task ExecuteAsync(ulong guildId, DateTime? afterTimestampUtc, CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
@@ -80,7 +83,7 @@ public class MessagesBackfillJob(
 
                 try
                 {
-                    await BackfillChannelMessagesAsync(db, userService, guildEntity, channel, checkpoint, cancellationToken);
+                    await BackfillChannelMessagesAsync(db, userService, guildEntity, channel, checkpoint, afterTimestampUtc, cancellationToken);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -110,6 +113,7 @@ public class MessagesBackfillJob(
         GuildEntity guildEntity,
         DiscordChannel channel,
         BackfillCheckpointEntity checkpoint,
+        DateTime? afterTimestampUtc,
         CancellationToken cancellationToken)
     {
         var channelEntity = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == channel.Id, cancellationToken);
@@ -212,6 +216,16 @@ public class MessagesBackfillJob(
             beforeId = messages.Last().Id;
             checkpoint.LastProcessedId = beforeId;
             await db.SaveChangesAsync(cancellationToken);
+
+            // Stop scrolling once the oldest message in the batch is older than
+            // the requested window. We still keep the messages we just inserted
+            // (overshoot by up to one batch is safer than undershoot).
+            if (afterTimestampUtc.HasValue &&
+                messages.Min(m => m.Timestamp).UtcDateTime < afterTimestampUtc.Value)
+            {
+                hasMore = false;
+                break;
+            }
 
             // Respect rate limits
             await Task.Delay(DelayBetweenBatches, cancellationToken);

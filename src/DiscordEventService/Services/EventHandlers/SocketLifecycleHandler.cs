@@ -1,6 +1,9 @@
+using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Jobs;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
+using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
@@ -8,8 +11,12 @@ public class SocketLifecycleHandler(
     IServiceScopeFactory scopeFactory,
     ILogger<SocketLifecycleHandler> logger) :
     IEventHandler<SocketClosedEventArgs>,
-    IEventHandler<SessionResumedEventArgs>
+    IEventHandler<SessionResumedEventArgs>,
+    IEventHandler<GuildDownloadCompletedEventArgs>
 {
+    private static readonly TimeSpan ReconnectGapThreshold = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ReconnectBackfillBuffer = TimeSpan.FromMinutes(5);
+
     public async Task HandleEventAsync(DiscordClient sender, SocketClosedEventArgs e)
     {
         try
@@ -40,6 +47,72 @@ public class SocketLifecycleHandler(
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to close downtime row on SessionResumed");
+        }
+    }
+
+    public async Task HandleEventAsync(DiscordClient sender, GuildDownloadCompletedEventArgs e)
+    {
+        // Cold connect (Ready → guild download complete). Events that happened
+        // while we were disconnected are NOT replayed by Discord, so we need to
+        // backfill messages/reactions across the gap. Resume-paths (warm
+        // reconnect) hit SessionResumed instead and don't reach here.
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+            var orchestrator = scope.ServiceProvider.GetRequiredService<GuildBackfillOrchestrator>();
+            var tracker = scope.ServiceProvider.GetRequiredService<DowntimeTrackerService>();
+
+            // Ready can fire without a preceding Resumed (session invalidated).
+            await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow, onlyType: BotDowntimeType.GatewayDisconnect);
+
+            var lastAlive = (await tracker.GetLastAliveAtUtcAsync()).LastAliveUtc;
+            if (lastAlive is null)
+            {
+                logger.LogInformation("GuildDownloadCompleted: no prior heartbeat / event log, skipping backfill (first run)");
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+            var gap = now - lastAlive.Value;
+            if (gap < ReconnectGapThreshold)
+            {
+                logger.LogInformation(
+                    "GuildDownloadCompleted: gap {Gap:c} below threshold, skipping reconnect backfill",
+                    gap);
+                return;
+            }
+
+            // Per user guidance: scan all known channels in every guild, overshoot
+            // the window rather than risk missing events.
+            var afterTimestamp = lastAlive.Value - ReconnectBackfillBuffer;
+
+            var inProgressGuilds = await db.BackfillCheckpoints
+                .Where(c => c.Status == BackfillStatus.InProgress)
+                .Select(c => c.GuildDiscordId)
+                .Distinct()
+                .ToListAsync();
+            var inProgressSet = inProgressGuilds.ToHashSet();
+
+            foreach (var guildId in e.Guilds.Keys)
+            {
+                if (inProgressSet.Contains(guildId))
+                {
+                    logger.LogInformation(
+                        "Reconnect backfill skipped for guild {GuildId}: backfill already in progress",
+                        guildId);
+                    continue;
+                }
+
+                logger.LogInformation(
+                    "Reconnect backfill enqueued for guild {GuildId} after gap {Gap:c} (afterTimestampUtc={After:O})",
+                    guildId, gap, afterTimestamp);
+                orchestrator.EnqueueBackfillFrom(guildId, afterTimestamp);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to enqueue reconnect backfill on GuildDownloadCompleted");
         }
     }
 }

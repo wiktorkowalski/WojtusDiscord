@@ -8,6 +8,12 @@ namespace DiscordEventService.Endpoints;
 
 public static class BackfillEndpoints
 {
+    private static readonly TimeSpan GapBucketSize = TimeSpan.FromHours(1);
+    // Buffer one bucket back so a partial bucket at the very start of the gap
+    // is still scanned end-to-end by the messages backfill.
+    private static readonly TimeSpan GapBufferBeforeEarliestBucket = TimeSpan.FromHours(1);
+
+
     public static void MapBackfillEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/backfill");
@@ -28,6 +34,10 @@ public static class BackfillEndpoints
         group.MapPost("/{guildId:long}/reset", ResetBackfill)
             .WithName("ResetBackfill")
             .Produces(StatusCodes.Status204NoContent);
+
+        group.MapPost("/historical-gaps", BackfillHistoricalGaps)
+            .WithName("BackfillHistoricalGaps")
+            .Produces<HistoricalGapsResponse>(StatusCodes.Status202Accepted);
     }
 
     private static async Task<IResult> StartBackfill(
@@ -121,6 +131,82 @@ public static class BackfillEndpoints
 
         return Results.NoContent();
     }
+
+    private static async Task<IResult> BackfillHistoricalGaps(
+        DiscordDbContext db,
+        GuildBackfillOrchestrator orchestrator)
+    {
+        // Find the oldest hour bucket that has zero raw_event_logs rows, then
+        // enqueue a full backfill from that point (minus a 1-hour buffer) for
+        // every known guild. Per the user's "overshoot" guidance we don't try
+        // to cover each gap with a separate run — one wide-net pass per guild
+        // is simpler and the existing idempotency checks keep it safe.
+        var earliestGapStart = await db.Database
+            .SqlQueryRaw<DateTime?>(@"
+                WITH hours AS (
+                    SELECT generate_series(
+                        date_trunc('hour', (SELECT min(received_at_utc) FROM raw_event_logs)),
+                        date_trunc('hour', now()),
+                        interval '1 hour'
+                    ) AS h
+                )
+                SELECT h AS ""Value"" FROM hours
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM raw_event_logs r
+                    WHERE date_trunc('hour', r.received_at_utc) = hours.h
+                )
+                ORDER BY h
+                LIMIT 1")
+            .FirstOrDefaultAsync();
+
+        if (earliestGapStart is null)
+        {
+            return Results.Ok(new HistoricalGapsResponse
+            {
+                EarliestGapStartUtc = null,
+                AfterTimestampUtc = null,
+                EnqueuedGuildIds = [],
+                SkippedGuildIds = [],
+                Message = "No zero-event hour buckets found"
+            });
+        }
+
+        var afterTimestamp = earliestGapStart.Value - GapBufferBeforeEarliestBucket;
+        var guildIds = await db.Guilds
+            .Where(g => g.LeftAtUtc == null)
+            .Select(g => g.DiscordId)
+            .ToListAsync();
+
+        var inProgressSet = (await db.BackfillCheckpoints
+            .Where(c => c.Status == BackfillStatus.InProgress)
+            .Select(c => c.GuildDiscordId)
+            .Distinct()
+            .ToListAsync()).ToHashSet();
+
+        var enqueued = new List<ulong>();
+        var skipped = new List<ulong>();
+
+        foreach (var guildId in guildIds)
+        {
+            if (inProgressSet.Contains(guildId))
+            {
+                skipped.Add(guildId);
+                continue;
+            }
+
+            orchestrator.EnqueueBackfillFrom(guildId, afterTimestamp);
+            enqueued.Add(guildId);
+        }
+
+        return Results.Accepted("/api/backfill/status", new HistoricalGapsResponse
+        {
+            EarliestGapStartUtc = earliestGapStart,
+            AfterTimestampUtc = afterTimestamp,
+            EnqueuedGuildIds = enqueued,
+            SkippedGuildIds = skipped,
+            Message = $"Enqueued {enqueued.Count} guild(s), skipped {skipped.Count} (already in progress)"
+        });
+    }
 }
 
 public record BackfillRequest
@@ -158,4 +244,13 @@ public record CheckpointDto
     public string? LastError { get; init; }
     public DateTime StartedAt { get; init; }
     public DateTime? CompletedAt { get; init; }
+}
+
+public record HistoricalGapsResponse
+{
+    public DateTime? EarliestGapStartUtc { get; init; }
+    public DateTime? AfterTimestampUtc { get; init; }
+    public required IReadOnlyList<ulong> EnqueuedGuildIds { get; init; }
+    public required IReadOnlyList<ulong> SkippedGuildIds { get; init; }
+    public required string Message { get; init; }
 }

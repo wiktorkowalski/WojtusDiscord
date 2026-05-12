@@ -89,29 +89,37 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         }
     }
 
-    public async Task<Guid?> InferStartupGapAsync()
+    public async Task<LastAliveResult> GetLastAliveAtUtcAsync()
     {
-        var now = DateTime.UtcNow;
-
         // Heartbeat is the primary signal: it ticks regardless of Discord activity,
         // so it survives quiet periods that would leave raw_event_logs stale.
-        var lastHeartbeat = await db.BotHeartbeats
+        var heartbeatTask = db.BotHeartbeats
             .OrderByDescending(h => h.LastHeartbeatUtc)
             .Select(h => (DateTime?)h.LastHeartbeatUtc)
             .FirstOrDefaultAsync();
 
-        var maxReceivedAt = await db.RawEventLogs
+        var maxReceivedAtTask = db.RawEventLogs
             .OrderByDescending(r => r.ReceivedAtUtc)
             .Select(r => (DateTime?)r.ReceivedAtUtc)
             .FirstOrDefaultAsync();
 
-        var lastAlive = MaxNullable(lastHeartbeat, maxReceivedAt);
-        if (lastAlive is null)
+        await Task.WhenAll(heartbeatTask, maxReceivedAtTask);
+
+        var lastHeartbeat = heartbeatTask.Result;
+        var maxReceivedAt = maxReceivedAtTask.Result;
+        return new LastAliveResult(MaxNullable(lastHeartbeat, maxReceivedAt), lastHeartbeat, maxReceivedAt);
+    }
+
+    public async Task<Guid?> InferStartupGapAsync()
+    {
+        var now = DateTime.UtcNow;
+        var result = await GetLastAliveAtUtcAsync();
+        if (result.LastAliveUtc is null)
         {
             return null;
         }
 
-        var gap = now - lastAlive.Value;
+        var gap = now - result.LastAliveUtc.Value;
         if (gap < StartupGapThreshold)
         {
             return null;
@@ -119,13 +127,13 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
 
         var row = new BotDowntimeIntervalEntity
         {
-            StartedAtUtc = lastAlive.Value,
+            StartedAtUtc = result.LastAliveUtc.Value,
             EndedAtUtc = now,
             Type = BotDowntimeType.Inferred,
             DetectionMethod = BotDowntimeDetectionMethod.StartupGapInference,
-            LastEventBeforeUtc = lastAlive.Value,
+            LastEventBeforeUtc = result.LastAliveUtc.Value,
             FirstEventAfterUtc = now,
-            Notes = $"Startup gap inference: {gap.TotalSeconds:F0}s (heartbeat={lastHeartbeat:O}, event={maxReceivedAt:O})"
+            Notes = $"Startup gap inference: {gap.TotalSeconds:F0}s (heartbeat={result.LastHeartbeatUtc:O}, event={result.MaxReceivedAtUtc:O})"
         };
         db.BotDowntimeIntervals.Add(row);
         await db.SaveChangesAsync();
@@ -142,6 +150,8 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         return a.Value > b.Value ? a : b;
     }
 }
+
+public record LastAliveResult(DateTime? LastAliveUtc, DateTime? LastHeartbeatUtc, DateTime? MaxReceivedAtUtc);
 
 public record OpenDowntimeResult(Guid Id, BotDowntimeType ActualType, bool Created);
 
