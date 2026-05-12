@@ -28,6 +28,18 @@ public class MessagesBackfillJob(
         var userService = scope.ServiceProvider.GetRequiredService<UserService>();
 
         var checkpoint = await GetOrCreateCheckpointAsync(db, guildId);
+        // Only honor CurrentChannelId / LastProcessedId as a resume cursor when
+        // the previous run was actually interrupted mid-flight (Status==InProgress).
+        // After a Completed/Failed/Cancelled run the cursor points at the last
+        // channel processed; carrying it over would Skip(channels.Length-1) and
+        // silently scan only the final channel — masking gap events in every
+        // other channel.
+        var isResume = checkpoint.Status == BackfillStatus.InProgress;
+        if (!isResume)
+        {
+            checkpoint.CurrentChannelId = null;
+            checkpoint.LastProcessedId = null;
+        }
         checkpoint.Status = BackfillStatus.InProgress;
         await db.SaveChangesAsync(cancellationToken);
 

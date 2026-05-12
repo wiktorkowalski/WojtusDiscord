@@ -27,6 +27,15 @@ public class ReactionsBackfillJob(
         var userService = scope.ServiceProvider.GetRequiredService<UserService>();
 
         var checkpoint = await GetOrCreateCheckpointAsync(db, guildId);
+        // Only honor CurrentChannelId / LastProcessedId as a resume cursor when
+        // the previous run was actually interrupted mid-flight (Status==InProgress).
+        // See MessagesBackfillJob for the full rationale.
+        var isResume = checkpoint.Status == BackfillStatus.InProgress;
+        if (!isResume)
+        {
+            checkpoint.CurrentChannelId = null;
+            checkpoint.LastProcessedId = null;
+        }
         checkpoint.Status = BackfillStatus.InProgress;
         await db.SaveChangesAsync(cancellationToken);
 
