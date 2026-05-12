@@ -7,13 +7,23 @@ public class GuildBackfillOrchestrator(
     ILogger<GuildBackfillOrchestrator> logger)
 {
     public string StartBackfill(ulong guildId, BackfillOptions? options = null)
+        => EnqueueChain(guildId, options ?? BackfillOptions.Default, afterTimestampUtc: null);
+
+    /// <summary>
+    /// Enqueues the full backfill chain (Roles → Emojis → Stickers → Channels →
+    /// Members → optional Messages → optional Reactions), passing afterTimestampUtc
+    /// to Messages/Reactions so they stop scrolling once they're older than the
+    /// window. Used by reconnect-driven and historical-gap-driven backfills.
+    /// </summary>
+    public string EnqueueBackfillFrom(ulong guildId, DateTime afterTimestampUtc, BackfillOptions? options = null)
+        => EnqueueChain(guildId, options ?? BackfillOptions.Default, afterTimestampUtc);
+
+    private string EnqueueChain(ulong guildId, BackfillOptions options, DateTime? afterTimestampUtc)
     {
-        options ??= BackfillOptions.Default;
+        logger.LogInformation(
+            "Starting backfill orchestration for guild {GuildId} with options: {@Options} afterTimestampUtc={AfterTimestamp:O}",
+            guildId, options, afterTimestampUtc);
 
-        logger.LogInformation("Starting backfill orchestration for guild {GuildId} with options: {@Options}", guildId, options);
-
-        // Chain jobs in order using Hangfire continuations
-        // Each job depends on the previous one completing
         var rolesJobId = backgroundJobClient.Enqueue<RolesBackfillJob>(
             j => j.ExecuteAsync(guildId, CancellationToken.None));
 
@@ -34,13 +44,13 @@ public class GuildBackfillOrchestrator(
         if (options.IncludeMessages)
         {
             var messagesJobId = backgroundJobClient.ContinueJobWith<MessagesBackfillJob>(
-                membersJobId, j => j.ExecuteAsync(guildId, CancellationToken.None));
+                membersJobId, j => j.ExecuteAsync(guildId, afterTimestampUtc, CancellationToken.None));
             finalJobId = messagesJobId;
 
             if (options.IncludeReactions)
             {
                 var reactionsJobId = backgroundJobClient.ContinueJobWith<ReactionsBackfillJob>(
-                    messagesJobId, j => j.ExecuteAsync(guildId, CancellationToken.None));
+                    messagesJobId, j => j.ExecuteAsync(guildId, afterTimestampUtc, CancellationToken.None));
                 finalJobId = reactionsJobId;
             }
         }

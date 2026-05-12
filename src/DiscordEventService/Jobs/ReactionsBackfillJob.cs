@@ -17,13 +17,25 @@ public class ReactionsBackfillJob(
 
     private static readonly TimeSpan DelayBetweenBatches = TimeSpan.FromMilliseconds(200);
 
-    public async Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
+    public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
+        => ExecuteAsync(guildId, null, cancellationToken);
+
+    public async Task ExecuteAsync(ulong guildId, DateTime? afterTimestampUtc, CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
         var userService = scope.ServiceProvider.GetRequiredService<UserService>();
 
         var checkpoint = await GetOrCreateCheckpointAsync(db, guildId);
+        // Only honor CurrentChannelId / LastProcessedId as a resume cursor when
+        // the previous run was actually interrupted mid-flight (Status==InProgress).
+        // See MessagesBackfillJob for the full rationale.
+        var isResume = checkpoint.Status == BackfillStatus.InProgress;
+        if (!isResume)
+        {
+            checkpoint.CurrentChannelId = null;
+            checkpoint.LastProcessedId = null;
+        }
         checkpoint.Status = BackfillStatus.InProgress;
         await db.SaveChangesAsync(cancellationToken);
 
@@ -75,7 +87,7 @@ public class ReactionsBackfillJob(
 
                 try
                 {
-                    await BackfillChannelReactionsAsync(db, userService, guildEntity, channel, checkpoint, cancellationToken);
+                    await BackfillChannelReactionsAsync(db, userService, guildEntity, channel, checkpoint, afterTimestampUtc, cancellationToken);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -105,6 +117,7 @@ public class ReactionsBackfillJob(
         GuildEntity guildEntity,
         DiscordChannel channel,
         BackfillCheckpointEntity checkpoint,
+        DateTime? afterTimestampUtc,
         CancellationToken cancellationToken)
     {
         const int messageBatchSize = 100;
@@ -174,6 +187,16 @@ public class ReactionsBackfillJob(
             beforeId = messages.Last().Id;
             checkpoint.LastProcessedId = beforeId;
             await db.SaveChangesAsync(cancellationToken);
+
+            // Stop scrolling once the oldest message in the batch is older than
+            // the requested window (we've already collected reactions for the
+            // current batch — overshoot by up to one batch is intentional).
+            if (afterTimestampUtc.HasValue &&
+                messages.Min(m => m.Timestamp).UtcDateTime < afterTimestampUtc.Value)
+            {
+                hasMore = false;
+                break;
+            }
 
             await Task.Delay(DelayBetweenBatches, cancellationToken);
         }

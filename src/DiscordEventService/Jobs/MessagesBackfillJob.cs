@@ -18,13 +18,28 @@ public class MessagesBackfillJob(
     private const int BatchSize = 100;
     private static readonly TimeSpan DelayBetweenBatches = TimeSpan.FromMilliseconds(500);
 
-    public async Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
+    public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
+        => ExecuteAsync(guildId, null, cancellationToken);
+
+    public async Task ExecuteAsync(ulong guildId, DateTime? afterTimestampUtc, CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
         var userService = scope.ServiceProvider.GetRequiredService<UserService>();
 
         var checkpoint = await GetOrCreateCheckpointAsync(db, guildId);
+        // Only honor CurrentChannelId / LastProcessedId as a resume cursor when
+        // the previous run was actually interrupted mid-flight (Status==InProgress).
+        // After a Completed/Failed/Cancelled run the cursor points at the last
+        // channel processed; carrying it over would Skip(channels.Length-1) and
+        // silently scan only the final channel — masking gap events in every
+        // other channel.
+        var isResume = checkpoint.Status == BackfillStatus.InProgress;
+        if (!isResume)
+        {
+            checkpoint.CurrentChannelId = null;
+            checkpoint.LastProcessedId = null;
+        }
         checkpoint.Status = BackfillStatus.InProgress;
         await db.SaveChangesAsync(cancellationToken);
 
@@ -80,7 +95,7 @@ public class MessagesBackfillJob(
 
                 try
                 {
-                    await BackfillChannelMessagesAsync(db, userService, guildEntity, channel, checkpoint, cancellationToken);
+                    await BackfillChannelMessagesAsync(db, userService, guildEntity, channel, checkpoint, afterTimestampUtc, cancellationToken);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -110,6 +125,7 @@ public class MessagesBackfillJob(
         GuildEntity guildEntity,
         DiscordChannel channel,
         BackfillCheckpointEntity checkpoint,
+        DateTime? afterTimestampUtc,
         CancellationToken cancellationToken)
     {
         var channelEntity = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == channel.Id, cancellationToken);
@@ -212,6 +228,16 @@ public class MessagesBackfillJob(
             beforeId = messages.Last().Id;
             checkpoint.LastProcessedId = beforeId;
             await db.SaveChangesAsync(cancellationToken);
+
+            // Stop scrolling once the oldest message in the batch is older than
+            // the requested window. We still keep the messages we just inserted
+            // (overshoot by up to one batch is safer than undershoot).
+            if (afterTimestampUtc.HasValue &&
+                messages.Min(m => m.Timestamp).UtcDateTime < afterTimestampUtc.Value)
+            {
+                hasMore = false;
+                break;
+            }
 
             // Respect rate limits
             await Task.Delay(DelayBetweenBatches, cancellationToken);
