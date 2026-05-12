@@ -96,7 +96,14 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         // Heartbeat is the primary signal: it ticks regardless of Discord activity,
         // so it survives quiet periods that would leave raw_event_logs stale.
         // Queries are sequential because DbContext is not thread-safe.
+        //
+        // Filter to IsGatewayConnected == true so an in-process session-invalidation
+        // (DSharpPlus drops, host keeps running, heartbeats keep ticking with
+        // IsGatewayConnected=false) does not register as "alive" — otherwise the
+        // reconnect-driven backfill always sees gap < 5s and no-ops. NULL values
+        // (rows from before the gateway columns existed) are excluded by == true.
         var lastHeartbeat = await db.BotHeartbeats
+            .Where(h => h.IsGatewayConnected == true)
             .OrderByDescending(h => h.LastHeartbeatUtc)
             .Select(h => (DateTime?)h.LastHeartbeatUtc)
             .FirstOrDefaultAsync();
