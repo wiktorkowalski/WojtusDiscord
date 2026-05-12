@@ -33,7 +33,9 @@ public class SocketLifecycleHandler(
         {
             using var scope = scopeFactory.CreateScope();
             var tracker = scope.ServiceProvider.GetRequiredService<DowntimeTrackerService>();
-            await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow);
+            // Scope to GatewayDisconnect so a routine resume doesn't clobber a
+            // manually-opened Deploy/HostDown row from the ops endpoint.
+            await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow, onlyType: BotDowntimeType.GatewayDisconnect);
         }
         catch (Exception ex)
         {

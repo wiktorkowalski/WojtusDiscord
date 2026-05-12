@@ -25,12 +25,17 @@ public static class OpsEndpoints
             return Results.BadRequest(new { error = $"Unknown downtime type: {(int)type}" });
         }
 
-        var id = await tracker.OpenDowntimeAsync(
+        var result = await tracker.OpenDowntimeAsync(
             type,
             BotDowntimeDetectionMethod.Manual,
             reason);
 
-        return Results.Ok(new DowntimeStartResponse { Id = id, Type = type.ToString() });
+        return Results.Ok(new DowntimeStartResponse
+        {
+            Id = result.Id,
+            Type = result.ActualType.ToString(),
+            Created = result.Created
+        });
     }
 }
 
@@ -38,4 +43,5 @@ public record DowntimeStartResponse
 {
     public required Guid Id { get; init; }
     public required string Type { get; init; }
+    public required bool Created { get; init; }
 }

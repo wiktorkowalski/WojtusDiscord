@@ -8,7 +8,7 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
 {
     private static readonly TimeSpan StartupGapThreshold = TimeSpan.FromSeconds(30);
 
-    public async Task<Guid> OpenDowntimeAsync(
+    public async Task<OpenDowntimeResult> OpenDowntimeAsync(
         BotDowntimeType type,
         BotDowntimeDetectionMethod method,
         string? notes,
@@ -24,7 +24,7 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
             logger.LogWarning(
                 "OpenDowntimeAsync({Type}/{Method}) skipped: open row Id={Id} Type={ExistingType} already exists",
                 type, method, existingOpen.Id, existingOpen.Type);
-            return existingOpen.Id;
+            return new OpenDowntimeResult(existingOpen.Id, existingOpen.Type, Created: false);
         }
 
         var row = new BotDowntimeIntervalEntity
@@ -41,21 +41,27 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         logger.LogInformation(
             "Opened downtime row Id={Id} Type={Type} Method={Method}",
             row.Id, type, method);
-        return row.Id;
+        return new OpenDowntimeResult(row.Id, type, Created: true);
     }
 
-    public async Task<int> CloseOpenDowntimeAsync(DateTime endedAtUtc)
+    public async Task<int> CloseOpenDowntimeAsync(DateTime endedAtUtc, BotDowntimeType? onlyType = null)
     {
         // FirstEventAfterUtc intentionally left null here; it represents the timestamp
         // of the first real Discord event seen after recovery, not the moment we
         // observed startup. Populate it later if/when we wire that signal.
         // ExecuteUpdateAsync bypasses the SaveChangesAsync ITimestamped hook, so
         // LastUpdatedUtc must be set explicitly.
-        var affected = await db.BotDowntimeIntervals
-            .Where(x => x.EndedAtUtc == null)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(x => x.EndedAtUtc, endedAtUtc)
-                .SetProperty(x => x.LastUpdatedUtc, endedAtUtc));
+        // onlyType scopes the close so a routine SessionResumed doesn't clobber a
+        // manually-opened Deploy/HostDown row from the ops endpoint.
+        var query = db.BotDowntimeIntervals.Where(x => x.EndedAtUtc == null);
+        if (onlyType.HasValue)
+        {
+            query = query.Where(x => x.Type == onlyType.Value);
+        }
+
+        var affected = await query.ExecuteUpdateAsync(s => s
+            .SetProperty(x => x.EndedAtUtc, endedAtUtc)
+            .SetProperty(x => x.LastUpdatedUtc, endedAtUtc));
 
         if (affected > 1)
         {
@@ -63,7 +69,7 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         }
         else if (affected == 1)
         {
-            logger.LogInformation("Closed open downtime row at {EndedAt:O}", endedAtUtc);
+            logger.LogInformation("Closed open downtime row at {EndedAt:O} (filter={Filter})", endedAtUtc, onlyType?.ToString() ?? "any");
         }
         return affected;
     }
@@ -136,3 +142,6 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         return a.Value > b.Value ? a : b;
     }
 }
+
+public record OpenDowntimeResult(Guid Id, BotDowntimeType ActualType, bool Created);
+
