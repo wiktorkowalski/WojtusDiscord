@@ -8,9 +8,9 @@ namespace DiscordEventService.Endpoints;
 
 public static class BackfillEndpoints
 {
-    private static readonly TimeSpan GapBucketSize = TimeSpan.FromHours(1);
     // Buffer one bucket back so a partial bucket at the very start of the gap
-    // is still scanned end-to-end by the messages backfill.
+    // is still scanned end-to-end. Matches the 'interval 1 hour' bucket size
+    // hard-coded in the historical-gaps SQL CTE — keep them in sync if changed.
     private static readonly TimeSpan GapBufferBeforeEarliestBucket = TimeSpan.FromHours(1);
 
 
@@ -141,24 +141,38 @@ public static class BackfillEndpoints
         // every known guild. Per the user's "overshoot" guidance we don't try
         // to cover each gap with a separate run — one wide-net pass per guild
         // is simpler and the existing idempotency checks keep it safe.
-        var earliestGapStart = await db.Database
-            .SqlQueryRaw<DateTime?>(@"
+        var hasAnyEvents = await db.RawEventLogs.AnyAsync();
+        if (!hasAnyEvents)
+        {
+            return Results.Ok(new HistoricalGapsResponse
+            {
+                EarliestGapStartUtc = null,
+                AfterTimestampUtc = null,
+                EnqueuedGuildIds = [],
+                SkippedGuildIds = [],
+                Message = "raw_event_logs is empty; nothing to backfill"
+            });
+        }
+
+        var gapRow = await db.Database
+            .SqlQueryRaw<HistoricalGapRow>(@"
                 WITH hours AS (
                     SELECT generate_series(
                         date_trunc('hour', (SELECT min(received_at_utc) FROM raw_event_logs)),
                         date_trunc('hour', now()),
                         interval '1 hour'
-                    ) AS h
+                    ) AS gap_start
                 )
-                SELECT h AS ""Value"" FROM hours
+                SELECT gap_start AS ""GapStart"" FROM hours
                 WHERE NOT EXISTS (
                     SELECT 1 FROM raw_event_logs r
-                    WHERE date_trunc('hour', r.received_at_utc) = hours.h
+                    WHERE date_trunc('hour', r.received_at_utc) = hours.gap_start
                 )
-                ORDER BY h
+                ORDER BY gap_start
                 LIMIT 1")
             .FirstOrDefaultAsync();
 
+        var earliestGapStart = gapRow?.GapStart;
         if (earliestGapStart is null)
         {
             return Results.Ok(new HistoricalGapsResponse
@@ -254,3 +268,5 @@ public record HistoricalGapsResponse
     public required IReadOnlyList<ulong> SkippedGuildIds { get; init; }
     public required string Message { get; init; }
 }
+
+public record HistoricalGapRow(DateTime? GapStart);
