@@ -67,6 +67,7 @@ builder.Services.AddSingleton(sp =>
         services.AddScoped<UserService>();
         services.AddScoped<RawEventLogService>();
         services.AddScoped<FailedEventService>();
+        services.AddScoped<DowntimeTrackerService>();
         services.AddMemoryCache();
     });
 
@@ -108,6 +109,8 @@ builder.Services.AddSingleton(sp =>
         .AddEventHandlers<IntegrationEventHandler>(ServiceLifetime.Scoped)
         // Audit Log
         .AddEventHandlers<AuditLogEventHandler>(ServiceLifetime.Scoped)
+        // Socket lifecycle (downtime tracking)
+        .AddEventHandlers<SocketLifecycleHandler>(ServiceLifetime.Scoped)
     );
 
     return clientBuilder.Build();
@@ -115,6 +118,7 @@ builder.Services.AddSingleton(sp =>
 
 // Hosted Service
 builder.Services.AddHostedService<DiscordHostedService>();
+builder.Services.AddHostedService<HeartbeatBackgroundService>();
 
 // Memory cache for throttling
 builder.Services.AddMemoryCache();
@@ -123,6 +127,7 @@ builder.Services.AddMemoryCache();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<RawEventLogService>();
 builder.Services.AddScoped<FailedEventService>();
+builder.Services.AddScoped<DowntimeTrackerService>();
 
 // Health checks
 builder.Services.AddHealthChecks()
@@ -170,5 +175,8 @@ app.MapHangfireDashboard("/hangfire");
 
 // Backfill API
 app.MapBackfillEndpoints();
+
+// Operations API
+app.MapOpsEndpoints();
 
 app.Run();

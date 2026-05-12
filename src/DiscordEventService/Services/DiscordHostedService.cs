@@ -1,3 +1,4 @@
+using DiscordEventService.Data.Entities.Core;
 using DSharpPlus;
 using DSharpPlus.Exceptions;
 
@@ -5,6 +6,7 @@ namespace DiscordEventService.Services;
 
 public class DiscordHostedService(
     DiscordClient client,
+    IServiceScopeFactory scopeFactory,
     ILogger<DiscordHostedService> logger) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -23,10 +25,41 @@ public class DiscordHostedService(
         {
             logger.LogCritical(ex, "Failed to connect to Discord. Service will continue without Discord connection.");
         }
+
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var tracker = scope.ServiceProvider.GetRequiredService<DowntimeTrackerService>();
+            var closed = await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow);
+            if (closed == 0)
+            {
+                await tracker.InferStartupGapAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Downtime tracker failed during StartAsync");
+        }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var tracker = scope.ServiceProvider.GetRequiredService<DowntimeTrackerService>();
+            var isDeploy = Environment.GetEnvironmentVariable("DEPLOY_IN_PROGRESS") == "1";
+            var deployVersion = Environment.GetEnvironmentVariable("DEPLOY_VERSION");
+            await tracker.OpenDowntimeAsync(
+                isDeploy ? BotDowntimeType.Deploy : BotDowntimeType.GracefulShutdown,
+                BotDowntimeDetectionMethod.GracefulStop,
+                isDeploy && !string.IsNullOrEmpty(deployVersion) ? $"deploy: {deployVersion}" : null);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Downtime tracker failed during StopAsync");
+        }
+
         logger.LogInformation("Disconnecting from Discord...");
         try
         {
