@@ -864,6 +864,14 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
             b.HasIndex(x => x.EndedAtUtc)
                 .HasFilter("ended_at_utc IS NULL");
         });
+
+        // =====================================================
+        // BotHeartbeat configuration
+        // =====================================================
+        // Index on LastHeartbeatUtc — append-only table, "most recent tick"
+        // lookups via OrderByDescending(LastHeartbeatUtc).First() use this.
+        modelBuilder.Entity<BotHeartbeatEntity>()
+            .HasIndex(h => h.LastHeartbeatUtc);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
