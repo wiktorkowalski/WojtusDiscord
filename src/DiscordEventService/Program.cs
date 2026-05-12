@@ -62,7 +62,10 @@ builder.Services.AddSingleton(sp =>
 {
     var clientBuilder = DiscordClientBuilder.CreateDefault(discordToken, DiscordIntents.All);
 
-    // Register ASP.NET Core services in DSharpPlus's DI container
+    // Register ASP.NET Core services in DSharpPlus's DI container.
+    // NOTE: when adding a new registration here that event handlers depend on,
+    // also add the type to StartupValidator.RequiredChildContainerServices so
+    // missing registrations fail at startup instead of at runtime.
     clientBuilder.ConfigureServices(services =>
     {
         services.AddDbContext<DiscordDbContext>(options =>
