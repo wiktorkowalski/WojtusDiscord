@@ -11,21 +11,11 @@ public class DiscordHostedService(
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        logger.LogInformation("Connecting to Discord...");
-        try
-        {
-            await client.ConnectAsync();
-            logger.LogInformation("Connected to Discord as {Username}", client.CurrentUser?.Username ?? "Unknown");
-        }
-        catch (UnauthorizedException ex)
-        {
-            logger.LogCritical(ex, "Invalid Discord bot token - check Discord:Token configuration. Service will continue without Discord connection.");
-        }
-        catch (Exception ex)
-        {
-            logger.LogCritical(ex, "Failed to connect to Discord. Service will continue without Discord connection.");
-        }
-
+        // Resolve prior-session downtime BEFORE connecting. Once ConnectAsync
+        // returns, DSharpPlus begins dispatching events that accumulated during
+        // the gap; their handlers write raw_event_logs rows with
+        // ReceivedAtUtc = now, which would pollute InferStartupGapAsync's
+        // maxReceivedAt query and silently mask the real gap.
         try
         {
             using var scope = scopeFactory.CreateScope();
@@ -39,6 +29,21 @@ public class DiscordHostedService(
         catch (Exception ex)
         {
             logger.LogError(ex, "Downtime tracker failed during StartAsync");
+        }
+
+        logger.LogInformation("Connecting to Discord...");
+        try
+        {
+            await client.ConnectAsync();
+            logger.LogInformation("Connected to Discord as {Username}", client.CurrentUser?.Username ?? "Unknown");
+        }
+        catch (UnauthorizedException ex)
+        {
+            logger.LogCritical(ex, "Invalid Discord bot token - check Discord:Token configuration. Service will continue without Discord connection.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogCritical(ex, "Failed to connect to Discord. Service will continue without Discord connection.");
         }
     }
 
