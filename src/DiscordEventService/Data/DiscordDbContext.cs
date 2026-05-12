@@ -77,6 +77,9 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     // Bot downtime intervals
     public DbSet<BotDowntimeIntervalEntity> BotDowntimeIntervals => Set<BotDowntimeIntervalEntity>();
 
+    // Bot heartbeats (single-row liveness signal for power-loss detection)
+    public DbSet<BotHeartbeatEntity> BotHeartbeats => Set<BotHeartbeatEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
