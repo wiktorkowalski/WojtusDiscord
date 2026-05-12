@@ -90,6 +90,7 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         // Heartbeat is the primary signal: it ticks regardless of Discord activity,
         // so it survives quiet periods that would leave raw_event_logs stale.
         var lastHeartbeat = await db.BotHeartbeats
+            .OrderByDescending(h => h.LastHeartbeatUtc)
             .Select(h => (DateTime?)h.LastHeartbeatUtc)
             .FirstOrDefaultAsync();
 

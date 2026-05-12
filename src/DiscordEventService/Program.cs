@@ -117,6 +117,9 @@ builder.Services.AddSingleton(sp =>
 });
 
 // Hosted Service
+// Order is load-bearing: DiscordHostedService.StartAsync runs InferStartupGapAsync
+// (against the stale last_heartbeat_utc) before HeartbeatBackgroundService can write
+// a fresh tick that would mask the gap. Do not reorder.
 builder.Services.AddHostedService<DiscordHostedService>();
 builder.Services.AddHostedService<HeartbeatBackgroundService>();
 
