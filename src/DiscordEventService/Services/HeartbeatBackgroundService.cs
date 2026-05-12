@@ -9,6 +9,12 @@ public class HeartbeatBackgroundService(
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
 
+    // Only emit a Debug log on the first occurrence of each consecutive
+    // failure streak — avoids per-tick log spam when DSharpPlus has been
+    // disconnected for an extended period.
+    private bool _connectedLookupFailed;
+    private bool _latencyLookupFailed;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(Interval);
@@ -51,10 +57,15 @@ public class HeartbeatBackgroundService(
         try
         {
             isConnected = discordClient.AllShardsConnected;
+            _connectedLookupFailed = false;
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "AllShardsConnected lookup failed");
+            if (!_connectedLookupFailed)
+            {
+                logger.LogDebug(ex, "AllShardsConnected lookup failed (further failures suppressed until recovery)");
+                _connectedLookupFailed = true;
+            }
         }
 
         try
@@ -63,11 +74,16 @@ public class HeartbeatBackgroundService(
             if (firstGuildId != 0)
             {
                 latencyMs = (int)discordClient.GetConnectionLatency(firstGuildId).TotalMilliseconds;
+                _latencyLookupFailed = false;
             }
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "GetConnectionLatency lookup failed");
+            if (!_latencyLookupFailed)
+            {
+                logger.LogDebug(ex, "GetConnectionLatency lookup failed (further failures suppressed until recovery)");
+                _latencyLookupFailed = true;
+            }
         }
 
         return (isConnected, latencyMs);

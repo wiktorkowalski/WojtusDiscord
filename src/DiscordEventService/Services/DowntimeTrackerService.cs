@@ -79,24 +79,16 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         bool? isGatewayConnected = null,
         int? gatewayLatencyMs = null)
     {
-        // ExecuteUpdateAsync bypasses the SaveChangesAsync ITimestamped hook.
-        var updated = await db.BotHeartbeats
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(h => h.LastHeartbeatUtc, nowUtc)
-                .SetProperty(h => h.IsGatewayConnected, isGatewayConnected)
-                .SetProperty(h => h.GatewayLatencyMs, gatewayLatencyMs)
-                .SetProperty(h => h.LastUpdatedUtc, nowUtc));
-
-        if (updated == 0)
+        // Append-only: every tick is a row. "Most recent" lookups use the
+        // index on LastHeartbeatUtc. Retaining all ticks keeps a permanent
+        // uptime + gateway-state history (~6M rows/year at 5s ticks).
+        db.BotHeartbeats.Add(new BotHeartbeatEntity
         {
-            db.BotHeartbeats.Add(new BotHeartbeatEntity
-            {
-                LastHeartbeatUtc = nowUtc,
-                IsGatewayConnected = isGatewayConnected,
-                GatewayLatencyMs = gatewayLatencyMs
-            });
-            await db.SaveChangesAsync();
-        }
+            LastHeartbeatUtc = nowUtc,
+            IsGatewayConnected = isGatewayConnected,
+            GatewayLatencyMs = gatewayLatencyMs
+        });
+        await db.SaveChangesAsync();
     }
 
     public async Task<Guid?> InferStartupGapAsync()
