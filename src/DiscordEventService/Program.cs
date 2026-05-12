@@ -68,6 +68,13 @@ builder.Services.AddSingleton(sp =>
         services.AddScoped<RawEventLogService>();
         services.AddScoped<FailedEventService>();
         services.AddScoped<DowntimeTrackerService>();
+        // SocketLifecycleHandler.GuildDownloadCompleted enqueues backfills via
+        // GuildBackfillOrchestrator; it resolves from the DSharpPlus child container
+        // so the orchestrator + IBackgroundJobClient must be registered here too.
+        // JobStorage.Current is initialized by AddHangfire on the root container
+        // before the DiscordClient singleton factory runs.
+        services.AddScoped<GuildBackfillOrchestrator>();
+        services.AddSingleton<IBackgroundJobClient>(_ => new BackgroundJobClient());
         services.AddMemoryCache();
     });
 
