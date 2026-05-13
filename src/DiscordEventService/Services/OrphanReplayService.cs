@@ -1,4 +1,5 @@
 using DiscordEventService.Data;
+using DiscordEventService.Data.Entities.Events;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
@@ -17,7 +18,8 @@ public class OrphanReplayService(DiscordDbContext db, ILogger<OrphanReplayServic
         var orphans = await db.RawEventLogs
             .Where(r => r.EventType == "GuildMemberUpdated"
                 && !db.MemberEvents.Any(m =>
-                    m.UserDiscordId == r.UserDiscordId
+                    m.EventType == MemberEventType.Updated
+                    && m.UserDiscordId == r.UserDiscordId
                     && m.ReceivedAtUtc >= r.ReceivedAtUtc.AddSeconds(-5)
                     && m.ReceivedAtUtc <= r.ReceivedAtUtc.AddSeconds(5)))
             .Select(r => new { r.Id, r.UserDiscordId, r.ReceivedAtUtc, r.EventJson })
