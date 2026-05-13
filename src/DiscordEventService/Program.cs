@@ -21,6 +21,17 @@ if (File.Exists(envPath))
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Fail fast on DI misconfigurations: ValidateOnBuild constructs every
+// registered service at host build time so missing/unresolvable dependencies
+// surface immediately, not when the dependent path first fires at runtime.
+// ValidateScopes catches captive-dependency mistakes (singleton consuming
+// scoped); kept dev-only because of per-resolution overhead.
+builder.Host.UseDefaultServiceProvider(opts =>
+{
+    opts.ValidateOnBuild = true;
+    opts.ValidateScopes = builder.Environment.IsDevelopment();
+});
+
 // Configuration with validation
 builder.Services.AddOptions<DatabaseOptions>()
     .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName));
@@ -47,11 +58,14 @@ builder.Services.AddDbContext<DiscordDbContext>(options =>
 var discordToken = builder.Configuration.GetSection(DiscordOptions.SectionName).Get<DiscordOptions>()?.Token
     ?? throw new InvalidOperationException("Discord:Token is required");
 
-builder.Services.AddSingleton(sp =>
+builder.Services.AddSingleton(rootSp =>
 {
     var clientBuilder = DiscordClientBuilder.CreateDefault(discordToken, DiscordIntents.All);
 
-    // Register ASP.NET Core services in DSharpPlus's DI container
+    // Register ASP.NET Core services in DSharpPlus's DI container.
+    // NOTE: when adding a new registration here that event handlers depend on,
+    // also add the type to StartupValidator.RequiredChildContainerServices so
+    // missing registrations fail at startup instead of at runtime.
     clientBuilder.ConfigureServices(services =>
     {
         services.AddDbContext<DiscordDbContext>(options =>
@@ -69,12 +83,17 @@ builder.Services.AddSingleton(sp =>
         services.AddScoped<FailedEventService>();
         services.AddScoped<DowntimeTrackerService>();
         // SocketLifecycleHandler.GuildDownloadCompleted enqueues backfills via
-        // GuildBackfillOrchestrator; it resolves from the DSharpPlus child container
-        // so the orchestrator + IBackgroundJobClient must be registered here too.
-        // JobStorage.Current is initialized by AddHangfire on the root container
-        // before the DiscordClient singleton factory runs.
+        // GuildBackfillOrchestrator; it resolves from the DSharpPlus child
+        // container, so the orchestrator must be registered here too.
         services.AddScoped<GuildBackfillOrchestrator>();
-        services.AddSingleton<IBackgroundJobClient>(_ => new BackgroundJobClient());
+        // IBackgroundJobClient forwards to the root container's registration.
+        // Hangfire registers IBackgroundJobClient as Transient with DI-based
+        // JobStorage resolution; using `new BackgroundJobClient()` directly
+        // would read JobStorage.Current (a static set by AddHangfireServer's
+        // HostedService at app.Run() time), which is null at validator time
+        // post-Build but pre-Run. Forwarding resolves through Hangfire's
+        // DI-aware factory which works at any time after Build.
+        services.AddSingleton<IBackgroundJobClient>(_ => rootSp.GetRequiredService<IBackgroundJobClient>());
         services.AddMemoryCache();
     });
 
@@ -168,6 +187,27 @@ builder.Services.AddScoped<ReactionsBackfillJob>();
 builder.Services.AddScoped<GuildBackfillOrchestrator>();
 
 var app = builder.Build();
+
+// Validate the DSharpPlus child DI container by resolving each service that
+// event handlers depend on. The root container's ValidateOnBuild can't reach
+// the child container's IServiceProvider, so we do it explicitly here. Throws
+// at startup (before app.Run()) if anything is missing or misregistered.
+{
+    var discordClient = app.Services.GetRequiredService<DiscordClient>();
+    StartupValidator.ValidateChildContainer(
+        discordClient.ServiceProvider,
+        app.Services.GetRequiredService<ILogger<Program>>());
+}
+
+// VALIDATE_AND_EXIT=1 short-circuits startup right after DI validation.
+// Useful as a CI/local smoke test to confirm registrations are correct
+// without booting the bot.
+if (Environment.GetEnvironmentVariable("VALIDATE_AND_EXIT") == "1")
+{
+    app.Services.GetRequiredService<ILogger<Program>>()
+        .LogInformation("VALIDATE_AND_EXIT=1 set, exiting after DI validation.");
+    return;
+}
 
 // Apply migrations if configured
 var dbOptions = app.Services.GetRequiredService<IOptions<DatabaseOptions>>().Value;
