@@ -157,6 +157,7 @@ builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<RawEventLogService>();
 builder.Services.AddScoped<FailedEventService>();
 builder.Services.AddScoped<DowntimeTrackerService>();
+builder.Services.AddScoped<OrphanReplayService>();
 
 // Health checks
 builder.Services.AddHealthChecks()
