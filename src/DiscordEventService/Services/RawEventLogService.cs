@@ -1,21 +1,18 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
-using System.Text.Encodings.Web;
-using System.Text.Json;
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Serialization;
 
 namespace DiscordEventService.Services;
 
 public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogService> logger)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerSettings JsonSettings = new()
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false,
-        ReferenceHandler = ReferenceHandler.IgnoreCycles,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        MaxDepth = 32
+        ContractResolver = new CamelCasePropertyNamesContractResolver(),
+        ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
+        NullValueHandling = NullValueHandling.Ignore,
+        MaxDepth = 32,
     };
 
     /// <summary>
@@ -25,17 +22,17 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
     {
         try
         {
-            return JsonSerializer.Serialize(eventArgs, JsonOptions);
+            return JsonConvert.SerializeObject(eventArgs, JsonSettings);
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to serialize {EventType}, falling back to type info only", typeof(T).Name);
-            return JsonSerializer.Serialize(new
+            return JsonConvert.SerializeObject(new
             {
                 Error = "Serialization failed",
                 EventType = typeof(T).Name,
                 Message = ex.Message
-            }, JsonOptions);
+            }, JsonSettings);
         }
     }
 
