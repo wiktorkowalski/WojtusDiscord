@@ -13,6 +13,11 @@ public static class OpsEndpoints
             .WithName("StartDowntime")
             .Produces<DowntimeStartResponse>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest);
+
+        group.MapPost("/replay-orphans", ReplayOrphans)
+            .WithName("ReplayOrphans")
+            .Produces<OrphanReplayResult>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest);
     }
 
     private static async Task<IResult> StartDowntime(
@@ -36,6 +41,20 @@ public static class OpsEndpoints
             Type = result.ActualType.ToString(),
             Created = result.Created
         });
+    }
+
+    private static async Task<IResult> ReplayOrphans(
+        string event_type,
+        OrphanReplayService svc,
+        CancellationToken ct)
+    {
+        if (!string.Equals(event_type, "GuildMemberUpdated", StringComparison.Ordinal))
+        {
+            return Results.BadRequest(new { error = $"event_type '{event_type}' not yet supported" });
+        }
+
+        var result = await svc.ReplayMemberUpdateOrphansAsync(ct);
+        return Results.Ok(result);
     }
 }
 
