@@ -46,8 +46,8 @@ In `~/.claude/projects/-Users-wiktorkowalski-dev-WojtusDiscord/memory/MEMORY.md`
 
 ## Bot operational
 
-- Hosted at `https://wojtusdiscord.home.vicio.ovh` (admin endpoints under `/api/ops/`).
-- Prod DB at `192.168.1.12:5433` (creds in user's `.env`; container access via `docker run --rm postgres:18 psql -h 192.168.1.12 -p 5433 -U postgres -d discord_event_service`).
+- Bot reachable via the user's homelab hostname (ask the user; not in this doc — admin endpoints are currently unauthenticated and the repo is public).
+- Prod DB: ask the user for the connection string. Read-only via `psql` from a throwaway `postgres:18` container; never run smoke tests against it.
 - Container: `discord-event-service` (logs via `mcp__homelab__GetContainerLogs`).
 - Deploy: master push → GH Actions `Build and Deploy` workflow → dockge restarts the container.
 

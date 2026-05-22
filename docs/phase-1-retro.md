@@ -32,7 +32,7 @@ The pattern landed in MessageEventHandler, ThreadEventHandler (×3 paths), and P
 
 ## Backfill ergonomics
 
-- `POST /api/ops/backfill-thread-channels` is the operator's hand-tool. Idempotent (matches `WHERE channel_id IS NULL`). Returns counts so the operator can sanity-check.
+- The thread-channel backfill endpoint added in §P1.9 is the operator's hand-tool. Idempotent (matches `WHERE channel_id IS NULL`). Returns counts so the operator can sanity-check. Exact path lives in `Endpoints/OpsEndpoints.cs` and is intentionally not named here — admin endpoints are presently unauthenticated, and this is a public repo.
 - For the 2026-05-03 orphans the raw event JSON was stub-fallback (pre-#99 serializer bug — `{"error": "Serialization failed"...}`). Match by `raw_event_logs.channel_discord_id` (column, not JSON) within ±2s of the orphan's `first_seen_utc`. For future orphans with intact JSON the hybrid resolver added in #113 prefers a deterministic `event_json->'message'->>'id'` match.
 - **Placeholder policy**: only insert a `[unknown thread …]` row if Discord API returns `NotFoundException` / `UnauthorizedException`. Let transient errors propagate so the operator can retry — don't permanently materialise a 429 as a placeholder.
 - One thing we missed initially: the original §P1.9 backfill picked `db.Guilds.First()` as the placeholder's guild — fine for single-guild bot but wrong-by-construction. #113 fix derives guild per-orphan from the matched raw event's `guild_discord_id`.
