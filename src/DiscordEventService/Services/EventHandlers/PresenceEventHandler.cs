@@ -1,6 +1,7 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
@@ -28,6 +29,7 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
             using var scope = scopeFactory.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+            var userService = scope.ServiceProvider.GetRequiredService<UserService>();
 
             var guildId = args.PresenceAfter?.Guild?.Id ?? args.PresenceBefore?.Guild?.Id ?? 0;
 
@@ -79,18 +81,27 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
 
             await dbContext.PresenceEvents.AddAsync(presenceEvent);
 
-            // Track activities in ActivityEntity table (requires User to exist)
-            var user = await dbContext.Users.FirstOrDefaultAsync(u => u.DiscordId == args.User.Id);
-            if (user != null)
+            // Flush before the user upsert so its 23505 catch path (ChangeTracker.Clear)
+            // can't discard the staged raw_event_logs + presence_events rows.
+            await dbContext.SaveChangesAsync();
+
+            // Track activities in ActivityEntity — upsert the user first so we never silently
+            // skip activity tracking for unknown users (87k presence events historically).
+            await userService.UpsertUserAsync(args.User);
+            var userGuid = await dbContext.Users
+                .Where(u => u.DiscordId == args.User.Id)
+                .Select(u => u.Id)
+                .FirstOrDefaultAsync();
+
+            if (userGuid != Guid.Empty)
             {
-                await UpdateActivityTracking(dbContext, user.Id, args.User.Id, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, now);
+                await UpdateActivityTracking(dbContext, userGuid, args.User.Id, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, now);
+                await dbContext.SaveChangesAsync();
             }
             else
             {
-                logger.LogDebug("Skipping activity tracking: User {UserId} not in database", args.User.Id);
+                logger.LogWarning("Skipping activity tracking: UpsertUserAsync did not produce a User row for {UserId}", args.User.Id);
             }
-
-            await dbContext.SaveChangesAsync();
 
             logger.LogDebug("Recorded presence event for user {UserId}", args.User.Id);
         }
