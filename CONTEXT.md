@@ -2,12 +2,17 @@
 
 A bot ingesting one Discord guild's gateway events into PostgreSQL for later analysis. Optimised for completeness and faithful timelines, not throughput.
 
+> **Status of this glossary.** Some entries describe target state being landed in Phase 2 of #53 rather than currently-realised schema. Such entries are marked `[target — landing in §PX.Y]`. Code may not yet match; the glossary is the contract the migrations are converging on.
+
 ## Language
 
 ### Lifecycle states
 
-**Soft-delete**:
+**Soft-delete** `[target — landing in §P2.1 / #69]`:
 The Discord-side entity was removed (channel, role, webhook, emote, sticker, message, integration, automod rule, scheduled event, stage instance, invite). Recorded with `is_deleted bool` + `deleted_at_utc timestamptz`. Row stays for history.
+
+_Currently realised_: only `MessageEntity` has both columns. All other listed entities have `is_deleted` only; `deleted_at_utc` lands with §P2.1.
+
 _Avoid_: archived, inactive, retired.
 
 **Lifecycle fact**:
@@ -33,7 +38,9 @@ Cross-family queries join `event.X_discord_id = core_table.discord_id`. See ADR-
 
 **Core entity** (`channels`, `messages`, `users`, …): current-state snapshot maintained by upsert from events. Mutable.
 
-**Thread**: a Discord thread; stored as a row in `channels` with `type ∈ {10, 11, 12}` (`NewsThread`, `PublicThread`, `PrivateThread`). `parent_discord_id` points to the parent channel the thread was spawned from. No separate `threads` table. See ADR-0003.
+**Thread** `[target — landing in §P1.9 / #109]`: a Discord thread; stored as a row in `channels` with `type ∈ {10, 11, 12}` (`NewsThread`, `PublicThread`, `PrivateThread`). `parent_discord_id` points to the parent channel the thread was spawned from. No separate `threads` table. See ADR-0003.
+
+_Currently realised_: a single thread row already exists in `channels` (recovered by an old guild-channels backfill); `ThreadEventHandler` does not yet upsert into `channels`. §P1.9 closes that.
 
 **Parent channel** (`channels.parent_discord_id`): for a category-child channel, the category; for a thread, the channel it was spawned in. Snowflake reference (per ADR-0002 — no Guid FK between channel rows).
 
