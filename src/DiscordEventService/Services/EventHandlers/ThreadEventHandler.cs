@@ -26,6 +26,10 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
             rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ThreadCreated", e.Guild.Id, e.Thread.Id, e.Thread.CreatorId);
 
+            // Flush the raw event row before any upsert; the upsert services' 23505 catch path
+            // calls ChangeTracker.Clear() which would otherwise drop the staged raw_event_logs row.
+            await db.SaveChangesAsync();
+
             // Threads are channels (ADR-0003): upsert the thread into `channels` so messages
             // sent into it have a non-null channel_id from the first event onward.
             var guildId = await guildUpsert.UpsertGuildAsync(e.Guild);
@@ -74,6 +78,8 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
             rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ThreadUpdated", e.Guild.Id, e.ThreadAfter.Id, e.ThreadAfter.CreatorId);
 
+            await db.SaveChangesAsync();
+
             var guildId = await guildUpsert.UpsertGuildAsync(e.Guild);
             await channelUpsert.UpsertChannelAsync(e.ThreadAfter, guildId);
 
@@ -118,6 +124,8 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
 
             rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ThreadDeleted", e.Guild.Id, e.Thread.Id, e.Thread.CreatorId);
+
+            await db.SaveChangesAsync();
 
             // Mark the channel row deleted. DeletedAtUtc isn't on the schema yet (§P2.1 adds it);
             // §P2.1 will retroactively populate this and other handlers.

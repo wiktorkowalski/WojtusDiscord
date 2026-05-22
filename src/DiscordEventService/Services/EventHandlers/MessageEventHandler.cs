@@ -32,6 +32,11 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
             rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "MessageCreated", e.Guild.Id, e.Channel.Id, e.Author.Id);
 
+            // Persist the raw event row immediately. Otherwise any 23505 race inside one of the
+            // upsert services below clears the change tracker on its catch path and the staged
+            // raw_event_logs row is silently dropped along with the rolled-back insert.
+            await db.SaveChangesAsync();
+
             await userService.UpsertUserAsync(e.Author);
 
             var attachmentsJson = e.Message.Attachments.Count > 0
