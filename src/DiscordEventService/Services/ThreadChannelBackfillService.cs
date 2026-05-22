@@ -1,4 +1,5 @@
 using DiscordEventService.Data;
+using DiscordEventService.Data.Entities.Core;
 using DSharpPlus;
 using DSharpPlus.Exceptions;
 using Microsoft.EntityFrameworkCore;
@@ -11,9 +12,22 @@ public class ThreadChannelBackfillService(
     ChannelUpsertService channelUpsert,
     ILogger<ThreadChannelBackfillService> logger)
 {
-    public record Result(int OrphansScanned, int ChannelsFetched, int Placeholders, int MessagesLinked, int Unresolved);
+    public record Result(
+        int OrphansScanned,
+        int ChannelsFetched,
+        int Placeholders,
+        int MessagesLinked,
+        int Unresolved,
+        int ExistingThreadsRepaired);
 
     public async Task<Result> BackfillAsync(CancellationToken ct)
+    {
+        var orphanResult = await BackfillOrphansAsync(ct);
+        var repaired = await BackfillIncompleteThreadChannelsAsync(ct);
+        return orphanResult with { ExistingThreadsRepaired = repaired };
+    }
+
+    private async Task<Result> BackfillOrphansAsync(CancellationToken ct)
     {
         var orphans = await db.Messages
             .Where(m => m.ChannelId == null)
@@ -22,33 +36,18 @@ public class ThreadChannelBackfillService(
 
         if (orphans.Count == 0)
         {
-            return new Result(0, 0, 0, 0, 0);
+            return new Result(0, 0, 0, 0, 0, 0);
         }
 
-        // For each orphan, resolve both the missing channel_discord_id AND the guild_discord_id
-        // from the matching MessageCreated raw event (deterministic: nearest received_at_utc
-        // within ±2s). Carrying the guild_discord_id avoids the "pick an arbitrary guild" trap.
+        // Hybrid resolver: try a deterministic match first (event_json->'message'->>'id' = orphan.DiscordId),
+        // fall back to nearest-timestamp ±2s when the raw JSON is stub-fallback (pre-#99 serializer bug).
         var orphanResolution = new Dictionary<Guid, (ulong ChannelDiscordId, ulong GuildDiscordId)>();
         foreach (var orphan in orphans)
         {
-            var windowStart = orphan.FirstSeenUtc.AddSeconds(-2);
-            var windowEnd = orphan.FirstSeenUtc.AddSeconds(2);
-
-            var candidates = await db.RawEventLogs
-                .Where(r => r.EventType == "MessageCreated"
-                    && r.ReceivedAtUtc >= windowStart
-                    && r.ReceivedAtUtc <= windowEnd
-                    && r.ChannelDiscordId != null)
-                .Select(r => new { r.ChannelDiscordId, r.GuildDiscordId, r.ReceivedAtUtc })
-                .ToListAsync(ct);
-
-            var best = candidates
-                .OrderBy(c => Math.Abs((c.ReceivedAtUtc - orphan.FirstSeenUtc).TotalMilliseconds))
-                .FirstOrDefault();
-
-            if (best is { ChannelDiscordId: { } cid })
+            var resolved = await ResolveOrphanChannelAsync(orphan.DiscordId, orphan.FirstSeenUtc, ct);
+            if (resolved is var (cid, gid))
             {
-                orphanResolution[orphan.Id] = (cid, best.GuildDiscordId);
+                orphanResolution[orphan.Id] = (cid, gid);
             }
             else
             {
@@ -116,14 +115,12 @@ public class ThreadChannelBackfillService(
             }
             catch (NotFoundException)
             {
-                // Channel genuinely gone from Discord's side — placeholder is the only honest option.
                 logger.LogWarning(
                     "Discord 404 for {DiscordId}; inserting placeholder",
                     entry.ChannelDiscordId);
             }
             catch (UnauthorizedException)
             {
-                // Bot doesn't currently have permission — also placeholder territory, but log loud.
                 logger.LogWarning(
                     "Discord 403 for {DiscordId}; inserting placeholder",
                     entry.ChannelDiscordId);
@@ -152,6 +149,81 @@ public class ThreadChannelBackfillService(
         }
 
         var unresolved = orphans.Count - orphanResolution.Count;
-        return new Result(orphans.Count, fetched, placeholders, linked, unresolved);
+        return new Result(orphans.Count, fetched, placeholders, linked, unresolved, 0);
+    }
+
+    private async Task<(ulong ChannelDiscordId, ulong GuildDiscordId)?> ResolveOrphanChannelAsync(
+        ulong orphanDiscordId, DateTime orphanFirstSeenUtc, CancellationToken ct)
+    {
+        // Deterministic match via JSON message-id (post-#99 events have intact JSON).
+        var idText = orphanDiscordId.ToString();
+        var jsonMatch = await db.RawEventLogs
+            .FromSqlInterpolated($@"
+                SELECT *
+                FROM raw_event_logs
+                WHERE event_type = 'MessageCreated'
+                  AND channel_discord_id IS NOT NULL
+                  AND event_json->'message'->>'id' = {idText}
+                LIMIT 1")
+            .Select(r => new { r.ChannelDiscordId, r.GuildDiscordId })
+            .FirstOrDefaultAsync(ct);
+
+        if (jsonMatch is { ChannelDiscordId: { } jsonCid })
+        {
+            return (jsonCid, jsonMatch.GuildDiscordId);
+        }
+
+        // Fallback: nearest-timestamp match within ±2s — only path that works for pre-#99 stub JSON.
+        var windowStart = orphanFirstSeenUtc.AddSeconds(-2);
+        var windowEnd = orphanFirstSeenUtc.AddSeconds(2);
+
+        var candidates = await db.RawEventLogs
+            .Where(r => r.EventType == "MessageCreated"
+                && r.ReceivedAtUtc >= windowStart
+                && r.ReceivedAtUtc <= windowEnd
+                && r.ChannelDiscordId != null)
+            .Select(r => new { r.ChannelDiscordId, r.GuildDiscordId, r.ReceivedAtUtc })
+            .ToListAsync(ct);
+
+        var best = candidates
+            .OrderBy(c => Math.Abs((c.ReceivedAtUtc - orphanFirstSeenUtc).TotalMilliseconds))
+            .FirstOrDefault();
+
+        return best is { ChannelDiscordId: { } cid } ? (cid, best.GuildDiscordId) : null;
+    }
+
+    private async Task<int> BackfillIncompleteThreadChannelsAsync(CancellationToken ct)
+    {
+        // Any thread channel (type ∈ {10,11,12}) missing parent_discord_id, or whose name is the
+        // placeholder we insert when Discord can't fetch it — try to re-fetch via the API and refresh.
+        var incomplete = await db.Channels
+            .Where(c => (c.Type == ChannelType.NewsThread || c.Type == ChannelType.PublicThread || c.Type == ChannelType.PrivateThread)
+                && (c.ParentDiscordId == null || c.Name.StartsWith("[unknown thread")))
+            .Select(c => new { c.Id, c.DiscordId, c.GuildId })
+            .ToListAsync(ct);
+
+        int repaired = 0;
+        foreach (var thread in incomplete)
+        {
+            try
+            {
+                var live = await client.GetChannelAsync(thread.DiscordId);
+                await channelUpsert.UpsertChannelAsync(live, thread.GuildId);
+                repaired++;
+                logger.LogInformation(
+                    "Repaired thread channel {DiscordId} via Discord API as {Type} (parent={ParentId})",
+                    thread.DiscordId, live.Type, live.ParentId);
+            }
+            catch (NotFoundException)
+            {
+                logger.LogDebug("Thread {DiscordId} 404 from Discord; leaving as-is", thread.DiscordId);
+            }
+            catch (UnauthorizedException)
+            {
+                logger.LogDebug("Thread {DiscordId} 403 from Discord; leaving as-is", thread.DiscordId);
+            }
+        }
+
+        return repaired;
     }
 }
