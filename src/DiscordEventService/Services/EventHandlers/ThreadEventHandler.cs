@@ -20,9 +20,16 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+            var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+            var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
 
             rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ThreadCreated", e.Guild.Id, e.Thread.Id, e.Thread.CreatorId);
+
+            // Threads are channels (ADR-0003): upsert the thread into `channels` so messages
+            // sent into it have a non-null channel_id from the first event onward.
+            var guildId = await guildUpsert.UpsertGuildAsync(e.Guild);
+            await channelUpsert.UpsertChannelAsync(e.Thread, guildId);
 
             var threadEvent = new ThreadEventEntity
             {
@@ -61,9 +68,14 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+            var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+            var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
 
             rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ThreadUpdated", e.Guild.Id, e.ThreadAfter.Id, e.ThreadAfter.CreatorId);
+
+            var guildId = await guildUpsert.UpsertGuildAsync(e.Guild);
+            await channelUpsert.UpsertChannelAsync(e.ThreadAfter, guildId);
 
             var threadEvent = new ThreadEventEntity
             {
@@ -102,9 +114,14 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+            var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
 
             rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "ThreadDeleted", e.Guild.Id, e.Thread.Id, e.Thread.CreatorId);
+
+            // Mark the channel row deleted. DeletedAtUtc isn't on the schema yet (§P2.1 adds it);
+            // §P2.1 will retroactively populate this and other handlers.
+            await channelUpsert.MarkDeletedAsync(e.Thread.Id);
 
             var threadEvent = new ThreadEventEntity
             {

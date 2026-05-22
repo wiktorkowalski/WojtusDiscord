@@ -20,6 +20,8 @@ public static class StartupValidator
     [
         typeof(DiscordDbContext),
         typeof(UserService),
+        typeof(GuildUpsertService),
+        typeof(ChannelUpsertService),
         typeof(RawEventLogService),
         typeof(FailedEventService),
         typeof(DowntimeTrackerService),
