@@ -74,10 +74,6 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 RawEventJson = rawJson
             };
 
-            // SerializeAndLogAsync staged a RawEventLog row but did NOT save it; flush it
-            // before the strategy lambda's ChangeTracker.Clear() detaches it.
-            await db.SaveChangesAsync();
-
             // Wrap multi-row writes in a transaction so the 23505 retry path
             // (ExecuteUpdate + insert) is atomic. ExecutionStrategy is required
             // because EnableRetryOnFailure is configured on the DbContext.
