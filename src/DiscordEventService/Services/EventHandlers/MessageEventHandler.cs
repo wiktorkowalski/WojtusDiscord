@@ -25,10 +25,17 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
             using var scope = scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
             var userService = scope.ServiceProvider.GetRequiredService<UserService>();
+            var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+            var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
             var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
             rawJson = await rawEventService.SerializeAndLogAsync(
                 e, "MessageCreated", e.Guild.Id, e.Channel.Id, e.Author.Id);
+
+            // Persist the raw event row immediately. Otherwise any 23505 race inside one of the
+            // upsert services below clears the change tracker on its catch path and the staged
+            // raw_event_logs row is silently dropped along with the rolled-back insert.
+            await db.SaveChangesAsync();
 
             await userService.UpsertUserAsync(e.Author);
 
@@ -39,10 +46,15 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 ? JsonSerializer.Serialize(e.Message.Embeds)
                 : null;
 
-            // Look up related entities by DiscordId
-            var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
-            var channel = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
-            var author = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == e.Author.Id);
+            // Resolve FKs via upsert-if-missing. The 2026-05-03 incident left 69 messages with
+            // channel_id IS NULL because the prior FirstOrDefault path silently wrote null when
+            // the channel (a thread) wasn't yet in our DB. §P1.9 closes that hole.
+            var guildId = await guildUpsert.UpsertGuildAsync(e.Guild);
+            var channelId = await channelUpsert.UpsertChannelAsync(e.Channel, guildId);
+            var authorId = await db.Users
+                .Where(u => u.DiscordId == e.Author.Id)
+                .Select(u => u.Id)
+                .FirstOrDefaultAsync();
 
             MessageEventEntity NewMessageEvent() => new()
             {
@@ -62,10 +74,6 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 RawEventJson = rawJson
             };
 
-            // SerializeAndLogAsync staged a RawEventLog row but did NOT save it; flush it
-            // before the strategy lambda's ChangeTracker.Clear() detaches it.
-            await db.SaveChangesAsync();
-
             // Wrap multi-row writes in a transaction so the 23505 retry path
             // (ExecuteUpdate + insert) is atomic. ExecutionStrategy is required
             // because EnableRetryOnFailure is configured on the DbContext.
@@ -78,9 +86,9 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 db.Messages.Add(new MessageEntity
                 {
                     DiscordId = e.Message.Id,
-                    ChannelId = channel?.Id,
-                    GuildId = guild?.Id,
-                    AuthorId = author?.Id,
+                    ChannelId = channelId != Guid.Empty ? channelId : null,
+                    GuildId = guildId != Guid.Empty ? guildId : null,
+                    AuthorId = authorId != Guid.Empty ? authorId : null,
                     Content = e.Message.Content,
                     ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
                     HasAttachments = e.Message.Attachments.Count > 0,

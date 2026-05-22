@@ -18,6 +18,10 @@ public static class OpsEndpoints
             .WithName("ReplayOrphans")
             .Produces<OrphanReplayResult>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest);
+
+        group.MapPost("/backfill-thread-channels", BackfillThreadChannels)
+            .WithName("BackfillThreadChannels")
+            .Produces<ThreadChannelBackfillService.Result>(StatusCodes.Status200OK);
     }
 
     private static async Task<IResult> StartDowntime(
@@ -54,6 +58,14 @@ public static class OpsEndpoints
         }
 
         var result = await svc.ReplayMemberUpdateOrphansAsync(ct);
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> BackfillThreadChannels(
+        ThreadChannelBackfillService svc,
+        CancellationToken ct)
+    {
+        var result = await svc.BackfillAsync(ct);
         return Results.Ok(result);
     }
 }
