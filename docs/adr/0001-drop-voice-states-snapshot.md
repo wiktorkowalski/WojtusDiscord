@@ -1,0 +1,3 @@
+# Drop `voice_states` snapshot table; derive current state from events
+
+The `voice_states` table was intended as a "who is currently in voice" snapshot maintained by upsert. The upsert path has been broken since day one — 0 rows after 743 voice events landed in `voice_state_events` over 2.7 months — and nobody has missed it. We drop the table rather than repair it: current voice state is cheap to derive with `SELECT DISTINCT ON (user_id) … ORDER BY user_id, received_at_utc DESC` against the event stream, which is the system of record anyway. Removing the table also keeps the soft-delete convention (§P2.1) consistent: only entities whose Discord-side lifecycle includes "deleted" carry `is_deleted`/`deleted_at_utc`, and voice state has no such concept.
