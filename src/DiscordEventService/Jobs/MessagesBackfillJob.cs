@@ -138,10 +138,20 @@ public class MessagesBackfillJob(
 
         ulong? beforeId = checkpoint.LastProcessedId;
         bool hasMore = true;
+        int batchNum = 0;
+        int totalInserted = 0;
+        string exitReason = "unknown";
+
+        // #124 diagnostic: trace exactly why per-channel loops terminated at ~one batch
+        // in auto-startup runs but went deep when manually triggered.
+        logger.LogInformation(
+            "[bf-diag] Channel {ChannelName} ({ChannelId}) starting; initial beforeId={BeforeId}",
+            channel.Name, channel.Id, beforeId);
 
         while (hasMore)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            batchNum++;
 
             List<DiscordMessage> messages;
             try
@@ -160,20 +170,32 @@ public class MessagesBackfillJob(
             {
                 logger.LogWarning("No permission to read messages in channel {ChannelId}", channel.Id);
                 await RecordErrorAsync(db, checkpoint, ex);
+                exitReason = "UnauthorizedException";
                 break;
             }
             catch (DSharpPlus.Exceptions.NotFoundException ex)
             {
                 logger.LogWarning("Channel {ChannelId} not found (may have been deleted)", channel.Id);
                 await RecordErrorAsync(db, checkpoint, ex);
+                exitReason = "NotFoundException";
                 break;
             }
 
             if (messages.Count == 0)
             {
+                logger.LogInformation(
+                    "[bf-diag] Channel {ChannelName} batch {BatchNum}: API returned 0 messages with beforeId={BeforeId} — terminating loop",
+                    channel.Name, batchNum, beforeId);
                 hasMore = false;
+                exitReason = "API returned 0";
                 break;
             }
+
+            logger.LogInformation(
+                "[bf-diag] Channel {ChannelName} batch {BatchNum}: got {Count} messages, newest={NewestId} ({NewestTs:O}), oldest={OldestId} ({OldestTs:O})",
+                channel.Name, batchNum, messages.Count,
+                messages.First().Id, messages.First().Timestamp.UtcDateTime,
+                messages.Last().Id, messages.Last().Timestamp.UtcDateTime);
 
             foreach (var message in messages)
             {
@@ -240,6 +262,7 @@ public class MessagesBackfillJob(
                         });
 
                         checkpoint.ProcessedCount++;
+                        totalInserted++;
                     }
                 }
                 catch (Exception ex)
@@ -260,11 +283,16 @@ public class MessagesBackfillJob(
                 messages.Min(m => m.Timestamp).UtcDateTime < afterTimestampUtc.Value)
             {
                 hasMore = false;
+                exitReason = $"afterTimestampUtc reached ({afterTimestampUtc:O})";
                 break;
             }
 
             // Respect rate limits
             await Task.Delay(DelayBetweenBatches, cancellationToken);
         }
+
+        logger.LogInformation(
+            "[bf-diag] Channel {ChannelName} ({ChannelId}) done: batches={BatchCount}, inserted={Inserted}, exit_reason={ExitReason}, final_beforeId={BeforeId}",
+            channel.Name, channel.Id, batchNum, totalInserted, exitReason, beforeId);
     }
 }
