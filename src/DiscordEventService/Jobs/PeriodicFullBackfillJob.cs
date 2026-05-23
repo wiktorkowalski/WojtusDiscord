@@ -23,7 +23,13 @@ public class PeriodicFullBackfillJob(
         var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
         var orchestrator = scope.ServiceProvider.GetRequiredService<GuildBackfillOrchestrator>();
 
-        var guildIds = await db.Guilds.Select(g => g.DiscordId).ToListAsync();
+        // Only currently-joined guilds. Guilds we've left would fail at
+        // GetGuildAsync in RolesBackfillJob, marking the checkpoint Failed
+        // every Sunday.
+        var guildIds = await db.Guilds
+            .Where(g => g.LeftAtUtc == null)
+            .Select(g => g.DiscordId)
+            .ToListAsync();
         var inProgress = await db.BackfillCheckpoints
             .Where(c => c.Status == BackfillStatus.InProgress)
             .Select(c => c.GuildDiscordId)
