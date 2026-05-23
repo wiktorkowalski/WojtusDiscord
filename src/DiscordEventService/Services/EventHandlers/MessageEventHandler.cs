@@ -165,7 +165,9 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
             var message = await db.Messages.FirstOrDefaultAsync(m => m.DiscordId == e.Message.Id);
             var messageGuid = message?.Id;
 
-            var contentBefore = e.MessageBefore?.Content ?? message?.Content;
+            var contentBefore = e.MessageBefore is { } beforeForContent
+                ? beforeForContent.Content
+                : message?.Content;
             var attachmentsBeforeJson = e.MessageBefore is { } beforeForAttachments
                 ? (beforeForAttachments.Attachments.Count > 0
                     ? JsonSerializer.Serialize(beforeForAttachments.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
@@ -312,7 +314,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         }
     }
 
-        private static bool JsonEquals(string? a, string? b)
+    private static bool JsonEquals(string? a, string? b)
     {
         if (a == b) return true;
         if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;

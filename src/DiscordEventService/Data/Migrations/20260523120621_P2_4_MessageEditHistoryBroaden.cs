@@ -35,25 +35,25 @@ namespace DiscordEventService.Data.Migrations
             migrationBuilder.AddColumn<string>(
                 name: "attachments_after_json",
                 table: "message_edit_history",
-                type: "text",
+                type: "jsonb",
                 nullable: true);
 
             migrationBuilder.AddColumn<string>(
                 name: "attachments_before_json",
                 table: "message_edit_history",
-                type: "text",
+                type: "jsonb",
                 nullable: true);
 
             migrationBuilder.AddColumn<string>(
                 name: "embeds_after_json",
                 table: "message_edit_history",
-                type: "text",
+                type: "jsonb",
                 nullable: true);
 
             migrationBuilder.AddColumn<string>(
                 name: "embeds_before_json",
                 table: "message_edit_history",
-                type: "text",
+                type: "jsonb",
                 nullable: true);
 
             migrationBuilder.AddColumn<int>(

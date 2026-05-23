@@ -1065,11 +1065,11 @@ namespace DiscordEventService.Data.Migrations
                         .HasDefaultValueSql("uuidv7()");
 
                     b.Property<string>("AttachmentsAfterJson")
-                        .HasColumnType("text")
+                        .HasColumnType("jsonb")
                         .HasColumnName("attachments_after_json");
 
                     b.Property<string>("AttachmentsBeforeJson")
-                        .HasColumnType("text")
+                        .HasColumnType("jsonb")
                         .HasColumnName("attachments_before_json");
 
                     b.Property<string>("ContentAfter")
@@ -1085,11 +1085,11 @@ namespace DiscordEventService.Data.Migrations
                         .HasColumnName("edited_at_utc");
 
                     b.Property<string>("EmbedsAfterJson")
-                        .HasColumnType("text")
+                        .HasColumnType("jsonb")
                         .HasColumnName("embeds_after_json");
 
                     b.Property<string>("EmbedsBeforeJson")
-                        .HasColumnType("text")
+                        .HasColumnType("jsonb")
                         .HasColumnName("embeds_before_json");
 
                     b.Property<int?>("FlagsAfter")
