@@ -95,7 +95,7 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
 
             if (userGuid != Guid.Empty)
             {
-                await UpdateActivityTracking(dbContext, userGuid, args.User.Id, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, now);
+                await UpdateActivityTracking(dbContext, userGuid, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, now);
                 await dbContext.SaveChangesAsync();
             }
             else
@@ -119,7 +119,6 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
     private async Task UpdateActivityTracking(
         DiscordDbContext dbContext,
         Guid userGuid,
-        ulong userDiscordId,
         IReadOnlyList<DiscordActivity>? activitiesBefore,
         IReadOnlyList<DiscordActivity>? activitiesAfter,
         DateTime now)
