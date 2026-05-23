@@ -127,9 +127,7 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
 
             await db.SaveChangesAsync();
 
-            // Mark the channel row deleted. DeletedAtUtc isn't on the schema yet (§P2.1 adds it);
-            // §P2.1 will retroactively populate this and other handlers.
-            await channelUpsert.MarkDeletedAsync(e.Thread.Id);
+            await channelUpsert.MarkDeletedAsync(e.Thread.Id, DateTime.UtcNow);
 
             var threadEvent = new ThreadEventEntity
             {

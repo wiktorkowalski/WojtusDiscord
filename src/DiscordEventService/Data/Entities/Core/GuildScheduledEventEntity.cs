@@ -22,6 +22,7 @@ public class GuildScheduledEventEntity : ITimestamped
     public int UserCount { get; set; }
 
     public bool IsDeleted { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
 
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastUpdatedUtc { get; set; }

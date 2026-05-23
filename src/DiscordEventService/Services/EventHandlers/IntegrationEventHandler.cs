@@ -123,7 +123,9 @@ public class IntegrationEventHandler(IServiceScopeFactory scopeFactory, ILogger<
 
             await db.Integrations
                 .Where(i => i.DiscordId == e.IntegrationId)
-                .ExecuteUpdateAsync(s => s.SetProperty(i => i.IsDeleted, true));
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.IsDeleted, true)
+                    .SetProperty(i => i.DeletedAtUtc, (DateTime?)now));
 
             db.IntegrationEvents.Add(new IntegrationEventEntity
             {

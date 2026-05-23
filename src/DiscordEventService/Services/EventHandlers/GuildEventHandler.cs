@@ -199,6 +199,7 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
                 if (!currentEmoteIds.Contains(existingEmote.DiscordId))
                 {
                     existingEmote.IsDeleted = true;
+                    existingEmote.DeletedAtUtc ??= DateTime.UtcNow;
                 }
             }
 
@@ -224,6 +225,7 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
                     existingEmote.IsAnimated = emote.IsAnimated;
                     existingEmote.IsAvailable = emote.IsAvailable;
                     existingEmote.IsDeleted = false;
+                    existingEmote.DeletedAtUtc = null;
                 }
             }
 
@@ -280,6 +282,7 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
                 existingChannel.IsNsfw = false;
                 existingChannel.Position = channel.Position;
                 existingChannel.IsDeleted = false;
+                existingChannel.DeletedAtUtc = null;
             }
         }
 
@@ -317,6 +320,7 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
                 existingRole.IsManaged = role.IsManaged;
                 existingRole.IsMentionable = role.IsMentionable;
                 existingRole.IsDeleted = false;
+                existingRole.DeletedAtUtc = null;
             }
         }
     }

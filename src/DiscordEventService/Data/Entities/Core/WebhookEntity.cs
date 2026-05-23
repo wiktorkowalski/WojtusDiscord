@@ -11,6 +11,7 @@ public class WebhookEntity : ITimestamped
     public string? AvatarHash { get; set; }
     public int Type { get; set; }
     public bool IsDeleted { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
 
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastUpdatedUtc { get; set; }

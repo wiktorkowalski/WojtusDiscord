@@ -11,6 +11,7 @@ public class EmoteEntity : ITimestamped
     public bool IsAnimated { get; set; }
     public bool IsAvailable { get; set; }
     public bool IsDeleted { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastUpdatedUtc { get; set; }
 

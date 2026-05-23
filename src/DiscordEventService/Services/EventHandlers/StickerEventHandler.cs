@@ -61,6 +61,7 @@ public class StickerEventHandler(IServiceScopeFactory scopeFactory, ILogger<Stic
                     existing.Description = sticker.Description;
                     existing.Tags = sticker.Tags != null ? string.Join(",", sticker.Tags) : null;
                     existing.IsDeleted = false;
+                    existing.DeletedAtUtc = null;
                 }
             }
 
@@ -68,7 +69,9 @@ public class StickerEventHandler(IServiceScopeFactory scopeFactory, ILogger<Stic
             foreach (var id in removedIds)
             {
                 await db.Stickers.Where(s => s.DiscordId == id)
-                    .ExecuteUpdateAsync(s => s.SetProperty(st => st.IsDeleted, true));
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(st => st.IsDeleted, true)
+                        .SetProperty(st => st.DeletedAtUtc, (DateTime?)now));
             }
 
             var stickerEvent = new StickerEventEntity

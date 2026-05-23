@@ -169,6 +169,7 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
             if (channelEntity != null)
             {
                 channelEntity.IsDeleted = true;
+                channelEntity.DeletedAtUtc = DateTime.UtcNow;
             }
 
             var channelEvent = new ChannelEventEntity
@@ -248,5 +249,6 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
         entity.RateLimitPerUser = channel.PerUserRateLimit;
         entity.IsNsfw = channel.IsNSFW;
         entity.IsDeleted = false;
+        entity.DeletedAtUtc = null;
     }
 }

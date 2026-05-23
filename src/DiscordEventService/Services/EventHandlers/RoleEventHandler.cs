@@ -161,6 +161,7 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
             if (roleEntity != null)
             {
                 roleEntity.IsDeleted = true;
+                roleEntity.DeletedAtUtc = receivedAt;
             }
 
             var roleEvent = new RoleEventEntity
@@ -199,5 +200,6 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
         entity.IsManaged = role.IsManaged;
         entity.IsMentionable = role.IsMentionable;
         entity.IsDeleted = false;
+        entity.DeletedAtUtc = null;
     }
 }

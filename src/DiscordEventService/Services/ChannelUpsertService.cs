@@ -105,10 +105,12 @@ public class ChannelUpsertService(DiscordDbContext db, ILogger<ChannelUpsertServ
         }
     }
 
-    public async Task MarkDeletedAsync(ulong channelDiscordId)
+    public async Task MarkDeletedAsync(ulong channelDiscordId, DateTime deletedAtUtc)
     {
         await db.Channels
             .Where(c => c.DiscordId == channelDiscordId)
-            .ExecuteUpdateAsync(s => s.SetProperty(c => c.IsDeleted, true));
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(c => c.IsDeleted, true)
+                .SetProperty(c => c.DeletedAtUtc, (DateTime?)deletedAtUtc));
     }
 }

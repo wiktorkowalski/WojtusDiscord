@@ -16,6 +16,7 @@ public class IntegrationEntity : ITimestamped
     public int ExpireGracePeriod { get; set; }
     public ulong? ApplicationId { get; set; }
     public bool IsDeleted { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
 
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastUpdatedUtc { get; set; }

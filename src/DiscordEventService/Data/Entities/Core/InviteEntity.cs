@@ -16,6 +16,7 @@ public class InviteEntity : ITimestamped
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? ExpiresAtUtc { get; set; }
     public bool IsDeleted { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
 
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastUpdatedUtc { get; set; }
