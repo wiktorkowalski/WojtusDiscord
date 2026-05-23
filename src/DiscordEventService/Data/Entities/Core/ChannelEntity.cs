@@ -41,6 +41,12 @@ public class ChannelEntity : ITimestamped
 
 public enum ChannelType
 {
+    // Sentinel for Discord-side types we don't yet model. Direct casts
+    // ((ChannelType)channel.Type) preserve the raw int regardless of whether
+    // it's a known value, but downstream switches and mappers need a name to
+    // route on. Anything mapped via MapChannelType that isn't recognized
+    // becomes Unknown and logs a warning so drift is visible. See §P2.2 / #71.
+    Unknown = -1,
     Text = 0,
     Private = 1,
     Voice = 2,

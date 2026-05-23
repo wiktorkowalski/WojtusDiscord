@@ -242,7 +242,7 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
         }
     }
 
-    private static async Task UpsertChannelsAndRolesAsync(DiscordDbContext db, DiscordGuild guild, Guid guildGuid)
+    private async Task UpsertChannelsAndRolesAsync(DiscordDbContext db, DiscordGuild guild, Guid guildGuid)
     {
         // Batch load existing channels
         var channelIds = guild.Channels.Keys.ToList();
@@ -325,9 +325,14 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
         }
     }
 
-    private static ChannelType MapChannelType(DiscordChannelType discordType)
+    private ChannelType MapChannelType(DiscordChannelType discordType)
     {
-        return discordType switch
+        // Add new DSharpPlus channel types here as they appear. Anything not
+        // listed becomes Unknown (with a warning log) instead of silently
+        // collapsing to Text. The int value is still preserved at the storage
+        // layer via (ChannelType)channel.Type casts elsewhere — Unknown is
+        // just the label.
+        var mapped = discordType switch
         {
             DiscordChannelType.Text => ChannelType.Text,
             DiscordChannelType.Private => ChannelType.Private,
@@ -339,7 +344,18 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
             DiscordChannelType.PublicThread => ChannelType.PublicThread,
             DiscordChannelType.PrivateThread => ChannelType.PrivateThread,
             DiscordChannelType.Stage => ChannelType.Stage,
-            _ => ChannelType.Text
+            DiscordChannelType.GuildForum => ChannelType.Forum,
+            DiscordChannelType.GuildMedia => ChannelType.Media,
+            _ => ChannelType.Unknown
         };
+
+        if (mapped == ChannelType.Unknown)
+        {
+            logger.LogWarning(
+                "Unknown DiscordChannelType={DiscordType} (int={Int}); mapping to ChannelType.Unknown",
+                discordType, (int)discordType);
+        }
+
+        return mapped;
     }
 }
