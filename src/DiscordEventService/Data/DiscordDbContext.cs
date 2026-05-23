@@ -26,6 +26,9 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     public DbSet<AutoModRuleEntity> AutoModRules => Set<AutoModRuleEntity>();
     public DbSet<ActivityEntity> Activities => Set<ActivityEntity>();
 
+    // Member role snapshots (SCD for historical role membership)
+    public DbSet<MemberRoleSnapshotEntity> MemberRoleSnapshots => Set<MemberRoleSnapshotEntity>();
+
     // Event entities - Messages & Reactions
     public DbSet<MessageEventEntity> MessageEvents => Set<MessageEventEntity>();
     public DbSet<ReactionEventEntity> ReactionEvents => Set<ReactionEventEntity>();
@@ -643,6 +646,23 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
         // lookups via OrderByDescending(LastHeartbeatUtc).First() use this.
         modelBuilder.Entity<BotHeartbeatEntity>()
             .HasIndex(h => h.LastHeartbeatUtc);
+
+        // =====================================================
+        // MemberRoleSnapshot configuration (§P3.1)
+        // =====================================================
+        modelBuilder.Entity<MemberRoleSnapshotEntity>(b =>
+        {
+            b.HasOne(s => s.Member)
+                .WithMany()
+                .HasForeignKey(s => s.MemberId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            b.HasIndex(s => new { s.MemberId, s.RoleDiscordId, s.GrantedAtUtc });
+
+            b.HasIndex(s => new { s.MemberId, s.RoleDiscordId })
+                .IsUnique()
+                .HasFilter("revoked_at_utc IS NULL");
+        });
 
         // =====================================================
         // Soft-delete CHECK constraints (§P2.5)
