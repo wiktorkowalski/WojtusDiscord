@@ -191,6 +191,7 @@ builder.Services.AddScoped<MembersBackfillJob>();
 builder.Services.AddScoped<MessagesBackfillJob>();
 builder.Services.AddScoped<ReactionsBackfillJob>();
 builder.Services.AddScoped<GuildBackfillOrchestrator>();
+builder.Services.AddScoped<PeriodicFullBackfillJob>();
 
 var app = builder.Build();
 
@@ -228,6 +229,13 @@ app.MapHealthChecks("/health");
 
 // Hangfire dashboard
 app.MapHangfireDashboard("/hangfire");
+
+// Weekly full backfill safety net — catches anything reconnect-backfill misses
+// due to its windowed semantics. See #124 postmortem.
+RecurringJob.AddOrUpdate<PeriodicFullBackfillJob>(
+    "periodic-full-backfill",
+    j => j.ExecuteAsync(),
+    "0 3 * * 0"); // Sundays 03:00 UTC
 
 // Backfill API
 app.MapBackfillEndpoints();
