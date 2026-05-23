@@ -7,7 +7,8 @@ public enum MessageEventType
     Created = 0,
     Updated = 1,
     Deleted = 2,
-    BulkDeleted = 3
+    BulkDeleted = 3,
+    Backfilled = 4
 }
 
 public class MessageEventEntity
