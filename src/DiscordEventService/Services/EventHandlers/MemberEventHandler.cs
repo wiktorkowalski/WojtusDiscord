@@ -251,8 +251,7 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
             var closed = await db.MemberRoleSnapshots
                 .Where(s => s.MemberId == member.Id && s.RoleDiscordId == roleId && s.RevokedAtUtc == null)
                 .ExecuteUpdateAsync(s => s
-                    .SetProperty(x => x.RevokedAtUtc, eventTime)
-                    .SetProperty(x => x.SourceEventId, sourceEventId));
+                    .SetProperty(x => x.RevokedAtUtc, eventTime));
 
             if (closed == 0)
             {
