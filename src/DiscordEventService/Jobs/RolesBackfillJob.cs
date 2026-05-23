@@ -52,7 +52,8 @@ public class RolesBackfillJob(
                         .SetProperty(r => r.Permissions, permissions)
                         .SetProperty(r => r.IsManaged, role.IsManaged)
                         .SetProperty(r => r.IsMentionable, role.IsMentionable)
-                        .SetProperty(r => r.IsDeleted, false),
+                        .SetProperty(r => r.IsDeleted, false)
+                        .SetProperty(r => r.DeletedAtUtc, (DateTime?)null),
                     cancellationToken);
 
                 if (rowsAffected == 0)

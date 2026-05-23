@@ -53,7 +53,8 @@ public class ChannelsBackfillJob(
                         .SetProperty(c => c.IsNsfw, channel.IsNSFW)
                         .SetProperty(c => c.Position, channel.Position)
                         .SetProperty(c => c.ParentDiscordId, channel.ParentId)
-                        .SetProperty(c => c.IsDeleted, false),
+                        .SetProperty(c => c.IsDeleted, false)
+                        .SetProperty(c => c.DeletedAtUtc, (DateTime?)null),
                     cancellationToken);
 
                 if (rowsAffected == 0)

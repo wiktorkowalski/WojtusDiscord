@@ -51,7 +51,8 @@ public class StickersBackfillJob(
                         .SetProperty(st => st.Type, (int)sticker.Type)
                         .SetProperty(st => st.FormatType, (int)sticker.FormatType)
                         .SetProperty(st => st.IsAvailable, true)
-                        .SetProperty(st => st.IsDeleted, false),
+                        .SetProperty(st => st.IsDeleted, false)
+                        .SetProperty(st => st.DeletedAtUtc, (DateTime?)null),
                     cancellationToken);
 
                 if (rowsAffected == 0)
