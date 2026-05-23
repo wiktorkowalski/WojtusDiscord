@@ -1,7 +1,9 @@
 using DiscordEventService.Data;
+using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
@@ -146,37 +148,53 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
             if (nicknameChanged || rolesAdded.Any() || rolesRemoved.Any() || timeoutChanged
                 || avatarHashChanged || pendingChanged || premiumChanged || mutedChanged || deafenedChanged)
             {
-                var memberEvent = new MemberEventEntity
+                var strategy = db.Database.CreateExecutionStrategy();
+                await strategy.ExecuteAsync(async () =>
                 {
-                    UserDiscordId = e.Member.Id,
-                    GuildDiscordId = e.Guild.Id,
-                    EventType = MemberEventType.Updated,
-                    NicknameBefore = e.NicknameBefore,
-                    NicknameAfter = e.NicknameAfter,
-                    RolesAddedJson = rolesAdded.Any()
-                        ? JsonSerializer.Serialize(rolesAdded)
-                        : null,
-                    RolesRemovedJson = rolesRemoved.Any()
-                        ? JsonSerializer.Serialize(rolesRemoved)
-                        : null,
-                    TimeoutUntilUtc = e.CommunicationDisabledUntilAfter?.UtcDateTime,
-                    PremiumSinceBefore = premiumBefore?.UtcDateTime,
-                    PremiumSinceAfter = premiumAfter?.UtcDateTime,
-                    GuildAvatarHashBefore = e.GuildAvatarHashBefore,
-                    GuildAvatarHashAfter = e.GuildAvatarHashAfter,
-                    IsPendingBefore = e.PendingBefore,
-                    IsPendingAfter = e.PendingAfter,
-                    IsMutedBefore = mutedBefore,
-                    IsMutedAfter = mutedAfter,
-                    IsDeafenedBefore = deafenedBefore,
-                    IsDeafenedAfter = deafenedAfter,
-                    EventTimestampUtc = receivedAt,
-                    ReceivedAtUtc = receivedAt,
-                    RawEventJson = rawJson
-                };
+                    db.ChangeTracker.Clear();
+                    await using var tx = await db.Database.BeginTransactionAsync();
 
-                db.MemberEvents.Add(memberEvent);
-                await db.SaveChangesAsync();
+                    var memberEvent = new MemberEventEntity
+                    {
+                        UserDiscordId = e.Member.Id,
+                        GuildDiscordId = e.Guild.Id,
+                        EventType = MemberEventType.Updated,
+                        NicknameBefore = e.NicknameBefore,
+                        NicknameAfter = e.NicknameAfter,
+                        RolesAddedJson = rolesAdded.Any()
+                            ? JsonSerializer.Serialize(rolesAdded)
+                            : null,
+                        RolesRemovedJson = rolesRemoved.Any()
+                            ? JsonSerializer.Serialize(rolesRemoved)
+                            : null,
+                        TimeoutUntilUtc = e.CommunicationDisabledUntilAfter?.UtcDateTime,
+                        PremiumSinceBefore = premiumBefore?.UtcDateTime,
+                        PremiumSinceAfter = premiumAfter?.UtcDateTime,
+                        GuildAvatarHashBefore = e.GuildAvatarHashBefore,
+                        GuildAvatarHashAfter = e.GuildAvatarHashAfter,
+                        IsPendingBefore = e.PendingBefore,
+                        IsPendingAfter = e.PendingAfter,
+                        IsMutedBefore = mutedBefore,
+                        IsMutedAfter = mutedAfter,
+                        IsDeafenedBefore = deafenedBefore,
+                        IsDeafenedAfter = deafenedAfter,
+                        EventTimestampUtc = receivedAt,
+                        ReceivedAtUtc = receivedAt,
+                        RawEventJson = rawJson
+                    };
+
+                    db.MemberEvents.Add(memberEvent);
+                    await db.SaveChangesAsync();
+
+                    if ((rolesAdded.Any() || rolesRemoved.Any())
+                        && e.RolesBefore is not null && e.RolesAfter is not null)
+                    {
+                        await MaintainRoleSnapshotsAsync(db, e.Member.Id, e.Guild.Id,
+                            rolesAdded, rolesRemoved, receivedAt, memberEvent.Id);
+                    }
+
+                    await tx.CommitAsync();
+                });
             }
         }
         catch (Exception ex)
@@ -187,6 +205,59 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
             await failedEventService.RecordFailureAsync(
                 "GuildMemberUpdated", nameof(MemberEventHandler), ex,
                 e.Guild?.Id, null, e.Member.Id, rawJson);
+        }
+    }
+
+    private async Task MaintainRoleSnapshotsAsync(
+        DiscordDbContext db, ulong userDiscordId, ulong guildDiscordId,
+        List<ulong> rolesAdded, List<ulong> rolesRemoved,
+        DateTime eventTime, Guid sourceEventId)
+    {
+        var member = await db.Members
+            .Where(m => m.User.DiscordId == userDiscordId && m.Guild.DiscordId == guildDiscordId)
+            .Select(m => new { m.Id })
+            .FirstOrDefaultAsync();
+
+        if (member is null)
+        {
+            logger.LogWarning("Cannot maintain role snapshots: member not found for User={UserDiscordId} Guild={GuildDiscordId}",
+                userDiscordId, guildDiscordId);
+            return;
+        }
+
+        foreach (var roleId in rolesAdded)
+        {
+            try
+            {
+                db.MemberRoleSnapshots.Add(new MemberRoleSnapshotEntity
+                {
+                    MemberId = member.Id,
+                    RoleDiscordId = roleId,
+                    GrantedAtUtc = eventTime,
+                    SourceEventId = sourceEventId
+                });
+                await db.SaveChangesAsync();
+            }
+            catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+            {
+                db.ChangeTracker.Clear();
+                logger.LogDebug("Duplicate role snapshot skipped: Member={MemberId} Role={RoleDiscordId}",
+                    member.Id, roleId);
+            }
+        }
+
+        foreach (var roleId in rolesRemoved)
+        {
+            var closed = await db.MemberRoleSnapshots
+                .Where(s => s.MemberId == member.Id && s.RoleDiscordId == roleId && s.RevokedAtUtc == null)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(x => x.RevokedAtUtc, eventTime));
+
+            if (closed == 0)
+            {
+                logger.LogDebug("No open role snapshot to close: Member={MemberId} Role={RoleDiscordId}",
+                    member.Id, roleId);
+            }
         }
     }
 
