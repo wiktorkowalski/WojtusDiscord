@@ -1,5 +1,3 @@
-using DiscordEventService.Data.Entities.Core;
-
 namespace DiscordEventService.Data.Entities.Events;
 
 public enum RoleEventType
@@ -12,8 +10,6 @@ public enum RoleEventType
 public class RoleEventEntity
 {
     public Guid Id { get; set; }
-    public Guid? RoleId { get; set; }
-    public Guid? GuildId { get; set; }
     public ulong RoleDiscordId { get; set; }
     public ulong GuildDiscordId { get; set; }
     public RoleEventType EventType { get; set; }
@@ -29,8 +25,4 @@ public class RoleEventEntity
 
     /// <summary>Raw serialized event args from DSharpPlus for debugging</summary>
     public string? RawEventJson { get; set; }
-
-    // Navigation properties (soft relations - no FK constraint)
-    public GuildEntity? Guild { get; set; }
-    public RoleEntity? Role { get; set; }
 }

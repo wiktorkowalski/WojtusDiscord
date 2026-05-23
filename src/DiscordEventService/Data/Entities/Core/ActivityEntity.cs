@@ -10,12 +10,8 @@ public class ActivityEntity
     public Guid UserId { get; set; }
     public UserEntity? User { get; set; }
 
-    public ulong UserDiscordId { get; set; }
-
     public Guid? GuildId { get; set; }
     public GuildEntity? Guild { get; set; }
-
-    public ulong? GuildDiscordId { get; set; }
 
     // Activity type: Playing, Streaming, Listening, Watching, Custom, Competing
     [Required]

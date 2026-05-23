@@ -1,5 +1,3 @@
-using DiscordEventService.Data.Entities.Events;
-
 namespace DiscordEventService.Data.Entities.Core;
 
 public class IntegrationEntity : ITimestamped
@@ -23,7 +21,4 @@ public class IntegrationEntity : ITimestamped
 
     // Navigation properties - Core
     public GuildEntity Guild { get; set; } = null!;
-
-    // Navigation properties - Events (soft relations)
-    public ICollection<IntegrationEventEntity> IntegrationEvents { get; set; } = [];
 }

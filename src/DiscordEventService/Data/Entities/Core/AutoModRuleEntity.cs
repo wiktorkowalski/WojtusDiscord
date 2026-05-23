@@ -1,5 +1,3 @@
-using DiscordEventService.Data.Entities.Events;
-
 namespace DiscordEventService.Data.Entities.Core;
 
 public class AutoModRuleEntity : ITimestamped
@@ -25,8 +23,4 @@ public class AutoModRuleEntity : ITimestamped
     // Navigation properties - Core
     public GuildEntity? Guild { get; set; }
     public UserEntity? Creator { get; set; }
-
-    // Navigation properties - Events (soft relations)
-    public ICollection<AutoModEventEntity> AutoModEvents { get; set; } = [];
-    public ICollection<AutoModRuleEventEntity> AutoModRuleEvents { get; set; } = [];
 }

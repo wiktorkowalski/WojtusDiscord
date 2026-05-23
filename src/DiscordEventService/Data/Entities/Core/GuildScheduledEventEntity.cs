@@ -1,5 +1,3 @@
-using DiscordEventService.Data.Entities.Events;
-
 namespace DiscordEventService.Data.Entities.Core;
 
 public class GuildScheduledEventEntity : ITimestamped
@@ -31,7 +29,4 @@ public class GuildScheduledEventEntity : ITimestamped
     public GuildEntity Guild { get; set; } = null!;
     public ChannelEntity? Channel { get; set; }
     public UserEntity? Creator { get; set; }
-
-    // Navigation properties - Events (soft relations)
-    public ICollection<ScheduledEventEntity> ScheduledEvents { get; set; } = [];
 }

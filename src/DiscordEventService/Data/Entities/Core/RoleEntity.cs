@@ -1,5 +1,4 @@
 using DiscordEventService.Data;
-using DiscordEventService.Data.Entities.Events;
 
 namespace DiscordEventService.Data.Entities.Core;
 
@@ -22,7 +21,4 @@ public class RoleEntity : ITimestamped
 
     // Navigation properties - Core
     public GuildEntity Guild { get; set; } = null!;
-
-    // Navigation properties - Events (soft relations)
-    public ICollection<RoleEventEntity> RoleEvents { get; set; } = [];
 }

@@ -1,5 +1,3 @@
-using DiscordEventService.Data.Entities.Core;
-
 namespace DiscordEventService.Data.Entities.Events;
 
 public enum MessageEventType
@@ -14,10 +12,6 @@ public enum MessageEventType
 public class MessageEventEntity
 {
     public Guid Id { get; set; }
-    public Guid? MessageId { get; set; }
-    public Guid? ChannelId { get; set; }
-    public Guid? AuthorId { get; set; }
-    public Guid? GuildId { get; set; }
     public ulong MessageDiscordId { get; set; }
     public ulong ChannelDiscordId { get; set; }
     public ulong? AuthorDiscordId { get; set; }
@@ -35,10 +29,4 @@ public class MessageEventEntity
 
     /// <summary>Raw serialized event args from DSharpPlus for debugging</summary>
     public string? RawEventJson { get; set; }
-
-    // Navigation properties (soft relations - no FK constraint)
-    public GuildEntity? Guild { get; set; }
-    public ChannelEntity? Channel { get; set; }
-    public UserEntity? Author { get; set; }
-    public MessageEntity? Message { get; set; }
 }

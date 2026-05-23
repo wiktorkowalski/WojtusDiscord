@@ -1,5 +1,3 @@
-using DiscordEventService.Data.Entities.Events;
-
 namespace DiscordEventService.Data.Entities.Core;
 
 public class MessageEntity : ITimestamped
@@ -32,9 +30,6 @@ public class MessageEntity : ITimestamped
     public ChannelEntity Channel { get; set; } = null!;
     public UserEntity Author { get; set; } = null!;
 
-    // Navigation properties - Events (soft relations)
-    public ICollection<MessageEventEntity> MessageEvents { get; set; } = [];
-    public ICollection<ReactionEventEntity> ReactionEvents { get; set; } = [];
-    public ICollection<PollEventEntity> PollEvents { get; set; } = [];
+    // EditHistory uses Guid MessageId FK; kept after §P2.3
     public ICollection<MessageEditHistoryEntity> EditHistory { get; set; } = [];
 }
