@@ -46,7 +46,8 @@ public class EmojisBackfillJob(
                         .SetProperty(e => e.Name, emoji.Name)
                         .SetProperty(e => e.IsAnimated, emoji.IsAnimated)
                         .SetProperty(e => e.IsAvailable, emoji.IsAvailable)
-                        .SetProperty(e => e.IsDeleted, false),
+                        .SetProperty(e => e.IsDeleted, false)
+                        .SetProperty(e => e.DeletedAtUtc, (DateTime?)null),
                     cancellationToken);
 
                 if (rowsAffected == 0)

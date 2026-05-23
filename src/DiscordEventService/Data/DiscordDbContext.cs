@@ -860,6 +860,37 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
         // lookups via OrderByDescending(LastHeartbeatUtc).First() use this.
         modelBuilder.Entity<BotHeartbeatEntity>()
             .HasIndex(h => h.LastHeartbeatUtc);
+
+        // =====================================================
+        // Soft-delete CHECK constraints (§P2.5)
+        // is_deleted ↔ deleted_at_utc IS NOT NULL
+        // =====================================================
+        const string softDeleteCheck =
+            "(is_deleted = false AND deleted_at_utc IS NULL) OR " +
+            "(is_deleted = true AND deleted_at_utc IS NOT NULL)";
+
+        modelBuilder.Entity<MessageEntity>()
+            .ToTable(t => t.HasCheckConstraint("ck_messages_soft_delete", softDeleteCheck));
+        modelBuilder.Entity<ChannelEntity>()
+            .ToTable(t => t.HasCheckConstraint("ck_channels_soft_delete", softDeleteCheck));
+        modelBuilder.Entity<RoleEntity>()
+            .ToTable(t => t.HasCheckConstraint("ck_roles_soft_delete", softDeleteCheck));
+        modelBuilder.Entity<WebhookEntity>()
+            .ToTable(t => t.HasCheckConstraint("ck_webhooks_soft_delete", softDeleteCheck));
+        modelBuilder.Entity<EmoteEntity>()
+            .ToTable(t => t.HasCheckConstraint("ck_emotes_soft_delete", softDeleteCheck));
+        modelBuilder.Entity<StickerEntity>()
+            .ToTable(t => t.HasCheckConstraint("ck_stickers_soft_delete", softDeleteCheck));
+        modelBuilder.Entity<IntegrationEntity>()
+            .ToTable(t => t.HasCheckConstraint("ck_integrations_soft_delete", softDeleteCheck));
+        modelBuilder.Entity<AutoModRuleEntity>()
+            .ToTable(t => t.HasCheckConstraint("ck_auto_mod_rules_soft_delete", softDeleteCheck));
+        modelBuilder.Entity<GuildScheduledEventEntity>()
+            .ToTable(t => t.HasCheckConstraint("ck_guild_scheduled_events_soft_delete", softDeleteCheck));
+        modelBuilder.Entity<StageInstanceEntity>()
+            .ToTable(t => t.HasCheckConstraint("ck_stage_instances_soft_delete", softDeleteCheck));
+        modelBuilder.Entity<InviteEntity>()
+            .ToTable(t => t.HasCheckConstraint("ck_invites_soft_delete", softDeleteCheck));
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
