@@ -2,6 +2,7 @@ using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using DSharpPlus;
+using DSharpPlus.Exceptions;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -16,12 +17,11 @@ public class MemberRoleSnapshotBackfillService(
         int EventsProcessed,
         int SnapshotsCreated,
         int SnapshotsClosed,
-        int CurrentRolesSeeded,
-        int Errors);
+        int CurrentRolesSeeded);
 
     public async Task<Result> BackfillAsync(CancellationToken ct)
     {
-        int eventsProcessed = 0, created = 0, closed = 0, errors = 0;
+        int eventsProcessed = 0, created = 0, closed = 0;
 
         var memberLookup = await db.Members
             .Include(m => m.User)
@@ -102,7 +102,7 @@ public class MemberRoleSnapshotBackfillService(
 
         var seeded = await SeedCurrentRolesAsync(memberLookup, ct);
 
-        return new Result(eventsProcessed, created, closed, seeded, errors);
+        return new Result(eventsProcessed, created, closed, seeded);
     }
 
     private async Task<int> SeedCurrentRolesAsync(
@@ -116,7 +116,17 @@ public class MemberRoleSnapshotBackfillService(
         {
             ct.ThrowIfCancellationRequested();
 
-            var guild = await discordClient.GetGuildAsync(guildDiscordId);
+            DSharpPlus.Entities.DiscordGuild guild;
+            try
+            {
+                guild = await discordClient.GetGuildAsync(guildDiscordId);
+            }
+            catch (Exception ex) when (ex is NotFoundException or UnauthorizedException)
+            {
+                logger.LogWarning(ex, "Cannot fetch guild {Guild} for role seeding — skipping", guildDiscordId);
+                continue;
+            }
+
             var members = new List<DSharpPlus.Entities.DiscordMember>();
             await foreach (var member in guild.GetAllMembersAsync())
             {
