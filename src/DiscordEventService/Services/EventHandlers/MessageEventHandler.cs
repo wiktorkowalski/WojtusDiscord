@@ -166,11 +166,15 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
             var messageGuid = message?.Id;
 
             var contentBefore = e.MessageBefore?.Content ?? message?.Content;
-            var attachmentsBeforeJson = e.MessageBefore?.Attachments.Count > 0
-                ? JsonSerializer.Serialize(e.MessageBefore.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
+            var attachmentsBeforeJson = e.MessageBefore is { } beforeForAttachments
+                ? (beforeForAttachments.Attachments.Count > 0
+                    ? JsonSerializer.Serialize(beforeForAttachments.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
+                    : null)
                 : message?.AttachmentsJson;
-            var embedsBeforeJson = e.MessageBefore?.Embeds.Count > 0
-                ? JsonSerializer.Serialize(e.MessageBefore.Embeds)
+            var embedsBeforeJson = e.MessageBefore is { } beforeForEmbeds
+                ? (beforeForEmbeds.Embeds.Count > 0
+                    ? JsonSerializer.Serialize(beforeForEmbeds.Embeds)
+                    : null)
                 : message?.EmbedsJson;
             int? flagsBefore = e.MessageBefore is { } before
                 ? (int)(before.Flags ?? 0)
