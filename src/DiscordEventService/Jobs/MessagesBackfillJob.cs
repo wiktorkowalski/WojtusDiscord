@@ -211,6 +211,7 @@ public class MessagesBackfillJob(
                             HasEmbeds = message.Embeds.Count > 0,
                             AttachmentsJson = attachmentsJson,
                             EmbedsJson = embedsJson,
+                            Flags = (int)(message.Flags ?? 0),
                             CreatedAtUtc = message.Timestamp.UtcDateTime,
                             EditedAtUtc = message.EditedTimestamp?.UtcDateTime
                         });
