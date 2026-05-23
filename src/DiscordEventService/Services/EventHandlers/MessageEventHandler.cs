@@ -95,6 +95,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     HasEmbeds = e.Message.Embeds.Count > 0,
                     AttachmentsJson = attachmentsJson,
                     EmbedsJson = embedsJson,
+                    Flags = (int)(e.Message.Flags ?? 0),
                     CreatedAtUtc = e.Message.Timestamp.UtcDateTime
                 });
                 db.MessageEvents.Add(NewMessageEvent());
@@ -115,6 +116,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                             .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
                             .SetProperty(m => m.AttachmentsJson, attachmentsJson)
                             .SetProperty(m => m.EmbedsJson, embedsJson)
+                            .SetProperty(m => m.Flags, (int)(e.Message.Flags ?? 0))
                             .SetProperty(m => m.ReplyToDiscordId, e.Message.ReferencedMessage?.Id));
                     db.MessageEvents.Add(NewMessageEvent());
                     await db.SaveChangesAsync();
@@ -155,10 +157,23 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 ? JsonSerializer.Serialize(e.Message.Embeds)
                 : null;
             var editedAt = e.Message.EditedTimestamp?.UtcDateTime ?? receivedAt;
+            var flagsAfter = (int)(e.Message.Flags ?? 0);
 
-            // Get the message entity for FK reference (read-only snapshot, used inside the tx)
+            // Get the message entity for FK reference + before-state fallback when DSharpPlus
+            // didn't deliver e.MessageBefore (uncached message edit).
             var message = await db.Messages.FirstOrDefaultAsync(m => m.DiscordId == e.Message.Id);
             var messageGuid = message?.Id;
+
+            var contentBefore = e.MessageBefore?.Content ?? message?.Content;
+            var attachmentsBeforeJson = e.MessageBefore?.Attachments.Count > 0
+                ? JsonSerializer.Serialize(e.MessageBefore.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
+                : message?.AttachmentsJson;
+            var embedsBeforeJson = e.MessageBefore?.Embeds.Count > 0
+                ? JsonSerializer.Serialize(e.MessageBefore.Embeds)
+                : message?.EmbedsJson;
+            int? flagsBefore = e.MessageBefore is { } before
+                ? (int)(before.Flags ?? 0)
+                : message?.Flags;
 
             // SerializeAndLogAsync staged a RawEventLog row but did NOT save it; flush it
             // before the strategy lambda's ChangeTracker.Clear() detaches it.
@@ -180,6 +195,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                         .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
                         .SetProperty(m => m.AttachmentsJson, attachmentsJson)
                         .SetProperty(m => m.EmbedsJson, embedsJson)
+                        .SetProperty(m => m.Flags, flagsAfter)
                         .SetProperty(m => m.EditedAtUtc, editedAt));
 
                 db.MessageEvents.Add(new MessageEventEntity
@@ -201,14 +217,26 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     RawEventJson = rawJson
                 });
 
-                if (e.MessageBefore?.Content != e.Message.Content)
+                var contentChanged = contentBefore != e.Message.Content;
+                var attachmentsChanged = attachmentsBeforeJson != attachmentsJson;
+                var embedsChanged = embedsBeforeJson != embedsJson;
+                var flagsChanged = flagsBefore != flagsAfter;
+
+                if (messageGuid is Guid mid &&
+                    (contentChanged || attachmentsChanged || embedsChanged || flagsChanged))
                 {
                     db.MessageEditHistory.Add(new MessageEditHistoryEntity
                     {
-                        MessageId = messageGuid,
+                        MessageId = mid,
                         MessageDiscordId = e.Message.Id,
-                        ContentBefore = e.MessageBefore?.Content,
+                        ContentBefore = contentBefore,
                         ContentAfter = e.Message.Content,
+                        AttachmentsBeforeJson = attachmentsBeforeJson,
+                        AttachmentsAfterJson = attachmentsJson,
+                        EmbedsBeforeJson = embedsBeforeJson,
+                        EmbedsAfterJson = embedsJson,
+                        FlagsBefore = flagsBefore,
+                        FlagsAfter = flagsAfter,
                         EditedAtUtc = editedAt,
                         RecordedAtUtc = receivedAt
                     });

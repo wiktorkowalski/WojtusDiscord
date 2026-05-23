@@ -17,6 +17,7 @@ public class MessageEntity : ITimestamped
     public bool HasEmbeds { get; set; }
     public string? AttachmentsJson { get; set; }
     public string? EmbedsJson { get; set; }
+    public int Flags { get; set; }
 
     public DateTime CreatedAtUtc { get; set; }
     public DateTime? EditedAtUtc { get; set; }

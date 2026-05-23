@@ -474,7 +474,9 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
         // MessageEditHistory soft relation
         modelBuilder.Entity<MessageEditHistoryEntity>()
             .HasOne(e => e.Message).WithMany(m => m.EditHistory)
-            .HasForeignKey(e => e.MessageId).OnDelete(DeleteBehavior.NoAction);
+            .HasForeignKey(e => e.MessageId)
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Restrict);
 
         // Activity indexes
         modelBuilder.Entity<ActivityEntity>()
