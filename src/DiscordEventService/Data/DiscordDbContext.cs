@@ -180,6 +180,27 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
             .Property(m => m.EmbedsJson)
             .HasColumnType("jsonb");
 
+        // §P2.6 / #74: messages.guild_id/channel_id/author_id are NOT NULL FKs,
+        // but we never hard-delete guilds/channels/users — they soft-delete with
+        // is_deleted+deleted_at_utc. Restrict (vs the EF default of Cascade)
+        // protects message history if a delete ever does happen (would surface
+        // as a constraint violation rather than silently nuking messages).
+        modelBuilder.Entity<MessageEntity>()
+            .HasOne(m => m.Guild)
+            .WithMany()
+            .HasForeignKey(m => m.GuildId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MessageEntity>()
+            .HasOne(m => m.Channel)
+            .WithMany()
+            .HasForeignKey(m => m.ChannelId)
+            .OnDelete(DeleteBehavior.Restrict);
+        modelBuilder.Entity<MessageEntity>()
+            .HasOne(m => m.Author)
+            .WithMany()
+            .HasForeignKey(m => m.AuthorId)
+            .OnDelete(DeleteBehavior.Restrict);
+
         // Message event indexes
         modelBuilder.Entity<MessageEventEntity>()
             .HasIndex(m => new { m.GuildDiscordId, m.EventTimestampUtc });
