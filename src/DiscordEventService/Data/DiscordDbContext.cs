@@ -474,7 +474,21 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
         // MessageEditHistory soft relation
         modelBuilder.Entity<MessageEditHistoryEntity>()
             .HasOne(e => e.Message).WithMany(m => m.EditHistory)
-            .HasForeignKey(e => e.MessageId).OnDelete(DeleteBehavior.NoAction);
+            .HasForeignKey(e => e.MessageId)
+            .IsRequired()
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Match the jsonb column type used on messages.attachments_json /
+        // messages.embeds_json so the history columns are queryable with the
+        // same operators (and no ::jsonb casts needed).
+        modelBuilder.Entity<MessageEditHistoryEntity>()
+            .Property(m => m.AttachmentsBeforeJson).HasColumnType("jsonb");
+        modelBuilder.Entity<MessageEditHistoryEntity>()
+            .Property(m => m.AttachmentsAfterJson).HasColumnType("jsonb");
+        modelBuilder.Entity<MessageEditHistoryEntity>()
+            .Property(m => m.EmbedsBeforeJson).HasColumnType("jsonb");
+        modelBuilder.Entity<MessageEditHistoryEntity>()
+            .Property(m => m.EmbedsAfterJson).HasColumnType("jsonb");
 
         // Activity indexes
         modelBuilder.Entity<ActivityEntity>()

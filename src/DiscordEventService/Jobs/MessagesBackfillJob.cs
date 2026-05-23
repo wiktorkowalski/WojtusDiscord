@@ -196,7 +196,7 @@ public class MessagesBackfillJob(
                             ? JsonSerializer.Serialize(message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
                             : null;
                         var embedsJson = message.Embeds.Count > 0
-                            ? JsonSerializer.Serialize(message.Embeds.Select(e => new { e.Title, e.Description, e.Url }))
+                            ? JsonSerializer.Serialize(message.Embeds)
                             : null;
 
                         db.Messages.Add(new MessageEntity
@@ -211,6 +211,7 @@ public class MessagesBackfillJob(
                             HasEmbeds = message.Embeds.Count > 0,
                             AttachmentsJson = attachmentsJson,
                             EmbedsJson = embedsJson,
+                            Flags = (int)(message.Flags ?? 0),
                             CreatedAtUtc = message.Timestamp.UtcDateTime,
                             EditedAtUtc = message.EditedTimestamp?.UtcDateTime
                         });

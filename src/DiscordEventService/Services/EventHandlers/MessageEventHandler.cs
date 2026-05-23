@@ -6,6 +6,7 @@ using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace DiscordEventService.Services.EventHandlers;
 
@@ -95,6 +96,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     HasEmbeds = e.Message.Embeds.Count > 0,
                     AttachmentsJson = attachmentsJson,
                     EmbedsJson = embedsJson,
+                    Flags = (int)(e.Message.Flags ?? 0),
                     CreatedAtUtc = e.Message.Timestamp.UtcDateTime
                 });
                 db.MessageEvents.Add(NewMessageEvent());
@@ -115,6 +117,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                             .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
                             .SetProperty(m => m.AttachmentsJson, attachmentsJson)
                             .SetProperty(m => m.EmbedsJson, embedsJson)
+                            .SetProperty(m => m.Flags, (int)(e.Message.Flags ?? 0))
                             .SetProperty(m => m.ReplyToDiscordId, e.Message.ReferencedMessage?.Id));
                     db.MessageEvents.Add(NewMessageEvent());
                     await db.SaveChangesAsync();
@@ -155,10 +158,29 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 ? JsonSerializer.Serialize(e.Message.Embeds)
                 : null;
             var editedAt = e.Message.EditedTimestamp?.UtcDateTime ?? receivedAt;
+            var flagsAfter = (int)(e.Message.Flags ?? 0);
 
-            // Get the message entity for FK reference (read-only snapshot, used inside the tx)
+            // Get the message entity for FK reference + before-state fallback when DSharpPlus
+            // didn't deliver e.MessageBefore (uncached message edit).
             var message = await db.Messages.FirstOrDefaultAsync(m => m.DiscordId == e.Message.Id);
             var messageGuid = message?.Id;
+
+            var contentBefore = e.MessageBefore is { } beforeForContent
+                ? beforeForContent.Content
+                : message?.Content;
+            var attachmentsBeforeJson = e.MessageBefore is { } beforeForAttachments
+                ? (beforeForAttachments.Attachments.Count > 0
+                    ? JsonSerializer.Serialize(beforeForAttachments.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
+                    : null)
+                : message?.AttachmentsJson;
+            var embedsBeforeJson = e.MessageBefore is { } beforeForEmbeds
+                ? (beforeForEmbeds.Embeds.Count > 0
+                    ? JsonSerializer.Serialize(beforeForEmbeds.Embeds)
+                    : null)
+                : message?.EmbedsJson;
+            int? flagsBefore = e.MessageBefore is { } before
+                ? (int)(before.Flags ?? 0)
+                : message?.Flags;
 
             // SerializeAndLogAsync staged a RawEventLog row but did NOT save it; flush it
             // before the strategy lambda's ChangeTracker.Clear() detaches it.
@@ -180,6 +202,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                         .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
                         .SetProperty(m => m.AttachmentsJson, attachmentsJson)
                         .SetProperty(m => m.EmbedsJson, embedsJson)
+                        .SetProperty(m => m.Flags, flagsAfter)
                         .SetProperty(m => m.EditedAtUtc, editedAt));
 
                 db.MessageEvents.Add(new MessageEventEntity
@@ -201,14 +224,29 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     RawEventJson = rawJson
                 });
 
-                if (e.MessageBefore?.Content != e.Message.Content)
+                var contentChanged = contentBefore != e.Message.Content;
+                // jsonb columns get PG-normalized on storage; freshly-serialized strings
+                // (from e.Message or e.MessageBefore) won't byte-match the DB-loaded value
+                // even when the underlying data is identical. Structural compare.
+                var attachmentsChanged = !JsonEquals(attachmentsBeforeJson, attachmentsJson);
+                var embedsChanged = !JsonEquals(embedsBeforeJson, embedsJson);
+                var flagsChanged = flagsBefore != flagsAfter;
+
+                if (messageGuid is Guid mid &&
+                    (contentChanged || attachmentsChanged || embedsChanged || flagsChanged))
                 {
                     db.MessageEditHistory.Add(new MessageEditHistoryEntity
                     {
-                        MessageId = messageGuid,
+                        MessageId = mid,
                         MessageDiscordId = e.Message.Id,
-                        ContentBefore = e.MessageBefore?.Content,
+                        ContentBefore = contentBefore,
                         ContentAfter = e.Message.Content,
+                        AttachmentsBeforeJson = attachmentsBeforeJson,
+                        AttachmentsAfterJson = attachmentsJson,
+                        EmbedsBeforeJson = embedsBeforeJson,
+                        EmbedsAfterJson = embedsJson,
+                        FlagsBefore = flagsBefore,
+                        FlagsAfter = flagsAfter,
                         EditedAtUtc = editedAt,
                         RecordedAtUtc = receivedAt
                     });
@@ -274,6 +312,13 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 "MessageDeleted", nameof(MessageEventHandler), ex,
                 e.Guild?.Id, e.Channel.Id, e.Message.Author?.Id);
         }
+    }
+
+    private static bool JsonEquals(string? a, string? b)
+    {
+        if (a == b) return true;
+        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+        return JsonNode.DeepEquals(JsonNode.Parse(a), JsonNode.Parse(b));
     }
 
     public async Task HandleEventAsync(DiscordClient sender, MessagesBulkDeletedEventArgs e)
