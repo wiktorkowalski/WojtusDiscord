@@ -215,6 +215,17 @@ public class MessagesBackfillJob(
                     var exists = await db.Messages.AnyAsync(m => m.DiscordId == message.Id, cancellationToken);
                     if (!exists)
                     {
+                        // §P2.6: MessageEntity.ChannelId/GuildId/AuthorId are NOT NULL. Skip
+                        // if any required FK row hasn't been backfilled yet — next run of
+                        // the corresponding backfill job + the next MessagesBackfillJob will
+                        // pick it up.
+                        if (channelEntity is null || authorEntity is null)
+                        {
+                            logger.LogWarning(
+                                "Skipping backfill insert for message {MessageId}: channelEntity={ChannelPresent} authorEntity={AuthorPresent}",
+                                message.Id, channelEntity is not null, authorEntity is not null);
+                            continue;
+                        }
                         var attachmentsJson = message.Attachments.Count > 0
                             ? JsonSerializer.Serialize(message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
                             : null;
@@ -225,9 +236,9 @@ public class MessagesBackfillJob(
                         db.Messages.Add(new MessageEntity
                         {
                             DiscordId = message.Id,
-                            ChannelId = channelEntity?.Id,
+                            ChannelId = channelEntity.Id,
                             GuildId = guildEntity.Id,
-                            AuthorId = authorEntity?.Id,
+                            AuthorId = authorEntity.Id,
                             Content = message.Content,
                             ReplyToDiscordId = message.ReferencedMessage?.Id,
                             HasAttachments = message.Attachments.Count > 0,

@@ -49,13 +49,30 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
 
             // Resolve FKs via upsert-if-missing. The 2026-05-03 incident left 69 messages with
             // channel_id IS NULL because the prior FirstOrDefault path silently wrote null when
-            // the channel (a thread) wasn't yet in our DB. §P1.9 closes that hole.
+            // the channel (a thread) wasn't yet in our DB. §P1.9 closes that hole; §P2.6 (#74)
+            // makes the FKs NOT NULL so any regression in the upsert services becomes a loud
+            // skip + FailedEvent instead of a silent NULL FK row.
             var guildId = await guildUpsert.UpsertGuildAsync(e.Guild);
             var channelId = await channelUpsert.UpsertChannelAsync(e.Channel, guildId);
             var authorId = await db.Users
                 .Where(u => u.DiscordId == e.Author.Id)
                 .Select(u => u.Id)
                 .FirstOrDefaultAsync();
+
+            if (guildId == Guid.Empty || channelId == Guid.Empty || authorId == Guid.Empty)
+            {
+                logger.LogError(
+                    "MessageCreated: could not resolve required FKs for MessageId={MessageId} (guildId={GuildId} channelId={ChannelId} authorId={AuthorId}); skipping insert",
+                    e.Message.Id, guildId, channelId, authorId);
+                using var fkFailScope = scopeFactory.CreateScope();
+                var failedEventService = fkFailScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "MessageCreated", nameof(MessageEventHandler),
+                    new InvalidOperationException(
+                        $"Required FK not resolved: guild={guildId} channel={channelId} author={authorId}"),
+                    e.Guild?.Id, e.Channel.Id, e.Author.Id, rawJson);
+                return;
+            }
 
             MessageEventEntity NewMessageEvent() => new()
             {
@@ -87,9 +104,9 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 db.Messages.Add(new MessageEntity
                 {
                     DiscordId = e.Message.Id,
-                    ChannelId = channelId != Guid.Empty ? channelId : null,
-                    GuildId = guildId != Guid.Empty ? guildId : null,
-                    AuthorId = authorId != Guid.Empty ? authorId : null,
+                    ChannelId = channelId,
+                    GuildId = guildId,
+                    AuthorId = authorId,
                     Content = e.Message.Content,
                     ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
                     HasAttachments = e.Message.Attachments.Count > 0,
