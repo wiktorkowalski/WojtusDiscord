@@ -135,7 +135,9 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
 
             await db.AutoModRules
                 .Where(r => r.DiscordId == e.Rule.Id)
-                .ExecuteUpdateAsync(s => s.SetProperty(r => r.IsDeleted, true));
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.IsDeleted, true)
+                    .SetProperty(r => r.DeletedAtUtc, (DateTime?)now));
 
             db.AutoModRuleEvents.Add(new AutoModRuleEventEntity
             {

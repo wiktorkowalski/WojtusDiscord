@@ -50,6 +50,7 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
             inviteEntity.CreatedAtUtc = invite.CreatedAt.UtcDateTime;
             inviteEntity.ExpiresAtUtc = invite.MaxAge > 0 ? invite.CreatedAt.AddSeconds(invite.MaxAge).UtcDateTime : null;
             inviteEntity.IsDeleted = false;
+            inviteEntity.DeletedAtUtc = null;
 
             var eventEntity = new InviteEventEntity
             {
@@ -97,7 +98,9 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
             // Mark invite as deleted
             await db.Invites
                 .Where(i => i.Code == e.Invite.Code)
-                .ExecuteUpdateAsync(s => s.SetProperty(i => i.IsDeleted, true));
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(i => i.IsDeleted, true)
+                    .SetProperty(i => i.DeletedAtUtc, (DateTime?)now));
 
             var eventEntity = new InviteEventEntity
             {

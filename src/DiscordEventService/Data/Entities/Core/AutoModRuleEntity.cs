@@ -17,6 +17,7 @@ public class AutoModRuleEntity : ITimestamped
     public string? ExemptRolesJson { get; set; }
     public string? ExemptChannelsJson { get; set; }
     public bool IsDeleted { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
 
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastUpdatedUtc { get; set; }

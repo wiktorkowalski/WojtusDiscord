@@ -59,6 +59,7 @@ public class EmojiEventHandler(IServiceScopeFactory scopeFactory, ILogger<EmojiE
                     existing.IsAnimated = emoji.IsAnimated;
                     existing.IsAvailable = emoji.IsAvailable;
                     existing.IsDeleted = false;
+                    existing.DeletedAtUtc = null;
                 }
             }
 
@@ -66,7 +67,9 @@ public class EmojiEventHandler(IServiceScopeFactory scopeFactory, ILogger<EmojiE
             foreach (var id in removedIds)
             {
                 await db.Emotes.Where(em => em.DiscordId == id)
-                    .ExecuteUpdateAsync(s => s.SetProperty(em => em.IsDeleted, true));
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(em => em.IsDeleted, true)
+                        .SetProperty(em => em.DeletedAtUtc, (DateTime?)now));
             }
 
             var emojiEvent = new EmojiEventEntity

@@ -1,10 +1,8 @@
 using DiscordEventService.Data;
-using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Services;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
-using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
@@ -24,9 +22,6 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
 
             var rawJson = await rawEventService.SerializeAndLogAsync(
                 args, "VoiceStateUpdated", args.Guild.Id, args.After?.Channel?.Id, args.User.Id);
-
-            // Upsert VoiceStateEntity
-            await UpsertVoiceStateAsync(db, args, now);
 
             var voiceEvent = new VoiceStateEventEntity
             {
@@ -75,90 +70,6 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
             await failedEventService.RecordFailureAsync(
                 "VoiceStateUpdated", nameof(VoiceEventHandler), ex,
                 args.Guild.Id, args.After?.Channel?.Id, args.User.Id);
-        }
-    }
-
-    private async Task UpsertVoiceStateAsync(DiscordDbContext db, VoiceStateUpdatedEventArgs args, DateTime now)
-    {
-        // Look up Guid FKs
-        var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == args.User.Id);
-        var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == args.Guild.Id);
-
-        if (user == null || guild == null)
-        {
-            logger.LogWarning("Cannot upsert voice state: User={UserFound} Guild={GuildFound} for UserId={UserId} GuildId={GuildId}",
-                user != null, guild != null, args.User.Id, args.Guild.Id);
-            return;
-        }
-
-        var afterState = args.After;
-        if (afterState is null || afterState.Channel is null)
-        {
-            // User left voice - remove their voice state
-            await db.VoiceStates
-                .Where(v => v.UserId == user.Id && v.GuildId == guild.Id)
-                .ExecuteDeleteAsync();
-            return;
-        }
-
-        var channel = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == afterState.Channel.Id);
-
-        var rowsAffected = await db.VoiceStates
-            .Where(v => v.UserId == user.Id && v.GuildId == guild.Id)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(v => v.ChannelId, channel != null ? channel.Id : (Guid?)null)
-                .SetProperty(v => v.SessionId, afterState.SessionId)
-                .SetProperty(v => v.IsSelfMuted, afterState.IsSelfMuted)
-                .SetProperty(v => v.IsSelfDeafened, afterState.IsSelfDeafened)
-                .SetProperty(v => v.IsServerMuted, afterState.IsServerMuted)
-                .SetProperty(v => v.IsServerDeafened, afterState.IsServerDeafened)
-                .SetProperty(v => v.IsStreaming, afterState.IsSelfStream)
-                .SetProperty(v => v.IsVideo, afterState.IsSelfVideo)
-                .SetProperty(v => v.IsSuppressed, afterState.IsSuppressed)
-                .SetProperty(v => v.LastUpdatedUtc, now));
-
-        if (rowsAffected == 0)
-        {
-            try
-            {
-                db.VoiceStates.Add(new VoiceStateEntity
-                {
-                    UserId = user.Id,
-                    GuildId = guild.Id,
-                    ChannelId = channel?.Id,
-                    SessionId = afterState.SessionId,
-                    IsSelfMuted = afterState.IsSelfMuted,
-                    IsSelfDeafened = afterState.IsSelfDeafened,
-                    IsServerMuted = afterState.IsServerMuted,
-                    IsServerDeafened = afterState.IsServerDeafened,
-                    IsStreaming = afterState.IsSelfStream,
-                    IsVideo = afterState.IsSelfVideo,
-                    IsSuppressed = afterState.IsSuppressed,
-                    JoinedChannelAtUtc = now
-                });
-                await db.SaveChangesAsync();
-            }
-            catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-            {
-                // Unique constraint violation - race condition, another request inserted first
-                logger.LogDebug("Voice state race condition for User={UserId} Guild={GuildId}, retrying with update", user.Id, guild.Id);
-                db.ChangeTracker.Clear();
-
-                // Retry with update to ensure latest data is persisted
-                await db.VoiceStates
-                    .Where(v => v.UserId == user.Id && v.GuildId == guild.Id)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(v => v.ChannelId, channel != null ? channel.Id : (Guid?)null)
-                        .SetProperty(v => v.SessionId, afterState.SessionId)
-                        .SetProperty(v => v.IsSelfMuted, afterState.IsSelfMuted)
-                        .SetProperty(v => v.IsSelfDeafened, afterState.IsSelfDeafened)
-                        .SetProperty(v => v.IsServerMuted, afterState.IsServerMuted)
-                        .SetProperty(v => v.IsServerDeafened, afterState.IsServerDeafened)
-                        .SetProperty(v => v.IsStreaming, afterState.IsSelfStream)
-                        .SetProperty(v => v.IsVideo, afterState.IsSelfVideo)
-                        .SetProperty(v => v.IsSuppressed, afterState.IsSuppressed)
-                        .SetProperty(v => v.LastUpdatedUtc, now));
-            }
         }
     }
 

@@ -126,7 +126,9 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
             // Mark as deleted
             await db.GuildScheduledEvents
                 .Where(s => s.DiscordId == e.Event.Id)
-                .ExecuteUpdateAsync(s => s.SetProperty(x => x.IsDeleted, true));
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(x => x.IsDeleted, true)
+                    .SetProperty(x => x.DeletedAtUtc, (DateTime?)now));
 
             var entity = new ScheduledEventEntity
             {
@@ -311,5 +313,6 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
         existing.ScheduledEndTimeUtc = evt.EndTime?.UtcDateTime;
         existing.EntityMetadataLocation = evt.Metadata?.Location;
         existing.IsDeleted = false;
+        existing.DeletedAtUtc = null;
     }
 }

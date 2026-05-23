@@ -126,7 +126,9 @@ public class StageInstanceEventHandler(IServiceScopeFactory scopeFactory, ILogge
 
             await db.StageInstances
                 .Where(s => s.DiscordId == e.StageInstance.Id)
-                .ExecuteUpdateAsync(s => s.SetProperty(st => st.IsDeleted, true));
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(st => st.IsDeleted, true)
+                    .SetProperty(st => st.DeletedAtUtc, (DateTime?)now));
 
             db.StageInstanceEvents.Add(new StageInstanceEventEntity
             {

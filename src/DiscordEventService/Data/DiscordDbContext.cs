@@ -17,7 +17,6 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     public DbSet<StickerEntity> Stickers => Set<StickerEntity>();
     public DbSet<MessageEntity> Messages => Set<MessageEntity>();
     public DbSet<MessageEditHistoryEntity> MessageEditHistory => Set<MessageEditHistoryEntity>();
-    public DbSet<VoiceStateEntity> VoiceStates => Set<VoiceStateEntity>();
     public DbSet<InviteEntity> Invites => Set<InviteEntity>();
     public DbSet<BanEntity> Bans => Set<BanEntity>();
     public DbSet<GuildScheduledEventEntity> GuildScheduledEvents => Set<GuildScheduledEventEntity>();
@@ -142,10 +141,6 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
         // Member unique constraint (user + guild combination)
         modelBuilder.Entity<MemberEntity>()
             .HasIndex(m => new { m.UserId, m.GuildId }).IsUnique();
-
-        // VoiceState unique constraint (user + guild combination)
-        modelBuilder.Entity<VoiceStateEntity>()
-            .HasIndex(v => new { v.UserId, v.GuildId }).IsUnique();
 
         // Invite Code index
         modelBuilder.Entity<InviteEntity>()
@@ -304,13 +299,6 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
 
         modelBuilder.Entity<TypingEventEntity>()
             .HasIndex(t => t.UserDiscordId);
-
-        // VoiceState indexes
-        modelBuilder.Entity<VoiceStateEntity>()
-            .HasIndex(v => v.GuildId);
-
-        modelBuilder.Entity<VoiceStateEntity>()
-            .HasIndex(v => v.ChannelId);
 
         // Invite indexes
         modelBuilder.Entity<InviteEntity>()

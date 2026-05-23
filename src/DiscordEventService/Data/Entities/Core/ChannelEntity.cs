@@ -18,6 +18,7 @@ public class ChannelEntity : ITimestamped
     public bool IsNsfw { get; set; }
     public int Position { get; set; }
     public bool IsDeleted { get; set; }
+    public DateTime? DeletedAtUtc { get; set; }
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastUpdatedUtc { get; set; }
 
