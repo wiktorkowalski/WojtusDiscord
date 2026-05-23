@@ -1,12 +1,9 @@
-using DiscordEventService.Data.Entities.Core;
-
 namespace DiscordEventService.Data.Entities.Events;
 
 public class ThreadSyncEventEntity
 {
     public Guid Id { get; set; }
 
-    public Guid? GuildId { get; set; }
     public ulong GuildDiscordId { get; set; }
 
     // Number of threads synced
@@ -26,7 +23,4 @@ public class ThreadSyncEventEntity
 
     /// <summary>Raw serialized event args from DSharpPlus for debugging</summary>
     public string? RawEventJson { get; set; }
-
-    // Navigation property
-    public GuildEntity? Guild { get; set; }
 }

@@ -1,5 +1,4 @@
 using DiscordEventService.Data;
-using DiscordEventService.Data.Entities.Events;
 
 namespace DiscordEventService.Data.Entities.Core;
 
@@ -24,19 +23,6 @@ public class ChannelEntity : ITimestamped
 
     // Navigation properties - Core
     public GuildEntity Guild { get; set; } = null!;
-
-    // Navigation properties - Events (soft relations)
-    public ICollection<MessageEventEntity> MessageEvents { get; set; } = [];
-    public ICollection<ReactionEventEntity> ReactionEvents { get; set; } = [];
-    public ICollection<ChannelEventEntity> ChannelEvents { get; set; } = [];
-    public ICollection<PollEventEntity> PollEvents { get; set; } = [];
-    public ICollection<PinEventEntity> PinEvents { get; set; } = [];
-    public ICollection<WebhookEventEntity> WebhookEvents { get; set; } = [];
-    public ICollection<StageInstanceEventEntity> StageInstanceEvents { get; set; } = [];
-    public ICollection<AutoModEventEntity> AutoModEvents { get; set; } = [];
-    public ICollection<InviteEventEntity> InviteEvents { get; set; } = [];
-    public ICollection<TypingEventEntity> TypingEvents { get; set; } = [];
-    public ICollection<ScheduledEventEntity> ScheduledEvents { get; set; } = [];
 }
 
 public enum ChannelType

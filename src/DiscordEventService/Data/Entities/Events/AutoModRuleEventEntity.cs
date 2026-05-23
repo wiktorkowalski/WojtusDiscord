@@ -1,5 +1,3 @@
-using DiscordEventService.Data.Entities.Core;
-
 namespace DiscordEventService.Data.Entities.Events;
 
 public enum AutoModRuleEventType
@@ -12,9 +10,6 @@ public enum AutoModRuleEventType
 public class AutoModRuleEventEntity
 {
     public Guid Id { get; set; }
-    public Guid? RuleId { get; set; }
-    public Guid? GuildId { get; set; }
-    public Guid? CreatorId { get; set; }
     public ulong RuleDiscordId { get; set; }
     public ulong GuildDiscordId { get; set; }
     public ulong CreatorDiscordId { get; set; }
@@ -30,9 +25,4 @@ public class AutoModRuleEventEntity
 
     /// <summary>Raw serialized event args from DSharpPlus for debugging</summary>
     public string? RawEventJson { get; set; }
-
-    // Navigation properties (soft relations - no FK constraint)
-    public GuildEntity? Guild { get; set; }
-    public UserEntity? Creator { get; set; }
-    public AutoModRuleEntity? Rule { get; set; }
 }

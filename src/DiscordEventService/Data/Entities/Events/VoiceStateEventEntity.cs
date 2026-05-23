@@ -1,5 +1,3 @@
-using DiscordEventService.Data.Entities.Core;
-
 namespace DiscordEventService.Data.Entities.Events;
 
 public enum VoiceEventType
@@ -13,10 +11,6 @@ public enum VoiceEventType
 public class VoiceStateEventEntity
 {
     public Guid Id { get; set; }
-    public Guid? UserId { get; set; }
-    public Guid? GuildId { get; set; }
-    public Guid? ChannelIdBefore { get; set; }
-    public Guid? ChannelIdAfter { get; set; }
     public ulong UserDiscordId { get; set; }
     public ulong GuildDiscordId { get; set; }
     public ulong? ChannelDiscordIdBefore { get; set; }
@@ -48,10 +42,4 @@ public class VoiceStateEventEntity
 
     /// <summary>Raw serialized event args from DSharpPlus for debugging</summary>
     public string? RawEventJson { get; set; }
-
-    // Navigation properties (soft relations - no FK constraint)
-    public GuildEntity? Guild { get; set; }
-    public UserEntity? User { get; set; }
-    public ChannelEntity? ChannelBefore { get; set; }
-    public ChannelEntity? ChannelAfter { get; set; }
 }

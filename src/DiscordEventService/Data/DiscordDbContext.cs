@@ -513,10 +513,10 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
 
         // Activity indexes
         modelBuilder.Entity<ActivityEntity>()
-            .HasIndex(a => a.UserDiscordId);
+            .HasIndex(a => a.UserId);
 
         modelBuilder.Entity<ActivityEntity>()
-            .HasIndex(a => new { a.UserDiscordId, a.IsActive });
+            .HasIndex(a => new { a.UserId, a.IsActive });
 
         modelBuilder.Entity<ActivityEntity>()
             .HasIndex(a => a.ActivityType);
@@ -545,11 +545,6 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
         modelBuilder.Entity<VoiceServerEventEntity>()
             .HasIndex(v => new { v.GuildDiscordId, v.EventTimestampUtc });
 
-        // VoiceServerEvent soft relation
-        modelBuilder.Entity<VoiceServerEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.VoiceServerEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-
         // GuildMembersChunkEvent indexes and JSONB
         modelBuilder.Entity<GuildMembersChunkEventEntity>()
             .HasIndex(m => new { m.GuildDiscordId, m.EventTimestampUtc });
@@ -566,11 +561,6 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
             .Property(m => m.NotFoundIdsJson)
             .HasColumnType("jsonb");
 
-        // GuildMembersChunkEvent soft relation
-        modelBuilder.Entity<GuildMembersChunkEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.GuildMembersChunkEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-
         // ThreadSyncEvent indexes and JSONB
         modelBuilder.Entity<ThreadSyncEventEntity>()
             .HasIndex(t => new { t.GuildDiscordId, t.EventTimestampUtc });
@@ -586,248 +576,6 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
         modelBuilder.Entity<ThreadSyncEventEntity>()
             .Property(t => t.MembersJson)
             .HasColumnType("jsonb");
-
-        // ThreadSyncEvent soft relation
-        modelBuilder.Entity<ThreadSyncEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.ThreadSyncEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-
-        // =====================================================
-        // SOFT RELATIONS - Navigation properties without FK constraints
-        // These allow .Include() queries but don't create DB constraints
-        // =====================================================
-
-        // MessageEventEntity soft relations
-        modelBuilder.Entity<MessageEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.MessageEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<MessageEventEntity>()
-            .HasOne(e => e.Channel).WithMany(c => c.MessageEvents)
-            .HasForeignKey(e => e.ChannelId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<MessageEventEntity>()
-            .HasOne(e => e.Author).WithMany(u => u.MessageEvents)
-            .HasForeignKey(e => e.AuthorId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<MessageEventEntity>()
-            .HasOne(e => e.Message).WithMany(m => m.MessageEvents)
-            .HasForeignKey(e => e.MessageId).OnDelete(DeleteBehavior.NoAction);
-
-        // ReactionEventEntity soft relations
-        modelBuilder.Entity<ReactionEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.ReactionEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<ReactionEventEntity>()
-            .HasOne(e => e.Channel).WithMany(c => c.ReactionEvents)
-            .HasForeignKey(e => e.ChannelId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<ReactionEventEntity>()
-            .HasOne(e => e.User).WithMany(u => u.ReactionEvents)
-            .HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<ReactionEventEntity>()
-            .HasOne(e => e.Message).WithMany(m => m.ReactionEvents)
-            .HasForeignKey(e => e.MessageId).OnDelete(DeleteBehavior.NoAction);
-
-        // VoiceStateEventEntity soft relations
-        modelBuilder.Entity<VoiceStateEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.VoiceStateEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<VoiceStateEventEntity>()
-            .HasOne(e => e.User).WithMany(u => u.VoiceStateEvents)
-            .HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<VoiceStateEventEntity>()
-            .HasOne(e => e.ChannelBefore).WithMany()
-            .HasForeignKey(e => e.ChannelIdBefore).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<VoiceStateEventEntity>()
-            .HasOne(e => e.ChannelAfter).WithMany()
-            .HasForeignKey(e => e.ChannelIdAfter).OnDelete(DeleteBehavior.NoAction);
-
-        // PresenceEventEntity soft relations
-        modelBuilder.Entity<PresenceEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.PresenceEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<PresenceEventEntity>()
-            .HasOne(e => e.User).WithMany(u => u.PresenceEvents)
-            .HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.NoAction);
-
-        // MemberEventEntity soft relations
-        modelBuilder.Entity<MemberEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.MemberEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<MemberEventEntity>()
-            .HasOne(e => e.User).WithMany(u => u.MemberEvents)
-            .HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.NoAction);
-
-        // BanEventEntity soft relations
-        modelBuilder.Entity<BanEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.BanEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<BanEventEntity>()
-            .HasOne(e => e.User).WithMany(u => u.BanEvents)
-            .HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.NoAction);
-
-        // ChannelEventEntity soft relations
-        modelBuilder.Entity<ChannelEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.ChannelEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<ChannelEventEntity>()
-            .HasOne(e => e.Channel).WithMany(c => c.ChannelEvents)
-            .HasForeignKey(e => e.ChannelId).OnDelete(DeleteBehavior.NoAction);
-
-        // RoleEventEntity soft relations
-        modelBuilder.Entity<RoleEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.RoleEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<RoleEventEntity>()
-            .HasOne(e => e.Role).WithMany(r => r.RoleEvents)
-            .HasForeignKey(e => e.RoleId).OnDelete(DeleteBehavior.NoAction);
-
-        // ThreadEventEntity soft relations
-        modelBuilder.Entity<ThreadEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.ThreadEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<ThreadEventEntity>()
-            .HasOne(e => e.Thread).WithMany()
-            .HasForeignKey(e => e.ThreadId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<ThreadEventEntity>()
-            .HasOne(e => e.ParentChannel).WithMany()
-            .HasForeignKey(e => e.ParentChannelId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<ThreadEventEntity>()
-            .HasOne(e => e.Owner).WithMany()
-            .HasForeignKey(e => e.OwnerId).OnDelete(DeleteBehavior.NoAction);
-
-        // GuildEventEntity soft relations
-        modelBuilder.Entity<GuildEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.GuildEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-
-        // EmojiEventEntity soft relations
-        modelBuilder.Entity<EmojiEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.EmojiEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-
-        // StickerEventEntity soft relations
-        modelBuilder.Entity<StickerEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.StickerEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-
-        // StageInstanceEventEntity soft relations
-        modelBuilder.Entity<StageInstanceEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.StageInstanceEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<StageInstanceEventEntity>()
-            .HasOne(e => e.Channel).WithMany(c => c.StageInstanceEvents)
-            .HasForeignKey(e => e.ChannelId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<StageInstanceEventEntity>()
-            .HasOne(e => e.StageInstance).WithMany(s => s.StageInstanceEvents)
-            .HasForeignKey(e => e.StageInstanceId).OnDelete(DeleteBehavior.NoAction);
-
-        // PollEventEntity soft relations
-        modelBuilder.Entity<PollEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.PollEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<PollEventEntity>()
-            .HasOne(e => e.Channel).WithMany(c => c.PollEvents)
-            .HasForeignKey(e => e.ChannelId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<PollEventEntity>()
-            .HasOne(e => e.User).WithMany(u => u.PollEvents)
-            .HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<PollEventEntity>()
-            .HasOne(e => e.Message).WithMany(m => m.PollEvents)
-            .HasForeignKey(e => e.MessageId).OnDelete(DeleteBehavior.NoAction);
-
-        // PinEventEntity soft relations
-        modelBuilder.Entity<PinEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.PinEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<PinEventEntity>()
-            .HasOne(e => e.Channel).WithMany(c => c.PinEvents)
-            .HasForeignKey(e => e.ChannelId).OnDelete(DeleteBehavior.NoAction);
-
-        // WebhookEventEntity soft relations
-        modelBuilder.Entity<WebhookEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.WebhookEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<WebhookEventEntity>()
-            .HasOne(e => e.Channel).WithMany(c => c.WebhookEvents)
-            .HasForeignKey(e => e.ChannelId).OnDelete(DeleteBehavior.NoAction);
-
-        // IntegrationEventEntity soft relations
-        modelBuilder.Entity<IntegrationEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.IntegrationEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<IntegrationEventEntity>()
-            .HasOne(e => e.Integration).WithMany(i => i.IntegrationEvents)
-            .HasForeignKey(e => e.IntegrationId).OnDelete(DeleteBehavior.NoAction);
-
-        // AutoModEventEntity soft relations
-        modelBuilder.Entity<AutoModEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.AutoModEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<AutoModEventEntity>()
-            .HasOne(e => e.Channel).WithMany(c => c.AutoModEvents)
-            .HasForeignKey(e => e.ChannelId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<AutoModEventEntity>()
-            .HasOne(e => e.User).WithMany(u => u.AutoModEvents)
-            .HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<AutoModEventEntity>()
-            .HasOne(e => e.Rule).WithMany(r => r.AutoModEvents)
-            .HasForeignKey(e => e.RuleId).OnDelete(DeleteBehavior.NoAction);
-
-        // AutoModRuleEventEntity soft relations
-        modelBuilder.Entity<AutoModRuleEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.AutoModRuleEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<AutoModRuleEventEntity>()
-            .HasOne(e => e.Creator).WithMany()
-            .HasForeignKey(e => e.CreatorId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<AutoModRuleEventEntity>()
-            .HasOne(e => e.Rule).WithMany(r => r.AutoModRuleEvents)
-            .HasForeignKey(e => e.RuleId).OnDelete(DeleteBehavior.NoAction);
-
-        // ScheduledEventEntity soft relations
-        modelBuilder.Entity<ScheduledEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.ScheduledEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<ScheduledEventEntity>()
-            .HasOne(e => e.Channel).WithMany(c => c.ScheduledEvents)
-            .HasForeignKey(e => e.ChannelId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<ScheduledEventEntity>()
-            .HasOne(e => e.Creator).WithMany()
-            .HasForeignKey(e => e.CreatorId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<ScheduledEventEntity>()
-            .HasOne(e => e.User).WithMany()
-            .HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<ScheduledEventEntity>()
-            .HasOne(e => e.ScheduledEvent).WithMany(s => s.ScheduledEvents)
-            .HasForeignKey(e => e.EventId).OnDelete(DeleteBehavior.NoAction);
-
-        // InviteEventEntity soft relations
-        modelBuilder.Entity<InviteEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.InviteEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<InviteEventEntity>()
-            .HasOne(e => e.Channel).WithMany(c => c.InviteEvents)
-            .HasForeignKey(e => e.ChannelId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<InviteEventEntity>()
-            .HasOne(e => e.Inviter).WithMany(u => u.InviteEvents)
-            .HasForeignKey(e => e.InviterId).OnDelete(DeleteBehavior.NoAction);
-
-        // TypingEventEntity soft relations
-        modelBuilder.Entity<TypingEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.TypingEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<TypingEventEntity>()
-            .HasOne(e => e.Channel).WithMany(c => c.TypingEvents)
-            .HasForeignKey(e => e.ChannelId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<TypingEventEntity>()
-            .HasOne(e => e.User).WithMany(u => u.TypingEvents)
-            .HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.NoAction);
-
-        // AuditLogEventEntity soft relations
-        modelBuilder.Entity<AuditLogEventEntity>()
-            .HasOne(e => e.Guild).WithMany(g => g.AuditLogEvents)
-            .HasForeignKey(e => e.GuildId).OnDelete(DeleteBehavior.NoAction);
-        modelBuilder.Entity<AuditLogEventEntity>()
-            .HasOne(e => e.User).WithMany(u => u.AuditLogEvents)
-            .HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.NoAction);
 
         // =====================================================
         // RawEventLog configuration (dedicated event JSON storage)

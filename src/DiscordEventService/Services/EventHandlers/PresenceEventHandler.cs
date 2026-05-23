@@ -136,7 +136,7 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
         foreach (var ended in endedActivities)
         {
             var existingActivity = await dbContext.Activities
-                .Where(a => a.UserDiscordId == userDiscordId && a.IsActive && a.Name == ended.Name && a.ActivityType == (int)ended.ActivityType)
+                .Where(a => a.UserId == userGuid && a.IsActive && a.Name == ended.Name && a.ActivityType == (int)ended.ActivityType)
                 .FirstOrDefaultAsync();
 
             if (existingActivity != null)
@@ -153,7 +153,6 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
             var activity = new ActivityEntity
             {
                 UserId = userGuid,
-                UserDiscordId = userDiscordId,
                 ActivityType = (int)started.ActivityType,
                 Name = started.Name,
                 StreamUrl = started.StreamUrl,
@@ -178,7 +177,7 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
         foreach (var current in continuingActivities)
         {
             var existingActivity = await dbContext.Activities
-                .Where(a => a.UserDiscordId == userDiscordId && a.IsActive && a.Name == current.Name && a.ActivityType == (int)current.ActivityType)
+                .Where(a => a.UserId == userGuid && a.IsActive && a.Name == current.Name && a.ActivityType == (int)current.ActivityType)
                 .FirstOrDefaultAsync();
 
             if (existingActivity != null)

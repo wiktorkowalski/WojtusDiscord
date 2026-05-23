@@ -1,5 +1,3 @@
-using DiscordEventService.Data.Entities.Events;
-
 namespace DiscordEventService.Data.Entities.Core;
 
 public class StageInstanceEntity : ITimestamped
@@ -19,7 +17,4 @@ public class StageInstanceEntity : ITimestamped
     // Navigation properties - Core
     public GuildEntity Guild { get; set; } = null!;
     public ChannelEntity Channel { get; set; } = null!;
-
-    // Navigation properties - Events (soft relations)
-    public ICollection<StageInstanceEventEntity> StageInstanceEvents { get; set; } = [];
 }
