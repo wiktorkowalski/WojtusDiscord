@@ -6,6 +6,7 @@ using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace DiscordEventService.Services.EventHandlers;
 
@@ -218,8 +219,11 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 });
 
                 var contentChanged = contentBefore != e.Message.Content;
-                var attachmentsChanged = attachmentsBeforeJson != attachmentsJson;
-                var embedsChanged = embedsBeforeJson != embedsJson;
+                // jsonb columns get PG-normalized on storage; freshly-serialized strings
+                // (from e.Message or e.MessageBefore) won't byte-match the DB-loaded value
+                // even when the underlying data is identical. Structural compare.
+                var attachmentsChanged = !JsonEquals(attachmentsBeforeJson, attachmentsJson);
+                var embedsChanged = !JsonEquals(embedsBeforeJson, embedsJson);
                 var flagsChanged = flagsBefore != flagsAfter;
 
                 if (messageGuid is Guid mid &&
@@ -302,6 +306,13 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 "MessageDeleted", nameof(MessageEventHandler), ex,
                 e.Guild?.Id, e.Channel.Id, e.Message.Author?.Id);
         }
+    }
+
+        private static bool JsonEquals(string? a, string? b)
+    {
+        if (a == b) return true;
+        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
+        return JsonNode.DeepEquals(JsonNode.Parse(a), JsonNode.Parse(b));
     }
 
     public async Task HandleEventAsync(DiscordClient sender, MessagesBulkDeletedEventArgs e)
