@@ -1,6 +1,7 @@
 using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Services;
 using DSharpPlus;
 using DSharpPlus.Entities;
@@ -214,6 +215,28 @@ public class MessagesBackfillJob(
                             Flags = (int)(message.Flags ?? 0),
                             CreatedAtUtc = message.Timestamp.UtcDateTime,
                             EditedAtUtc = message.EditedTimestamp?.UtcDateTime
+                        });
+
+                        // Symmetric provenance marker: every backfilled message gets a
+                        // message_events row with EventType=Backfilled. Mirrors
+                        // ReactionsBackfillJob's ReactionEventType.Backfilled pattern.
+                        // RawEventJson is null because backfill came via REST, not gateway.
+                        db.MessageEvents.Add(new MessageEventEntity
+                        {
+                            MessageDiscordId = message.Id,
+                            ChannelDiscordId = channel.Id,
+                            AuthorDiscordId = message.Author.Id,
+                            GuildDiscordId = guildEntity.DiscordId,
+                            EventType = MessageEventType.Backfilled,
+                            Content = message.Content,
+                            HasAttachments = message.Attachments.Count > 0,
+                            HasEmbeds = message.Embeds.Count > 0,
+                            ReplyToMessageDiscordId = message.ReferencedMessage?.Id,
+                            AttachmentsJson = attachmentsJson,
+                            EmbedsJson = embedsJson,
+                            EventTimestampUtc = message.Timestamp.UtcDateTime,
+                            ReceivedAtUtc = DateTime.UtcNow,
+                            RawEventJson = null
                         });
 
                         checkpoint.ProcessedCount++;
