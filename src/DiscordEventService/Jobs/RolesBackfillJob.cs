@@ -92,6 +92,11 @@ public class RolesBackfillJob(
             await MarkCompletedAsync(db, checkpoint);
             logger.LogInformation("Roles backfill completed for guild {GuildId}: {Count} roles", guildId, checkpoint.ProcessedCount);
         }
+        catch (OperationCanceledException ex)
+        {
+            logger.LogWarning("Roles backfill cancelled for guild {GuildId} (likely deploy restart)", guildId);
+            await MarkFailedAsync(db, checkpoint, ex);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Roles backfill failed for guild {GuildId}", guildId);

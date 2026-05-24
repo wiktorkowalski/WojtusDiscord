@@ -95,6 +95,11 @@ public class ChannelsBackfillJob(
             await MarkCompletedAsync(db, checkpoint);
             logger.LogInformation("Channels backfill completed for guild {GuildId}: {Count} channels", guildId, checkpoint.ProcessedCount);
         }
+        catch (OperationCanceledException ex)
+        {
+            logger.LogWarning("Channels backfill cancelled for guild {GuildId} (likely deploy restart)", guildId);
+            await MarkFailedAsync(db, checkpoint, ex);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Channels backfill failed for guild {GuildId}", guildId);
