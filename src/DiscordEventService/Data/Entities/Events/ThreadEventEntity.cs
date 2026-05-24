@@ -17,6 +17,7 @@ public class ThreadEventEntity
     public ThreadEventType EventType { get; set; }
     public string? Name { get; set; }
     public ulong? OwnerDiscordId { get; set; }
+    public ulong? StarterMessageDiscordId { get; set; }
     public bool IsArchived { get; set; }
     public bool IsLocked { get; set; }
     public string? MembersAddedJson { get; set; }

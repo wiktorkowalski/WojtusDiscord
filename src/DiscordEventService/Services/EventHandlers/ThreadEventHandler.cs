@@ -2,6 +2,7 @@ using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
 using DSharpPlus;
+using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
@@ -35,6 +36,9 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
             var guildId = await guildUpsert.UpsertGuildAsync(e.Guild);
             await channelUpsert.UpsertChannelAsync(e.Thread, guildId);
 
+            // For message threads (parent is text/news), thread ID == starter message ID
+            var isMessageThread = e.Parent?.Type is DiscordChannelType.Text or DiscordChannelType.News;
+
             var threadEvent = new ThreadEventEntity
             {
                 ThreadDiscordId = e.Thread.Id,
@@ -43,6 +47,7 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
                 EventType = ThreadEventType.Created,
                 Name = e.Thread.Name,
                 OwnerDiscordId = e.Thread.CreatorId,
+                StarterMessageDiscordId = isMessageThread ? e.Thread.Id : null,
                 IsArchived = e.Thread.ThreadMetadata?.IsArchived ?? false,
                 IsLocked = e.Thread.ThreadMetadata?.IsLocked ?? false,
                 EventTimestampUtc = DateTime.UtcNow,
