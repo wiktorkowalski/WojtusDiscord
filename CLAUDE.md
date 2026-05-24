@@ -5,7 +5,7 @@
 - .NET (C#), use `dotnet build/run/format/restore`
 - PostgreSQL via `docker-compose.yml` (local dev DB on port 5432)
 - Dev bot account + separate Discord server configured in `.env`
-- Production DB: `192.168.1.12:5433` — READ ONLY, never run migrations or writes against prod. Prompt user for credentials before connecting. Use `docker run --rm -it postgres:18 psql` to query (no local psql installed)
+- Production DB: configured via environment — READ ONLY, never run migrations or writes against prod. Prompt user for credentials before connecting. Use `docker run --rm -it postgres:18 psql` to query (no local psql installed)
 
 ## Development workflow
 
