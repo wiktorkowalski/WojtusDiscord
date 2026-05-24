@@ -38,26 +38,37 @@ namespace DiscordEventService.Data.Migrations
                         (SELECT MAX(ended_at_utc) FROM bot_downtime_intervals WHERE ended_at_utc IS NOT NULL),
                         (SELECT tracking_start FROM boundary)
                     ),
-                    now(),
+                    COALESCE(
+                        (SELECT MIN(started_at_utc) FROM bot_downtime_intervals WHERE ended_at_utc IS NULL),
+                        now()
+                    ),
                     '[)'
                 );
                 """);
 
             migrationBuilder.Sql("""
                 CREATE VIEW v_voice_sessions AS
+                WITH all_events AS (
+                    SELECT
+                        user_discord_id,
+                        guild_discord_id,
+                        channel_discord_id_after,
+                        event_type,
+                        event_timestamp_utc,
+                        LEAD(event_timestamp_utc) OVER (
+                            PARTITION BY user_discord_id, guild_discord_id
+                            ORDER BY event_timestamp_utc
+                        ) AS next_event_at
+                    FROM voice_state_events
+                    WHERE event_type IN (0, 1, 2)
+                )
                 SELECT
                     user_discord_id,
                     guild_discord_id,
                     channel_discord_id_after AS channel_discord_id,
                     event_timestamp_utc AS session_start,
-                    COALESCE(
-                        LEAD(event_timestamp_utc) OVER (
-                            PARTITION BY user_discord_id, guild_discord_id
-                            ORDER BY event_timestamp_utc
-                        ),
-                        now()
-                    ) AS session_end
-                FROM voice_state_events
+                    COALESCE(next_event_at, now()) AS session_end
+                FROM all_events
                 WHERE event_type IN (0, 2)
                   AND channel_discord_id_after IS NOT NULL;
                 """);
