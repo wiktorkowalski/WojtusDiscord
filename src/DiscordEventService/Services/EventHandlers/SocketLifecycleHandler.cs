@@ -16,13 +16,10 @@ public class SocketLifecycleHandler(
 {
     private static readonly TimeSpan ReconnectGapThreshold = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ReconnectBackfillBuffer = TimeSpan.FromMinutes(5);
-    // When the bot was down longer than this, the windowed reconnect-backfill
-    // (which scrolls only until messages older than `lastAlive - buffer`) isn't
-    // enough — switch to a full deep walk (no afterTimestampUtc) so all messages
-    // sent during the outage land in the DB. See #124 postmortem: a 10-day
-    // outage went unnoticed in part because reconnect-backfill kept short-window
-    // backfilling on each crash-restart, never walking far enough back.
-    private static readonly TimeSpan FullBackfillGapThreshold = TimeSpan.FromHours(24);
+    // Cap reconnect backfill to 2 days max. Longer gaps are covered by the
+    // weekly periodic backfill (2-week window). Prevents 30-minute reaction
+    // crawls on every deploy after a long outage.
+    private static readonly TimeSpan MaxReconnectBackfillWindow = TimeSpan.FromDays(2);
 
     public async Task HandleEventAsync(DiscordClient sender, SocketClosedEventArgs e)
     {
@@ -113,10 +110,15 @@ public class SocketLifecycleHandler(
                 return;
             }
 
-            // Per user guidance: scan all known channels in every guild, overshoot
-            // the window rather than risk missing events.
+            var earliestAllowed = now - MaxReconnectBackfillWindow;
             var afterTimestamp = lastAlive.Value - ReconnectBackfillBuffer;
-            var useFullBackfill = gap >= FullBackfillGapThreshold;
+            if (afterTimestamp < earliestAllowed)
+            {
+                logger.LogInformation(
+                    "Reconnect backfill window capped to {Window} (gap was {Gap:c}, capped from {Original:O} to {Capped:O})",
+                    MaxReconnectBackfillWindow, gap, afterTimestamp, earliestAllowed);
+                afterTimestamp = earliestAllowed;
+            }
 
             var inProgressGuilds = await db.BackfillCheckpoints
                 .Where(c => c.Status == BackfillStatus.InProgress)
@@ -135,20 +137,10 @@ public class SocketLifecycleHandler(
                     continue;
                 }
 
-                if (useFullBackfill)
-                {
-                    logger.LogInformation(
-                        "Full backfill enqueued for guild {GuildId} after long gap {Gap:c} (>= {Threshold:c}); ignoring afterTimestampUtc",
-                        guildId, gap, FullBackfillGapThreshold);
-                    orchestrator.StartBackfill(guildId);
-                }
-                else
-                {
-                    logger.LogInformation(
-                        "Reconnect backfill enqueued for guild {GuildId} after gap {Gap:c} (afterTimestampUtc={After:O})",
-                        guildId, gap, afterTimestamp);
-                    orchestrator.EnqueueBackfillFrom(guildId, afterTimestamp);
-                }
+                logger.LogInformation(
+                    "Reconnect backfill enqueued for guild {GuildId} after gap {Gap:c} (afterTimestampUtc={After:O})",
+                    guildId, gap, afterTimestamp);
+                orchestrator.EnqueueBackfillFrom(guildId, afterTimestamp);
             }
         }
         catch (Exception ex)
