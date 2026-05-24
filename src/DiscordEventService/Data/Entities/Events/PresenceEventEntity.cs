@@ -1,10 +1,17 @@
 namespace DiscordEventService.Data.Entities.Events;
 
+public enum PresenceEventType
+{
+    Updated = 0,
+    BootSnapshot = 1
+}
+
 public class PresenceEventEntity
 {
     public Guid Id { get; set; }
     public ulong UserDiscordId { get; set; }
     public ulong GuildDiscordId { get; set; }
+    public PresenceEventType EventType { get; set; }
 
     // Before status
     public int DesktopStatusBefore { get; set; }

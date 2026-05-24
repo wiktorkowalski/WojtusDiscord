@@ -88,6 +88,7 @@ builder.Services.AddSingleton(rootSp =>
         // GuildBackfillOrchestrator; it resolves from the DSharpPlus child
         // container, so the orchestrator must be registered here too.
         services.AddScoped<GuildBackfillOrchestrator>();
+        services.AddScoped<BootQuickSyncService>();
         // IBackgroundJobClient forwards to the root container's registration.
         // Hangfire registers IBackgroundJobClient as Transient with DI-based
         // JobStorage resolution; using `new BackgroundJobClient()` directly
