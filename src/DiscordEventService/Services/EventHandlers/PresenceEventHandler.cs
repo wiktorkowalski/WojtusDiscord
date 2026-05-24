@@ -22,97 +22,101 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
 
     public async Task HandleEventAsync(DiscordClient sender, PresenceUpdatedEventArgs args)
     {
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var now = DateTime.UtcNow;
-
-            using var scope = scopeFactory.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-            var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-
-            var guildId = args.PresenceAfter?.Guild?.Id ?? args.PresenceBefore?.Guild?.Id ?? 0;
-
-            // Create DTO to avoid serialization issues with DSharpPlus internals
-            var eventDto = new
+            try
             {
-                UserId = args.User.Id,
-                GuildId = guildId,
-                Before = args.PresenceBefore == null ? null : new
+                var now = DateTime.UtcNow;
+
+                using var scope = scopeFactory.CreateScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
+
+                var guildId = args.PresenceAfter?.Guild?.Id ?? args.PresenceBefore?.Guild?.Id ?? 0;
+
+                // Create DTO to avoid serialization issues with DSharpPlus internals
+                var eventDto = new
                 {
-                    Desktop = GetStatusValue(args.PresenceBefore.ClientStatus?.Desktop),
-                    Mobile = GetStatusValue(args.PresenceBefore.ClientStatus?.Mobile),
-                    Web = GetStatusValue(args.PresenceBefore.ClientStatus?.Web),
-                    Activities = args.PresenceBefore.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
-                },
-                After = args.PresenceAfter == null ? null : new
+                    UserId = args.User.Id,
+                    GuildId = guildId,
+                    Before = args.PresenceBefore == null ? null : new
+                    {
+                        Desktop = GetStatusValue(args.PresenceBefore.ClientStatus?.Desktop),
+                        Mobile = GetStatusValue(args.PresenceBefore.ClientStatus?.Mobile),
+                        Web = GetStatusValue(args.PresenceBefore.ClientStatus?.Web),
+                        Activities = args.PresenceBefore.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
+                    },
+                    After = args.PresenceAfter == null ? null : new
+                    {
+                        Desktop = GetStatusValue(args.PresenceAfter.ClientStatus?.Desktop),
+                        Mobile = GetStatusValue(args.PresenceAfter.ClientStatus?.Mobile),
+                        Web = GetStatusValue(args.PresenceAfter.ClientStatus?.Web),
+                        Activities = args.PresenceAfter.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
+                    }
+                };
+
+                var rawJson = await rawEventService.SerializeAndLogAsync(
+                    eventDto, "PresenceUpdated", guildId, null, args.User.Id, correlationId: correlationId);
+
+                // Record the presence event
+                var presenceEvent = new PresenceEventEntity
                 {
-                    Desktop = GetStatusValue(args.PresenceAfter.ClientStatus?.Desktop),
-                    Mobile = GetStatusValue(args.PresenceAfter.ClientStatus?.Mobile),
-                    Web = GetStatusValue(args.PresenceAfter.ClientStatus?.Web),
-                    Activities = args.PresenceAfter.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
-                }
-            };
+                    UserDiscordId = args.User.Id,
+                    GuildDiscordId = guildId,
 
-            var rawJson = await rawEventService.SerializeAndLogAsync(
-                eventDto, "PresenceUpdated", guildId, null, args.User.Id);
+                    DesktopStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Desktop),
+                    MobileStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Mobile),
+                    WebStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Web),
 
-            // Record the presence event
-            var presenceEvent = new PresenceEventEntity
-            {
-                UserDiscordId = args.User.Id,
-                GuildDiscordId = guildId,
+                    DesktopStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Desktop),
+                    MobileStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Mobile),
+                    WebStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Web),
 
-                DesktopStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Desktop),
-                MobileStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Mobile),
-                WebStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Web),
+                    ActivitiesBeforeJson = SerializeActivities(args.PresenceBefore?.Activities),
+                    ActivitiesAfterJson = SerializeActivities(args.PresenceAfter?.Activities),
 
-                DesktopStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Desktop),
-                MobileStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Mobile),
-                WebStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Web),
+                    EventTimestampUtc = now,
+                    ReceivedAtUtc = now,
+                    RawEventJson = rawJson
+                };
 
-                ActivitiesBeforeJson = SerializeActivities(args.PresenceBefore?.Activities),
-                ActivitiesAfterJson = SerializeActivities(args.PresenceAfter?.Activities),
+                await dbContext.PresenceEvents.AddAsync(presenceEvent);
 
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
-                RawEventJson = rawJson
-            };
-
-            await dbContext.PresenceEvents.AddAsync(presenceEvent);
-
-            // Flush before the user upsert so its 23505 catch path (ChangeTracker.Clear)
-            // can't discard the staged raw_event_logs + presence_events rows.
-            await dbContext.SaveChangesAsync();
-
-            // Track activities in ActivityEntity — upsert the user first so we never silently
-            // skip activity tracking for unknown users (87k presence events historically).
-            await userService.UpsertUserAsync(args.User);
-            var userGuid = await dbContext.Users
-                .Where(u => u.DiscordId == args.User.Id)
-                .Select(u => u.Id)
-                .FirstOrDefaultAsync();
-
-            if (userGuid != Guid.Empty)
-            {
-                await UpdateActivityTracking(dbContext, userGuid, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, now);
+                // Flush before the user upsert so its 23505 catch path (ChangeTracker.Clear)
+                // can't discard the staged raw_event_logs + presence_events rows.
                 await dbContext.SaveChangesAsync();
-            }
-            else
-            {
-                logger.LogWarning("Skipping activity tracking: UpsertUserAsync did not produce a User row for {UserId}", args.User.Id);
-            }
 
-            logger.LogDebug("Recorded presence event for user {UserId}", args.User.Id);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling presence update for user {UserId}", args.User.Id);
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "PresenceUpdated", nameof(PresenceEventHandler), ex,
-                null, null, args.User.Id);
+                // Track activities in ActivityEntity — upsert the user first so we never silently
+                // skip activity tracking for unknown users (87k presence events historically).
+                await userService.UpsertUserAsync(args.User);
+                var userGuid = await dbContext.Users
+                    .Where(u => u.DiscordId == args.User.Id)
+                    .Select(u => u.Id)
+                    .FirstOrDefaultAsync();
+
+                if (userGuid != Guid.Empty)
+                {
+                    await UpdateActivityTracking(dbContext, userGuid, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, now);
+                    await dbContext.SaveChangesAsync();
+                }
+                else
+                {
+                    logger.LogWarning("Skipping activity tracking: UpsertUserAsync did not produce a User row for {UserId}", args.User.Id);
+                }
+
+                logger.LogDebug("Recorded presence event for user {UserId}", args.User.Id);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling presence update for user {UserId}", args.User.Id);
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "PresenceUpdated", nameof(PresenceEventHandler), ex,
+                    null, null, args.User.Id, correlationId: correlationId);
+            }
         }
     }
 

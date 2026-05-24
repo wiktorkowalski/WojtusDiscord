@@ -17,194 +17,206 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildMemberAddedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "GuildMemberAdded", e.Guild.Id, null, e.Member.Id);
-
-            await userService.UpsertMemberAsync(e.Member);
-
-            var memberEvent = new MemberEventEntity
+            string? rawJson = null;
+            try
             {
-                UserDiscordId = e.Member.Id,
-                GuildDiscordId = e.Guild.Id,
-                EventType = MemberEventType.Joined,
-                NicknameAfter = e.Member.Nickname,
-                RolesAddedJson = e.Member.Roles.Any()
-                    ? JsonSerializer.Serialize(e.Member.Roles.Select(r => r.Id))
-                    : null,
-                EventTimestampUtc = e.Member.JoinedAt.UtcDateTime,
-                ReceivedAtUtc = DateTime.UtcNow,
-                RawEventJson = rawJson
-            };
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            db.MemberEvents.Add(memberEvent);
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling member added for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "GuildMemberAdded", nameof(MemberEventHandler), ex,
-                e.Guild?.Id, null, e.Member.Id, rawJson);
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "GuildMemberAdded", e.Guild.Id, null, e.Member.Id, correlationId: correlationId);
+
+                await userService.UpsertMemberAsync(e.Member);
+
+                var memberEvent = new MemberEventEntity
+                {
+                    UserDiscordId = e.Member.Id,
+                    GuildDiscordId = e.Guild.Id,
+                    EventType = MemberEventType.Joined,
+                    NicknameAfter = e.Member.Nickname,
+                    RolesAddedJson = e.Member.Roles.Any()
+                        ? JsonSerializer.Serialize(e.Member.Roles.Select(r => r.Id))
+                        : null,
+                    EventTimestampUtc = e.Member.JoinedAt.UtcDateTime,
+                    ReceivedAtUtc = DateTime.UtcNow,
+                    RawEventJson = rawJson
+                };
+
+                db.MemberEvents.Add(memberEvent);
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling member added for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "GuildMemberAdded", nameof(MemberEventHandler), ex,
+                    e.Guild?.Id, null, e.Member.Id, rawJson, correlationId: correlationId);
+            }
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildMemberRemovedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var receivedAt = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "GuildMemberRemoved", e.Guild.Id, null, e.Member.Id);
-
-            var memberEvent = new MemberEventEntity
+            string? rawJson = null;
+            try
             {
-                UserDiscordId = e.Member.Id,
-                GuildDiscordId = e.Guild.Id,
-                EventType = MemberEventType.Left,
-                NicknameBefore = e.Member.Nickname,
-                RolesRemovedJson = e.Member.Roles.Any()
-                    ? JsonSerializer.Serialize(e.Member.Roles.Select(r => r.Id))
-                    : null,
-                EventTimestampUtc = receivedAt,
-                ReceivedAtUtc = receivedAt,
-                RawEventJson = rawJson
-            };
+                var receivedAt = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            db.MemberEvents.Add(memberEvent);
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling member removed for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "GuildMemberRemoved", nameof(MemberEventHandler), ex,
-                e.Guild?.Id, null, e.Member.Id, rawJson);
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "GuildMemberRemoved", e.Guild.Id, null, e.Member.Id, correlationId: correlationId);
+
+                var memberEvent = new MemberEventEntity
+                {
+                    UserDiscordId = e.Member.Id,
+                    GuildDiscordId = e.Guild.Id,
+                    EventType = MemberEventType.Left,
+                    NicknameBefore = e.Member.Nickname,
+                    RolesRemovedJson = e.Member.Roles.Any()
+                        ? JsonSerializer.Serialize(e.Member.Roles.Select(r => r.Id))
+                        : null,
+                    EventTimestampUtc = receivedAt,
+                    ReceivedAtUtc = receivedAt,
+                    RawEventJson = rawJson
+                };
+
+                db.MemberEvents.Add(memberEvent);
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling member removed for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "GuildMemberRemoved", nameof(MemberEventHandler), ex,
+                    e.Guild?.Id, null, e.Member.Id, rawJson, correlationId: correlationId);
+            }
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildMemberUpdatedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var receivedAt = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "GuildMemberUpdated", e.Guild.Id, null, e.Member.Id);
-
-            await userService.UpsertMemberAsync(e.Member);
-
-            var oldRoleIds = e.RolesBefore?.Select(r => r.Id).ToHashSet() ?? new HashSet<ulong>();
-            var newRoleIds = e.RolesAfter?.Select(r => r.Id).ToHashSet() ?? new HashSet<ulong>();
-
-            var rolesAdded = newRoleIds.Except(oldRoleIds).ToList();
-            var rolesRemoved = oldRoleIds.Except(newRoleIds).ToList();
-
-            var nicknameChanged = e.NicknameBefore != e.NicknameAfter;
-            var avatarHashChanged = e.GuildAvatarHashBefore != e.GuildAvatarHashAfter;
-            var pendingChanged = e.PendingBefore != e.PendingAfter;
-            var timeoutChanged = e.CommunicationDisabledUntilBefore != e.CommunicationDisabledUntilAfter;
-
-            // Member-object deltas are only meaningful when MemberBefore is cached.
-            // Without it we can't distinguish "field changed" from "field newly known",
-            // so treat unknown-before as unchanged to avoid spurious filter triggers.
-            // (DSharpPlus annotates MemberBefore as non-nullable, but defensively check.)
-            var memberBefore = e.MemberBefore;
-            var hasBefore = memberBefore is not null;
-
-            var premiumBefore = memberBefore?.PremiumSince;
-            var premiumAfter = e.Member.PremiumSince;
-            var premiumChanged = hasBefore && premiumBefore != premiumAfter;
-
-            bool? mutedBefore = memberBefore?.IsMuted;
-            bool mutedAfter = e.Member.IsMuted;
-            var mutedChanged = mutedBefore.HasValue && mutedBefore.Value != mutedAfter;
-
-            bool? deafenedBefore = memberBefore?.IsDeafened;
-            bool deafenedAfter = e.Member.IsDeafened;
-            var deafenedChanged = deafenedBefore.HasValue && deafenedBefore.Value != deafenedAfter;
-
-            if (nicknameChanged || rolesAdded.Any() || rolesRemoved.Any() || timeoutChanged
-                || avatarHashChanged || pendingChanged || premiumChanged || mutedChanged || deafenedChanged)
+            string? rawJson = null;
+            try
             {
-                var strategy = db.Database.CreateExecutionStrategy();
-                await strategy.ExecuteAsync(async () =>
+                var receivedAt = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "GuildMemberUpdated", e.Guild.Id, null, e.Member.Id, correlationId: correlationId);
+
+                await userService.UpsertMemberAsync(e.Member);
+
+                var oldRoleIds = e.RolesBefore?.Select(r => r.Id).ToHashSet() ?? new HashSet<ulong>();
+                var newRoleIds = e.RolesAfter?.Select(r => r.Id).ToHashSet() ?? new HashSet<ulong>();
+
+                var rolesAdded = newRoleIds.Except(oldRoleIds).ToList();
+                var rolesRemoved = oldRoleIds.Except(newRoleIds).ToList();
+
+                var nicknameChanged = e.NicknameBefore != e.NicknameAfter;
+                var avatarHashChanged = e.GuildAvatarHashBefore != e.GuildAvatarHashAfter;
+                var pendingChanged = e.PendingBefore != e.PendingAfter;
+                var timeoutChanged = e.CommunicationDisabledUntilBefore != e.CommunicationDisabledUntilAfter;
+
+                // Member-object deltas are only meaningful when MemberBefore is cached.
+                // Without it we can't distinguish "field changed" from "field newly known",
+                // so treat unknown-before as unchanged to avoid spurious filter triggers.
+                // (DSharpPlus annotates MemberBefore as non-nullable, but defensively check.)
+                var memberBefore = e.MemberBefore;
+                var hasBefore = memberBefore is not null;
+
+                var premiumBefore = memberBefore?.PremiumSince;
+                var premiumAfter = e.Member.PremiumSince;
+                var premiumChanged = hasBefore && premiumBefore != premiumAfter;
+
+                bool? mutedBefore = memberBefore?.IsMuted;
+                bool mutedAfter = e.Member.IsMuted;
+                var mutedChanged = mutedBefore.HasValue && mutedBefore.Value != mutedAfter;
+
+                bool? deafenedBefore = memberBefore?.IsDeafened;
+                bool deafenedAfter = e.Member.IsDeafened;
+                var deafenedChanged = deafenedBefore.HasValue && deafenedBefore.Value != deafenedAfter;
+
+                if (nicknameChanged || rolesAdded.Any() || rolesRemoved.Any() || timeoutChanged
+                    || avatarHashChanged || pendingChanged || premiumChanged || mutedChanged || deafenedChanged)
                 {
-                    db.ChangeTracker.Clear();
-                    await using var tx = await db.Database.BeginTransactionAsync();
-
-                    var memberEvent = new MemberEventEntity
+                    var strategy = db.Database.CreateExecutionStrategy();
+                    await strategy.ExecuteAsync(async () =>
                     {
-                        UserDiscordId = e.Member.Id,
-                        GuildDiscordId = e.Guild.Id,
-                        EventType = MemberEventType.Updated,
-                        NicknameBefore = e.NicknameBefore,
-                        NicknameAfter = e.NicknameAfter,
-                        RolesAddedJson = rolesAdded.Any()
-                            ? JsonSerializer.Serialize(rolesAdded)
-                            : null,
-                        RolesRemovedJson = rolesRemoved.Any()
-                            ? JsonSerializer.Serialize(rolesRemoved)
-                            : null,
-                        TimeoutUntilUtc = e.CommunicationDisabledUntilAfter?.UtcDateTime,
-                        PremiumSinceBefore = premiumBefore?.UtcDateTime,
-                        PremiumSinceAfter = premiumAfter?.UtcDateTime,
-                        GuildAvatarHashBefore = e.GuildAvatarHashBefore,
-                        GuildAvatarHashAfter = e.GuildAvatarHashAfter,
-                        IsPendingBefore = e.PendingBefore,
-                        IsPendingAfter = e.PendingAfter,
-                        IsMutedBefore = mutedBefore,
-                        IsMutedAfter = mutedAfter,
-                        IsDeafenedBefore = deafenedBefore,
-                        IsDeafenedAfter = deafenedAfter,
-                        EventTimestampUtc = receivedAt,
-                        ReceivedAtUtc = receivedAt,
-                        RawEventJson = rawJson
-                    };
+                        db.ChangeTracker.Clear();
+                        await using var tx = await db.Database.BeginTransactionAsync();
 
-                    db.MemberEvents.Add(memberEvent);
-                    await db.SaveChangesAsync();
+                        var memberEvent = new MemberEventEntity
+                        {
+                            UserDiscordId = e.Member.Id,
+                            GuildDiscordId = e.Guild.Id,
+                            EventType = MemberEventType.Updated,
+                            NicknameBefore = e.NicknameBefore,
+                            NicknameAfter = e.NicknameAfter,
+                            RolesAddedJson = rolesAdded.Any()
+                                ? JsonSerializer.Serialize(rolesAdded)
+                                : null,
+                            RolesRemovedJson = rolesRemoved.Any()
+                                ? JsonSerializer.Serialize(rolesRemoved)
+                                : null,
+                            TimeoutUntilUtc = e.CommunicationDisabledUntilAfter?.UtcDateTime,
+                            PremiumSinceBefore = premiumBefore?.UtcDateTime,
+                            PremiumSinceAfter = premiumAfter?.UtcDateTime,
+                            GuildAvatarHashBefore = e.GuildAvatarHashBefore,
+                            GuildAvatarHashAfter = e.GuildAvatarHashAfter,
+                            IsPendingBefore = e.PendingBefore,
+                            IsPendingAfter = e.PendingAfter,
+                            IsMutedBefore = mutedBefore,
+                            IsMutedAfter = mutedAfter,
+                            IsDeafenedBefore = deafenedBefore,
+                            IsDeafenedAfter = deafenedAfter,
+                            EventTimestampUtc = receivedAt,
+                            ReceivedAtUtc = receivedAt,
+                            RawEventJson = rawJson
+                        };
 
-                    if ((rolesAdded.Any() || rolesRemoved.Any())
-                        && e.RolesBefore is not null && e.RolesAfter is not null)
-                    {
-                        await MaintainRoleSnapshotsAsync(db, e.Member.Id, e.Guild.Id,
-                            rolesAdded, rolesRemoved, receivedAt, memberEvent.Id);
-                    }
+                        db.MemberEvents.Add(memberEvent);
+                        await db.SaveChangesAsync();
 
-                    await tx.CommitAsync();
-                });
+                        if ((rolesAdded.Any() || rolesRemoved.Any())
+                            && e.RolesBefore is not null && e.RolesAfter is not null)
+                        {
+                            await MaintainRoleSnapshotsAsync(db, e.Member.Id, e.Guild.Id,
+                                rolesAdded, rolesRemoved, receivedAt, memberEvent.Id);
+                        }
+
+                        await tx.CommitAsync();
+                    });
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling member updated for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "GuildMemberUpdated", nameof(MemberEventHandler), ex,
-                e.Guild?.Id, null, e.Member.Id, rawJson);
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling member updated for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "GuildMemberUpdated", nameof(MemberEventHandler), ex,
+                    e.Guild?.Id, null, e.Member.Id, rawJson, correlationId: correlationId);
+            }
         }
     }
 
@@ -263,81 +275,89 @@ public class MemberEventHandler(IServiceScopeFactory scopeFactory, ILogger<Membe
 
     public async Task HandleEventAsync(DiscordClient sender, GuildBanAddedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var receivedAt = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "GuildBanAddedMember", e.Guild.Id, null, e.Member.Id);
-
-            await userService.UpsertUserAsync(e.Member);
-
-            var memberEvent = new MemberEventEntity
+            string? rawJson = null;
+            try
             {
-                UserDiscordId = e.Member.Id,
-                GuildDiscordId = e.Guild.Id,
-                EventType = MemberEventType.Banned,
-                EventTimestampUtc = receivedAt,
-                ReceivedAtUtc = receivedAt,
-                RawEventJson = rawJson
-            };
+                var receivedAt = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            db.MemberEvents.Add(memberEvent);
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling ban added for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "GuildBanAddedMember", nameof(MemberEventHandler), ex,
-                e.Guild?.Id, null, e.Member.Id, rawJson);
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "GuildBanAddedMember", e.Guild.Id, null, e.Member.Id, correlationId: correlationId);
+
+                await userService.UpsertUserAsync(e.Member);
+
+                var memberEvent = new MemberEventEntity
+                {
+                    UserDiscordId = e.Member.Id,
+                    GuildDiscordId = e.Guild.Id,
+                    EventType = MemberEventType.Banned,
+                    EventTimestampUtc = receivedAt,
+                    ReceivedAtUtc = receivedAt,
+                    RawEventJson = rawJson
+                };
+
+                db.MemberEvents.Add(memberEvent);
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling ban added for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "GuildBanAddedMember", nameof(MemberEventHandler), ex,
+                    e.Guild?.Id, null, e.Member.Id, rawJson, correlationId: correlationId);
+            }
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildBanRemovedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var receivedAt = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "GuildBanRemovedMember", e.Guild.Id, null, e.Member.Id);
-
-            await userService.UpsertUserAsync(e.Member);
-
-            var memberEvent = new MemberEventEntity
+            string? rawJson = null;
+            try
             {
-                UserDiscordId = e.Member.Id,
-                GuildDiscordId = e.Guild.Id,
-                EventType = MemberEventType.Unbanned,
-                EventTimestampUtc = receivedAt,
-                ReceivedAtUtc = receivedAt,
-                RawEventJson = rawJson
-            };
+                var receivedAt = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            db.MemberEvents.Add(memberEvent);
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling ban removed for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "GuildBanRemovedMember", nameof(MemberEventHandler), ex,
-                e.Guild?.Id, null, e.Member.Id, rawJson);
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "GuildBanRemovedMember", e.Guild.Id, null, e.Member.Id, correlationId: correlationId);
+
+                await userService.UpsertUserAsync(e.Member);
+
+                var memberEvent = new MemberEventEntity
+                {
+                    UserDiscordId = e.Member.Id,
+                    GuildDiscordId = e.Guild.Id,
+                    EventType = MemberEventType.Unbanned,
+                    EventTimestampUtc = receivedAt,
+                    ReceivedAtUtc = receivedAt,
+                    RawEventJson = rawJson
+                };
+
+                db.MemberEvents.Add(memberEvent);
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling ban removed for UserId={UserId} GuildId={GuildId}", e.Member.Id, e.Guild.Id);
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "GuildBanRemovedMember", nameof(MemberEventHandler), ex,
+                    e.Guild?.Id, null, e.Member.Id, rawJson, correlationId: correlationId);
+            }
         }
     }
 }

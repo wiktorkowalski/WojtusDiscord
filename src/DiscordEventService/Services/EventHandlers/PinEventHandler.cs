@@ -12,37 +12,41 @@ public class PinEventHandler(IServiceScopeFactory scopeFactory, ILogger<PinEvent
     {
         if (e.Guild is null) return;
 
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var now = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "ChannelPinsUpdated", e.Guild.Id, e.Channel.Id, null);
-
-            db.PinEvents.Add(new PinEventEntity
+            string? rawJson = null;
+            try
             {
-                ChannelDiscordId = e.Channel.Id,
-                GuildDiscordId = e.Guild.Id,
-                LastPinTimestampUtc = e.LastPinTimestamp?.UtcDateTime,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
-                RawEventJson = rawJson
-            });
+                var now = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling pins updated for ChannelId={ChannelId}", e.Channel.Id);
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "ChannelPinsUpdated", nameof(PinEventHandler), ex,
-                e.Guild?.Id, e.Channel?.Id, null, rawJson);
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "ChannelPinsUpdated", e.Guild.Id, e.Channel.Id, null, correlationId: correlationId);
+
+                db.PinEvents.Add(new PinEventEntity
+                {
+                    ChannelDiscordId = e.Channel.Id,
+                    GuildDiscordId = e.Guild.Id,
+                    LastPinTimestampUtc = e.LastPinTimestamp?.UtcDateTime,
+                    EventTimestampUtc = now,
+                    ReceivedAtUtc = now,
+                    RawEventJson = rawJson
+                });
+
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling pins updated for ChannelId={ChannelId}", e.Channel.Id);
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "ChannelPinsUpdated", nameof(PinEventHandler), ex,
+                    e.Guild?.Id, e.Channel?.Id, null, rawJson, correlationId: correlationId);
+            }
         }
     }
 }

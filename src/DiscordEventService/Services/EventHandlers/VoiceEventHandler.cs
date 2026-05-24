@@ -11,65 +11,69 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
 {
     public async Task HandleEventAsync(DiscordClient sender, VoiceStateUpdatedEventArgs args)
     {
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var now = DateTime.UtcNow;
-            var eventType = DetermineEventType(args);
-
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            var rawJson = await rawEventService.SerializeAndLogAsync(
-                args, "VoiceStateUpdated", args.Guild.Id, args.After?.Channel?.Id, args.User.Id);
-
-            var voiceEvent = new VoiceStateEventEntity
+            try
             {
-                UserDiscordId = args.User.Id,
-                GuildDiscordId = args.Guild.Id,
-                ChannelDiscordIdBefore = args.Before?.Channel?.Id,
-                ChannelDiscordIdAfter = args.After?.Channel?.Id,
-                EventType = eventType,
+                var now = DateTime.UtcNow;
+                var eventType = DetermineEventType(args);
 
-                // Before state flags
-                WasSelfMuted = args.Before?.IsSelfMuted ?? false,
-                WasSelfDeafened = args.Before?.IsSelfDeafened ?? false,
-                WasServerMuted = args.Before?.IsServerMuted ?? false,
-                WasServerDeafened = args.Before?.IsServerDeafened ?? false,
-                WasStreaming = args.Before?.IsSelfStream ?? false,
-                WasVideo = args.Before?.IsSelfVideo ?? false,
-                WasSuppressed = args.Before?.IsSuppressed ?? false,
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-                // After state flags
-                IsSelfMuted = args.After?.IsSelfMuted ?? false,
-                IsSelfDeafened = args.After?.IsSelfDeafened ?? false,
-                IsServerMuted = args.After?.IsServerMuted ?? false,
-                IsServerDeafened = args.After?.IsServerDeafened ?? false,
-                IsStreaming = args.After?.IsSelfStream ?? false,
-                IsVideo = args.After?.IsSelfVideo ?? false,
-                IsSuppressed = args.After?.IsSuppressed ?? false,
+                var rawJson = await rawEventService.SerializeAndLogAsync(
+                    args, "VoiceStateUpdated", args.Guild.Id, args.After?.Channel?.Id, args.User.Id, correlationId: correlationId);
 
-                SessionId = args.After?.SessionId,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
-                RawEventJson = rawJson
-            };
+                var voiceEvent = new VoiceStateEventEntity
+                {
+                    UserDiscordId = args.User.Id,
+                    GuildDiscordId = args.Guild.Id,
+                    ChannelDiscordIdBefore = args.Before?.Channel?.Id,
+                    ChannelDiscordIdAfter = args.After?.Channel?.Id,
+                    EventType = eventType,
 
-            db.VoiceStateEvents.Add(voiceEvent);
-            await db.SaveChangesAsync();
+                    // Before state flags
+                    WasSelfMuted = args.Before?.IsSelfMuted ?? false,
+                    WasSelfDeafened = args.Before?.IsSelfDeafened ?? false,
+                    WasServerMuted = args.Before?.IsServerMuted ?? false,
+                    WasServerDeafened = args.Before?.IsServerDeafened ?? false,
+                    WasStreaming = args.Before?.IsSelfStream ?? false,
+                    WasVideo = args.Before?.IsSelfVideo ?? false,
+                    WasSuppressed = args.Before?.IsSuppressed ?? false,
 
-            logger.LogDebug("Recorded voice event: {EventType} for user {UserId} in guild {GuildId}",
-                eventType, args.User.Id, args.Guild.Id);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling voice state update for user {UserId} in guild {GuildId}",
-                args.User.Id, args.Guild.Id);
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "VoiceStateUpdated", nameof(VoiceEventHandler), ex,
-                args.Guild.Id, args.After?.Channel?.Id, args.User.Id);
+                    // After state flags
+                    IsSelfMuted = args.After?.IsSelfMuted ?? false,
+                    IsSelfDeafened = args.After?.IsSelfDeafened ?? false,
+                    IsServerMuted = args.After?.IsServerMuted ?? false,
+                    IsServerDeafened = args.After?.IsServerDeafened ?? false,
+                    IsStreaming = args.After?.IsSelfStream ?? false,
+                    IsVideo = args.After?.IsSelfVideo ?? false,
+                    IsSuppressed = args.After?.IsSuppressed ?? false,
+
+                    SessionId = args.After?.SessionId,
+                    EventTimestampUtc = now,
+                    ReceivedAtUtc = now,
+                    RawEventJson = rawJson
+                };
+
+                db.VoiceStateEvents.Add(voiceEvent);
+                await db.SaveChangesAsync();
+
+                logger.LogDebug("Recorded voice event: {EventType} for user {UserId} in guild {GuildId}",
+                    eventType, args.User.Id, args.Guild.Id);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling voice state update for user {UserId} in guild {GuildId}",
+                    args.User.Id, args.Guild.Id);
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "VoiceStateUpdated", nameof(VoiceEventHandler), ex,
+                    args.Guild.Id, args.After?.Channel?.Id, args.User.Id, correlationId: correlationId);
+            }
         }
     }
 

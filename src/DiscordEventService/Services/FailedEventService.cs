@@ -16,7 +16,8 @@ public class FailedEventService(DiscordDbContext db, ILogger<FailedEventService>
         ulong? channelId = null,
         ulong? userId = null,
         string? eventJson = null,
-        DateTime? eventReceivedAt = null)
+        DateTime? eventReceivedAt = null,
+        Guid? correlationId = null)
     {
         try
         {
@@ -32,7 +33,8 @@ public class FailedEventService(DiscordDbContext db, ILogger<FailedEventService>
                 ExceptionMessage = exception.Message,
                 StackTrace = exception.StackTrace,
                 FailedAtUtc = DateTime.UtcNow,
-                EventReceivedAtUtc = eventReceivedAt ?? DateTime.UtcNow
+                EventReceivedAtUtc = eventReceivedAt ?? DateTime.UtcNow,
+                CorrelationId = correlationId
             };
 
             await db.FailedEvents.AddAsync(failedEvent);

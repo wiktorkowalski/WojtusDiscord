@@ -58,7 +58,8 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
         string eventJson,
         ulong guildId = 0,
         ulong? channelId = null,
-        ulong? userId = null)
+        ulong? userId = null,
+        Guid? correlationId = null)
     {
         try
         {
@@ -70,7 +71,8 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
                 UserDiscordId = userId,
                 EventJson = eventJson,
                 JsonSizeBytes = System.Text.Encoding.UTF8.GetByteCount(eventJson),
-                ReceivedAtUtc = DateTime.UtcNow
+                ReceivedAtUtc = DateTime.UtcNow,
+                CorrelationId = correlationId
             };
 
             await dbContext.RawEventLogs.AddAsync(rawEvent);
@@ -90,10 +92,11 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
         string eventType,
         ulong guildId = 0,
         ulong? channelId = null,
-        ulong? userId = null) where T : class
+        ulong? userId = null,
+        Guid? correlationId = null) where T : class
     {
         var json = SerializeEvent(eventArgs);
-        await LogRawEventAsync(eventType, json, guildId, channelId, userId);
+        await LogRawEventAsync(eventType, json, guildId, channelId, userId, correlationId);
         return json;
     }
 

@@ -14,139 +14,151 @@ public class IntegrationEventHandler(IServiceScopeFactory scopeFactory, ILogger<
 {
     public async Task HandleEventAsync(DiscordClient sender, IntegrationCreatedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var now = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "IntegrationCreated", e.Guild.Id, null, null);
-
-            // Look up Guid FK
-            var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
-
-            db.Integrations.Add(new IntegrationEntity
+            string? rawJson = null;
+            try
             {
-                DiscordId = e.Integration.Id,
-                GuildId = guild?.Id ?? Guid.Empty,
-                Name = e.Integration.Name,
-                Type = e.Integration.Type,
-                IsEnabled = e.Integration.IsEnabled
-            });
+                var now = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            db.IntegrationEvents.Add(new IntegrationEventEntity
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "IntegrationCreated", e.Guild.Id, null, null, correlationId: correlationId);
+
+                // Look up Guid FK
+                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+
+                db.Integrations.Add(new IntegrationEntity
+                {
+                    DiscordId = e.Integration.Id,
+                    GuildId = guild?.Id ?? Guid.Empty,
+                    Name = e.Integration.Name,
+                    Type = e.Integration.Type,
+                    IsEnabled = e.Integration.IsEnabled
+                });
+
+                db.IntegrationEvents.Add(new IntegrationEventEntity
+                {
+                    IntegrationDiscordId = e.Integration.Id,
+                    GuildDiscordId = e.Guild.Id,
+                    EventType = IntegrationEventType.Created,
+                    Name = e.Integration.Name,
+                    Type = e.Integration.Type,
+                    IsEnabled = e.Integration.IsEnabled,
+                    EventTimestampUtc = now,
+                    ReceivedAtUtc = now,
+                    RawEventJson = rawJson
+                });
+
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
             {
-                IntegrationDiscordId = e.Integration.Id,
-                GuildDiscordId = e.Guild.Id,
-                EventType = IntegrationEventType.Created,
-                Name = e.Integration.Name,
-                Type = e.Integration.Type,
-                IsEnabled = e.Integration.IsEnabled,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
-                RawEventJson = rawJson
-            });
-
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling integration created");
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "IntegrationCreated", nameof(IntegrationEventHandler), ex,
-                e.Guild?.Id, null, null, rawJson);
+                logger.LogError(ex, "Error handling integration created");
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "IntegrationCreated", nameof(IntegrationEventHandler), ex,
+                    e.Guild?.Id, null, null, rawJson, correlationId: correlationId);
+            }
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, IntegrationUpdatedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var now = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "IntegrationUpdated", e.Guild.Id, null, null);
-
-            await db.Integrations
-                .Where(i => i.DiscordId == e.Integration.Id)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(i => i.Name, e.Integration.Name)
-                    .SetProperty(i => i.IsEnabled, e.Integration.IsEnabled));
-
-            db.IntegrationEvents.Add(new IntegrationEventEntity
+            string? rawJson = null;
+            try
             {
-                IntegrationDiscordId = e.Integration.Id,
-                GuildDiscordId = e.Guild.Id,
-                EventType = IntegrationEventType.Updated,
-                Name = e.Integration.Name,
-                Type = e.Integration.Type,
-                IsEnabled = e.Integration.IsEnabled,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
-                RawEventJson = rawJson
-            });
+                var now = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling integration updated");
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "IntegrationUpdated", nameof(IntegrationEventHandler), ex,
-                e.Guild?.Id, null, null, rawJson);
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "IntegrationUpdated", e.Guild.Id, null, null, correlationId: correlationId);
+
+                await db.Integrations
+                    .Where(i => i.DiscordId == e.Integration.Id)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(i => i.Name, e.Integration.Name)
+                        .SetProperty(i => i.IsEnabled, e.Integration.IsEnabled));
+
+                db.IntegrationEvents.Add(new IntegrationEventEntity
+                {
+                    IntegrationDiscordId = e.Integration.Id,
+                    GuildDiscordId = e.Guild.Id,
+                    EventType = IntegrationEventType.Updated,
+                    Name = e.Integration.Name,
+                    Type = e.Integration.Type,
+                    IsEnabled = e.Integration.IsEnabled,
+                    EventTimestampUtc = now,
+                    ReceivedAtUtc = now,
+                    RawEventJson = rawJson
+                });
+
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling integration updated");
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "IntegrationUpdated", nameof(IntegrationEventHandler), ex,
+                    e.Guild?.Id, null, null, rawJson, correlationId: correlationId);
+            }
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, IntegrationDeletedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var now = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "IntegrationDeleted", e.Guild.Id, null, null);
-
-            await db.Integrations
-                .Where(i => i.DiscordId == e.IntegrationId)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(i => i.IsDeleted, true)
-                    .SetProperty(i => i.DeletedAtUtc, (DateTime?)now));
-
-            db.IntegrationEvents.Add(new IntegrationEventEntity
+            string? rawJson = null;
+            try
             {
-                IntegrationDiscordId = e.IntegrationId,
-                GuildDiscordId = e.Guild.Id,
-                EventType = IntegrationEventType.Deleted,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
-                RawEventJson = rawJson
-            });
+                var now = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling integration deleted");
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "IntegrationDeleted", nameof(IntegrationEventHandler), ex,
-                e.Guild?.Id, null, null, rawJson);
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "IntegrationDeleted", e.Guild.Id, null, null, correlationId: correlationId);
+
+                await db.Integrations
+                    .Where(i => i.DiscordId == e.IntegrationId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(i => i.IsDeleted, true)
+                        .SetProperty(i => i.DeletedAtUtc, (DateTime?)now));
+
+                db.IntegrationEvents.Add(new IntegrationEventEntity
+                {
+                    IntegrationDiscordId = e.IntegrationId,
+                    GuildDiscordId = e.Guild.Id,
+                    EventType = IntegrationEventType.Deleted,
+                    EventTimestampUtc = now,
+                    ReceivedAtUtc = now,
+                    RawEventJson = rawJson
+                });
+
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling integration deleted");
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "IntegrationDeleted", nameof(IntegrationEventHandler), ex,
+                    e.Guild?.Id, null, null, rawJson, correlationId: correlationId);
+            }
         }
     }
 }
