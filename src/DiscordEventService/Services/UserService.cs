@@ -9,15 +9,48 @@ public class UserService(DiscordDbContext db, ILogger<UserService> logger)
 {
     public async Task UpsertUserAsync(DiscordUser user)
     {
-        var rowsAffected = await db.Users
+        var existing = await db.Users
             .Where(u => u.DiscordId == user.Id)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(u => u.Username, user.Username)
-                .SetProperty(u => u.GlobalName, user.GlobalName)
-                .SetProperty(u => u.Discriminator, user.Discriminator)
-                .SetProperty(u => u.AvatarHash, user.AvatarHash));
+            .Select(u => new { u.Id, u.Username, u.GlobalName })
+            .FirstOrDefaultAsync();
 
-        if (rowsAffected == 0)
+        if (existing is not null)
+        {
+            await db.Users
+                .Where(u => u.DiscordId == user.Id)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(u => u.Username, user.Username)
+                    .SetProperty(u => u.GlobalName, user.GlobalName)
+                    .SetProperty(u => u.Discriminator, user.Discriminator)
+                    .SetProperty(u => u.AvatarHash, user.AvatarHash));
+
+            var usernameChanged = existing.Username != user.Username;
+            var globalNameChanged = existing.GlobalName != user.GlobalName;
+
+            if (usernameChanged || globalNameChanged)
+            {
+                db.UserNameHistory.Add(new UserNameHistoryEntity
+                {
+                    UserId = existing.Id,
+                    UsernameBefore = usernameChanged ? existing.Username : null,
+                    UsernameAfter = usernameChanged ? user.Username : null,
+                    GlobalNameBefore = globalNameChanged ? existing.GlobalName : null,
+                    GlobalNameAfter = globalNameChanged ? user.GlobalName : null,
+                    ChangedAtUtc = DateTime.UtcNow
+                });
+                await db.SaveChangesAsync();
+                db.ChangeTracker.Clear();
+
+                logger.LogInformation(
+                    "User name changed for {DiscordId}: username {OldUser} → {NewUser}, globalName {OldGlobal} → {NewGlobal}",
+                    user.Id,
+                    usernameChanged ? existing.Username : "(unchanged)",
+                    usernameChanged ? user.Username : "(unchanged)",
+                    globalNameChanged ? existing.GlobalName : "(unchanged)",
+                    globalNameChanged ? user.GlobalName : "(unchanged)");
+            }
+        }
+        else
         {
             try
             {
@@ -35,7 +68,8 @@ public class UserService(DiscordDbContext db, ILogger<UserService> logger)
             }
             catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
             {
-                // Unique constraint violation - race condition, another request inserted first
+                // Race: another thread inserted first — update to latest values.
+                // No history row: we have no reliable "before" to compare against.
                 db.ChangeTracker.Clear();
                 await db.Users
                     .Where(u => u.DiscordId == user.Id)

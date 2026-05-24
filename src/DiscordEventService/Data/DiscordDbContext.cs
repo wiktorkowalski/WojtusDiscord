@@ -30,6 +30,9 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     // Member role snapshots (SCD for historical role membership)
     public DbSet<MemberRoleSnapshotEntity> MemberRoleSnapshots => Set<MemberRoleSnapshotEntity>();
 
+    // User name history
+    public DbSet<UserNameHistoryEntity> UserNameHistory => Set<UserNameHistoryEntity>();
+
     // Event entities - Messages & Reactions
     public DbSet<MessageEventEntity> MessageEvents => Set<MessageEventEntity>();
     public DbSet<ReactionEventEntity> ReactionEvents => Set<ReactionEventEntity>();
@@ -685,6 +688,17 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
             b.HasIndex(s => new { s.MemberId, s.RoleDiscordId })
                 .IsUnique()
                 .HasFilter("revoked_at_utc IS NULL");
+        });
+
+        modelBuilder.Entity<UserNameHistoryEntity>(b =>
+        {
+            b.HasOne(h => h.User)
+                .WithMany()
+                .HasForeignKey(h => h.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            b.HasIndex(h => h.UserId);
+            b.HasIndex(h => h.ChangedAtUtc);
         });
 
         // =====================================================
