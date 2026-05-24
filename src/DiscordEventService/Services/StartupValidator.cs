@@ -29,6 +29,7 @@ public static class StartupValidator
         typeof(IBackgroundJobClient),
         typeof(IHostEnvironment),
         typeof(IMemoryCache),
+        typeof(BootQuickSyncService),
     ];
 
     public static void ValidateChildContainer(IServiceProvider childProvider, ILogger logger)

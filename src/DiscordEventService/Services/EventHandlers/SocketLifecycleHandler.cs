@@ -9,6 +9,7 @@ namespace DiscordEventService.Services.EventHandlers;
 
 public class SocketLifecycleHandler(
     IServiceScopeFactory scopeFactory,
+    BootQuickSyncService quickSyncService,
     ILogger<SocketLifecycleHandler> logger) :
     IEventHandler<SocketClosedEventArgs>,
     IEventHandler<SessionResumedEventArgs>,
@@ -105,8 +106,12 @@ public class SocketLifecycleHandler(
             if (gap < ReconnectGapThreshold)
             {
                 logger.LogInformation(
-                    "GuildDownloadCompleted: gap {Gap:c} below threshold, skipping reconnect backfill",
+                    "GuildDownloadCompleted: gap {Gap:c} below threshold, running quick-sync only",
                     gap);
+                foreach (var guildId in e.Guilds.Keys)
+                {
+                    await quickSyncService.SyncAsync(guildId);
+                }
                 return;
             }
 
