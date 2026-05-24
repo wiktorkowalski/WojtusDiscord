@@ -22,6 +22,10 @@ public static class OpsEndpoints
         group.MapPost("/backfill-thread-channels", BackfillThreadChannels)
             .WithName("BackfillThreadChannels")
             .Produces<ThreadChannelBackfillService.Result>(StatusCodes.Status200OK);
+
+        group.MapPost("/backfill-role-snapshots", BackfillRoleSnapshots)
+            .WithName("BackfillRoleSnapshots")
+            .Produces<MemberRoleSnapshotBackfillService.Result>(StatusCodes.Status200OK);
     }
 
     private static async Task<IResult> StartDowntime(
@@ -63,6 +67,14 @@ public static class OpsEndpoints
 
     private static async Task<IResult> BackfillThreadChannels(
         ThreadChannelBackfillService svc,
+        CancellationToken ct)
+    {
+        var result = await svc.BackfillAsync(ct);
+        return Results.Ok(result);
+    }
+
+    private static async Task<IResult> BackfillRoleSnapshots(
+        MemberRoleSnapshotBackfillService svc,
         CancellationToken ct)
     {
         var result = await svc.BackfillAsync(ct);

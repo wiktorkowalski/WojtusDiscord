@@ -163,6 +163,7 @@ builder.Services.AddScoped<FailedEventService>();
 builder.Services.AddScoped<DowntimeTrackerService>();
 builder.Services.AddScoped<OrphanReplayService>();
 builder.Services.AddScoped<ThreadChannelBackfillService>();
+builder.Services.AddScoped<MemberRoleSnapshotBackfillService>();
 
 // Health checks
 builder.Services.AddHealthChecks()
