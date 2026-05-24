@@ -5,7 +5,8 @@ public enum MessageMentionType
     User = 0,
     Role = 1,
     Everyone = 2,
-    Here = 3
+    Here = 3,
+    Channel = 4
 }
 
 public class MessageMentionEntity
@@ -14,6 +15,7 @@ public class MessageMentionEntity
     public Guid MessageId { get; set; }
     public ulong? MentionedUserDiscordId { get; set; }
     public ulong? MentionedRoleDiscordId { get; set; }
+    public ulong? MentionedChannelDiscordId { get; set; }
     public MessageMentionType MentionType { get; set; }
 
     // Navigation properties

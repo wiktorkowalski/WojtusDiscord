@@ -1271,6 +1271,10 @@ namespace DiscordEventService.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("mention_type");
 
+                    b.Property<long?>("MentionedChannelDiscordId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("mentioned_channel_discord_id");
+
                     b.Property<long?>("MentionedRoleDiscordId")
                         .HasColumnType("bigint")
                         .HasColumnName("mentioned_role_discord_id");
@@ -1286,6 +1290,9 @@ namespace DiscordEventService.Data.Migrations
                     b.HasKey("Id")
                         .HasName("pk_message_mentions");
 
+                    b.HasIndex("MentionedChannelDiscordId")
+                        .HasDatabaseName("ix_message_mentions_mentioned_channel_discord_id");
+
                     b.HasIndex("MentionedRoleDiscordId")
                         .HasDatabaseName("ix_message_mentions_mentioned_role_discord_id");
 
@@ -1297,7 +1304,7 @@ namespace DiscordEventService.Data.Migrations
 
                     b.ToTable("message_mentions", null, t =>
                         {
-                            t.HasCheckConstraint("ck_message_mentions_target", "(mention_type IN (0,1) AND ((mentioned_user_discord_id IS NOT NULL AND mentioned_role_discord_id IS NULL) OR (mentioned_user_discord_id IS NULL AND mentioned_role_discord_id IS NOT NULL))) OR (mention_type IN (2,3) AND mentioned_user_discord_id IS NULL AND mentioned_role_discord_id IS NULL)");
+                            t.HasCheckConstraint("ck_message_mentions_target", "(mention_type = 0 AND mentioned_user_discord_id IS NOT NULL AND mentioned_role_discord_id IS NULL AND mentioned_channel_discord_id IS NULL) OR (mention_type = 1 AND mentioned_role_discord_id IS NOT NULL AND mentioned_user_discord_id IS NULL AND mentioned_channel_discord_id IS NULL) OR (mention_type IN (2,3) AND mentioned_user_discord_id IS NULL AND mentioned_role_discord_id IS NULL AND mentioned_channel_discord_id IS NULL) OR (mention_type = 4 AND mentioned_channel_discord_id IS NOT NULL AND mentioned_user_discord_id IS NULL AND mentioned_role_discord_id IS NULL)");
                         });
                 });
 

@@ -281,9 +281,6 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
 
                 if (messageGuid is Guid mentionMid)
                 {
-                    await db.MessageMentions
-                        .Where(m => m.MessageId == mentionMid)
-                        .ExecuteDeleteAsync();
                     await ExtractAndSaveMentionsAsync(db, mentionMid, e.Message);
                 }
 
@@ -350,6 +347,10 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
 
     private static async Task ExtractAndSaveMentionsAsync(DiscordDbContext db, Guid messageId, DiscordMessage message)
     {
+        await db.MessageMentions
+            .Where(m => m.MessageId == messageId)
+            .ExecuteDeleteAsync();
+
         var mentions = new List<MessageMentionEntity>();
 
         if (message.MentionedUsers is { Count: > 0 })
@@ -374,6 +375,19 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     MessageId = messageId,
                     MentionedRoleDiscordId = role.Id,
                     MentionType = MessageMentionType.Role
+                });
+            }
+        }
+
+        if (message.MentionedChannels is { Count: > 0 })
+        {
+            foreach (var channel in message.MentionedChannels)
+            {
+                mentions.Add(new MessageMentionEntity
+                {
+                    MessageId = messageId,
+                    MentionedChannelDiscordId = channel.Id,
+                    MentionType = MessageMentionType.Channel
                 });
             }
         }

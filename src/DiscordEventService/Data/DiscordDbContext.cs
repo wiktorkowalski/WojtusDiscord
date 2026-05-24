@@ -528,10 +528,13 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
             b.HasIndex(m => m.MessageId);
             b.HasIndex(m => m.MentionedUserDiscordId);
             b.HasIndex(m => m.MentionedRoleDiscordId);
+            b.HasIndex(m => m.MentionedChannelDiscordId);
 
             b.ToTable(t => t.HasCheckConstraint("ck_message_mentions_target",
-                "(mention_type IN (0,1) AND ((mentioned_user_discord_id IS NOT NULL AND mentioned_role_discord_id IS NULL) OR (mentioned_user_discord_id IS NULL AND mentioned_role_discord_id IS NOT NULL))) " +
-                "OR (mention_type IN (2,3) AND mentioned_user_discord_id IS NULL AND mentioned_role_discord_id IS NULL)"));
+                "(mention_type = 0 AND mentioned_user_discord_id IS NOT NULL AND mentioned_role_discord_id IS NULL AND mentioned_channel_discord_id IS NULL) " +
+                "OR (mention_type = 1 AND mentioned_role_discord_id IS NOT NULL AND mentioned_user_discord_id IS NULL AND mentioned_channel_discord_id IS NULL) " +
+                "OR (mention_type IN (2,3) AND mentioned_user_discord_id IS NULL AND mentioned_role_discord_id IS NULL AND mentioned_channel_discord_id IS NULL) " +
+                "OR (mention_type = 4 AND mentioned_channel_discord_id IS NOT NULL AND mentioned_user_discord_id IS NULL AND mentioned_role_discord_id IS NULL)"));
         });
 
         // Activity indexes
