@@ -41,6 +41,9 @@ builder.Services.AddOptions<DiscordOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
+builder.Services.AddOptions<HealthCheckOptions>()
+    .Bind(builder.Configuration.GetSection(HealthCheckOptions.SectionName));
+
 var connectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? throw new InvalidOperationException("ConnectionStrings:Postgres is required");
 
@@ -171,6 +174,9 @@ builder.Services.AddScoped<MessageMentionsBackfillService>();
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<DiscordDbContext>();
 
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<HealthCheckJob>();
+
 // Hangfire
 builder.Services.AddHangfire(config => config
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
@@ -239,6 +245,11 @@ RecurringJob.AddOrUpdate<PeriodicFullBackfillJob>(
     "periodic-full-backfill",
     j => j.ExecuteAsync(),
     "0 3 * * 0"); // Sundays 03:00 UTC
+
+RecurringJob.AddOrUpdate<HealthCheckJob>(
+    "health-check",
+    j => j.ExecuteAsync(),
+    "*/5 * * * *"); // Every 5 minutes
 
 // Backfill API
 app.MapBackfillEndpoints();
