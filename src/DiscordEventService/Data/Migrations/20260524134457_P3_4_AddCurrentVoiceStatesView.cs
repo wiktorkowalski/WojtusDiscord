@@ -31,13 +31,19 @@ namespace DiscordEventService.Data.Migrations
                     ORDER BY user_discord_id, guild_discord_id, event_timestamp_utc DESC
                 ) latest
                 WHERE latest.event_type != 1;
+
+                CREATE INDEX ix_voice_state_events_user_guild_ts
+                    ON voice_state_events (user_discord_id, guild_discord_id, event_timestamp_utc DESC);
                 """);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("DROP VIEW IF EXISTS v_current_voice_states;");
+            migrationBuilder.Sql("""
+                DROP VIEW IF EXISTS v_current_voice_states;
+                DROP INDEX IF EXISTS ix_voice_state_events_user_guild_ts;
+                """);
         }
     }
 }
