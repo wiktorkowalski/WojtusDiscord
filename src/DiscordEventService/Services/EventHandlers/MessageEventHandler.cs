@@ -3,6 +3,7 @@ using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Services;
 using DSharpPlus;
+using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
@@ -101,7 +102,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 db.ChangeTracker.Clear();
                 await using var tx = await db.Database.BeginTransactionAsync();
 
-                db.Messages.Add(new MessageEntity
+                var messageEntity = new MessageEntity
                 {
                     DiscordId = e.Message.Id,
                     ChannelId = channelId,
@@ -115,16 +116,18 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     EmbedsJson = embedsJson,
                     Flags = (int)(e.Message.Flags ?? 0),
                     CreatedAtUtc = e.Message.Timestamp.UtcDateTime
-                });
+                };
+                db.Messages.Add(messageEntity);
                 db.MessageEvents.Add(NewMessageEvent());
 
+                Guid messageId;
                 try
                 {
                     await db.SaveChangesAsync();
+                    messageId = messageEntity.Id;
                 }
                 catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
                 {
-                    // Gateway redelivery: message already stored. Refresh mutable fields and record the event row.
                     db.ChangeTracker.Clear();
                     await db.Messages
                         .Where(m => m.DiscordId == e.Message.Id)
@@ -138,8 +141,13 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                             .SetProperty(m => m.ReplyToDiscordId, e.Message.ReferencedMessage?.Id));
                     db.MessageEvents.Add(NewMessageEvent());
                     await db.SaveChangesAsync();
+                    messageId = await db.Messages
+                        .Where(m => m.DiscordId == e.Message.Id)
+                        .Select(m => m.Id)
+                        .FirstAsync();
                 }
 
+                await ExtractAndSaveMentionsAsync(db, messageId, e.Message);
                 await tx.CommitAsync();
             });
         }
@@ -270,6 +278,15 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 }
 
                 await db.SaveChangesAsync();
+
+                if (messageGuid is Guid mentionMid)
+                {
+                    await db.MessageMentions
+                        .Where(m => m.MessageId == mentionMid)
+                        .ExecuteDeleteAsync();
+                    await ExtractAndSaveMentionsAsync(db, mentionMid, e.Message);
+                }
+
                 await tx.CommitAsync();
             });
         }
@@ -328,6 +345,52 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
             await failedEventService.RecordFailureAsync(
                 "MessageDeleted", nameof(MessageEventHandler), ex,
                 e.Guild?.Id, e.Channel.Id, e.Message.Author?.Id);
+        }
+    }
+
+    private static async Task ExtractAndSaveMentionsAsync(DiscordDbContext db, Guid messageId, DiscordMessage message)
+    {
+        var mentions = new List<MessageMentionEntity>();
+
+        if (message.MentionedUsers is { Count: > 0 })
+        {
+            foreach (var user in message.MentionedUsers)
+            {
+                mentions.Add(new MessageMentionEntity
+                {
+                    MessageId = messageId,
+                    MentionedUserDiscordId = user.Id,
+                    MentionType = MessageMentionType.User
+                });
+            }
+        }
+
+        if (message.MentionedRoles is { Count: > 0 })
+        {
+            foreach (var role in message.MentionedRoles)
+            {
+                mentions.Add(new MessageMentionEntity
+                {
+                    MessageId = messageId,
+                    MentionedRoleDiscordId = role.Id,
+                    MentionType = MessageMentionType.Role
+                });
+            }
+        }
+
+        if (message.MentionEveryone)
+        {
+            var content = message.Content ?? "";
+            if (content.Contains("@everyone"))
+                mentions.Add(new MessageMentionEntity { MessageId = messageId, MentionType = MessageMentionType.Everyone });
+            if (content.Contains("@here"))
+                mentions.Add(new MessageMentionEntity { MessageId = messageId, MentionType = MessageMentionType.Here });
+        }
+
+        if (mentions.Count > 0)
+        {
+            db.MessageMentions.AddRange(mentions);
+            await db.SaveChangesAsync();
         }
     }
 
