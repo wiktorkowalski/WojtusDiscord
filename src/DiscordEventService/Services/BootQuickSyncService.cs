@@ -68,21 +68,21 @@ public class BootQuickSyncService(
                     .ToListAsync();
                 var existingSet = existingDiscordIds.ToHashSet();
 
-                var newMessages = messages.Where(m => !existingSet.Contains(m.Id)).ToList();
+                var newMessages = messages.Where(m => !existingSet.Contains(m.Id) && m.Author is not null).ToList();
                 if (newMessages.Count == 0) continue;
 
-                var uniqueAuthors = newMessages.Select(m => m.Author).DistinctBy(a => a.Id).ToList();
+                var uniqueAuthors = newMessages.Select(m => m.Author!).DistinctBy(a => a.Id).ToList();
                 foreach (var author in uniqueAuthors)
                     await userService.UpsertUserAsync(author);
 
-                var authorDiscordIds = newMessages.Select(m => m.Author.Id).Distinct().ToList();
+                var authorDiscordIds = newMessages.Select(m => m.Author!.Id).Distinct().ToList();
                 var authorLookup = await db.Users
                     .Where(u => authorDiscordIds.Contains(u.DiscordId))
                     .ToDictionaryAsync(u => u.DiscordId, u => u.Id);
 
                 foreach (var message in newMessages)
                 {
-                    if (!authorLookup.TryGetValue(message.Author.Id, out var authorId))
+                    if (!authorLookup.TryGetValue(message.Author!.Id, out var authorId))
                         continue;
 
                     var attachmentsJson = message.Attachments.Count > 0
