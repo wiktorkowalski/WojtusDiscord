@@ -46,4 +46,6 @@ public class RawEventLogEntity
     /// When the event was received
     /// </summary>
     public DateTime ReceivedAtUtc { get; set; } = DateTime.UtcNow;
+
+    public Guid? CorrelationId { get; set; }
 }

@@ -14,145 +14,157 @@ public class StageInstanceEventHandler(IServiceScopeFactory scopeFactory, ILogge
 {
     public async Task HandleEventAsync(DiscordClient sender, StageInstanceCreatedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var now = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "StageInstanceCreated", e.StageInstance.GuildId, e.StageInstance.ChannelId, null);
-
-            // Look up Guid FKs
-            var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.StageInstance.GuildId);
-            var channel = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == e.StageInstance.ChannelId);
-
-            db.StageInstances.Add(new StageInstanceEntity
+            string? rawJson = null;
+            try
             {
-                DiscordId = e.StageInstance.Id,
-                GuildId = guild?.Id ?? Guid.Empty,
-                ChannelId = channel?.Id ?? Guid.Empty,
-                Topic = e.StageInstance.Topic,
-                PrivacyLevel = (int)e.StageInstance.PrivacyLevel
-            });
+                var now = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            db.StageInstanceEvents.Add(new StageInstanceEventEntity
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "StageInstanceCreated", e.StageInstance.GuildId, e.StageInstance.ChannelId, null, correlationId: correlationId);
+
+                // Look up Guid FKs
+                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.StageInstance.GuildId);
+                var channel = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == e.StageInstance.ChannelId);
+
+                db.StageInstances.Add(new StageInstanceEntity
+                {
+                    DiscordId = e.StageInstance.Id,
+                    GuildId = guild?.Id ?? Guid.Empty,
+                    ChannelId = channel?.Id ?? Guid.Empty,
+                    Topic = e.StageInstance.Topic,
+                    PrivacyLevel = (int)e.StageInstance.PrivacyLevel
+                });
+
+                db.StageInstanceEvents.Add(new StageInstanceEventEntity
+                {
+                    StageInstanceDiscordId = e.StageInstance.Id,
+                    GuildDiscordId = e.StageInstance.GuildId,
+                    ChannelDiscordId = e.StageInstance.ChannelId,
+                    EventType = StageInstanceEventType.Created,
+                    TopicAfter = e.StageInstance.Topic,
+                    PrivacyLevelAfter = (int)e.StageInstance.PrivacyLevel,
+                    EventTimestampUtc = now,
+                    ReceivedAtUtc = now,
+                    RawEventJson = rawJson
+                });
+
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
             {
-                StageInstanceDiscordId = e.StageInstance.Id,
-                GuildDiscordId = e.StageInstance.GuildId,
-                ChannelDiscordId = e.StageInstance.ChannelId,
-                EventType = StageInstanceEventType.Created,
-                TopicAfter = e.StageInstance.Topic,
-                PrivacyLevelAfter = (int)e.StageInstance.PrivacyLevel,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
-                RawEventJson = rawJson
-            });
-
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling stage instance created");
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "StageInstanceCreated", nameof(StageInstanceEventHandler), ex,
-                e.StageInstance?.GuildId, e.StageInstance?.ChannelId, null, rawJson);
+                logger.LogError(ex, "Error handling stage instance created");
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "StageInstanceCreated", nameof(StageInstanceEventHandler), ex,
+                    e.StageInstance?.GuildId, e.StageInstance?.ChannelId, null, rawJson, correlationId: correlationId);
+            }
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, StageInstanceUpdatedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var now = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "StageInstanceUpdated", e.StageInstanceAfter.GuildId, e.StageInstanceAfter.ChannelId, null);
-
-            await db.StageInstances
-                .Where(s => s.DiscordId == e.StageInstanceAfter.Id)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(st => st.Topic, e.StageInstanceAfter.Topic)
-                    .SetProperty(st => st.PrivacyLevel, (int)e.StageInstanceAfter.PrivacyLevel));
-
-            db.StageInstanceEvents.Add(new StageInstanceEventEntity
+            string? rawJson = null;
+            try
             {
-                StageInstanceDiscordId = e.StageInstanceAfter.Id,
-                GuildDiscordId = e.StageInstanceAfter.GuildId,
-                ChannelDiscordId = e.StageInstanceAfter.ChannelId,
-                EventType = StageInstanceEventType.Updated,
-                TopicBefore = e.StageInstanceBefore?.Topic,
-                TopicAfter = e.StageInstanceAfter.Topic,
-                PrivacyLevelBefore = e.StageInstanceBefore != null ? (int)e.StageInstanceBefore.PrivacyLevel : null,
-                PrivacyLevelAfter = (int)e.StageInstanceAfter.PrivacyLevel,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
-                RawEventJson = rawJson
-            });
+                var now = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling stage instance updated");
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "StageInstanceUpdated", nameof(StageInstanceEventHandler), ex,
-                e.StageInstanceAfter?.GuildId, e.StageInstanceAfter?.ChannelId, null, rawJson);
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "StageInstanceUpdated", e.StageInstanceAfter.GuildId, e.StageInstanceAfter.ChannelId, null, correlationId: correlationId);
+
+                await db.StageInstances
+                    .Where(s => s.DiscordId == e.StageInstanceAfter.Id)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(st => st.Topic, e.StageInstanceAfter.Topic)
+                        .SetProperty(st => st.PrivacyLevel, (int)e.StageInstanceAfter.PrivacyLevel));
+
+                db.StageInstanceEvents.Add(new StageInstanceEventEntity
+                {
+                    StageInstanceDiscordId = e.StageInstanceAfter.Id,
+                    GuildDiscordId = e.StageInstanceAfter.GuildId,
+                    ChannelDiscordId = e.StageInstanceAfter.ChannelId,
+                    EventType = StageInstanceEventType.Updated,
+                    TopicBefore = e.StageInstanceBefore?.Topic,
+                    TopicAfter = e.StageInstanceAfter.Topic,
+                    PrivacyLevelBefore = e.StageInstanceBefore != null ? (int)e.StageInstanceBefore.PrivacyLevel : null,
+                    PrivacyLevelAfter = (int)e.StageInstanceAfter.PrivacyLevel,
+                    EventTimestampUtc = now,
+                    ReceivedAtUtc = now,
+                    RawEventJson = rawJson
+                });
+
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling stage instance updated");
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "StageInstanceUpdated", nameof(StageInstanceEventHandler), ex,
+                    e.StageInstanceAfter?.GuildId, e.StageInstanceAfter?.ChannelId, null, rawJson, correlationId: correlationId);
+            }
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, StageInstanceDeletedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var now = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "StageInstanceDeleted", e.StageInstance.GuildId, e.StageInstance.ChannelId, null);
-
-            await db.StageInstances
-                .Where(s => s.DiscordId == e.StageInstance.Id)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(st => st.IsDeleted, true)
-                    .SetProperty(st => st.DeletedAtUtc, (DateTime?)now));
-
-            db.StageInstanceEvents.Add(new StageInstanceEventEntity
+            string? rawJson = null;
+            try
             {
-                StageInstanceDiscordId = e.StageInstance.Id,
-                GuildDiscordId = e.StageInstance.GuildId,
-                ChannelDiscordId = e.StageInstance.ChannelId,
-                EventType = StageInstanceEventType.Deleted,
-                TopicBefore = e.StageInstance.Topic,
-                PrivacyLevelBefore = (int)e.StageInstance.PrivacyLevel,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
-                RawEventJson = rawJson
-            });
+                var now = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling stage instance deleted");
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "StageInstanceDeleted", nameof(StageInstanceEventHandler), ex,
-                e.StageInstance?.GuildId, e.StageInstance?.ChannelId, null, rawJson);
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "StageInstanceDeleted", e.StageInstance.GuildId, e.StageInstance.ChannelId, null, correlationId: correlationId);
+
+                await db.StageInstances
+                    .Where(s => s.DiscordId == e.StageInstance.Id)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(st => st.IsDeleted, true)
+                        .SetProperty(st => st.DeletedAtUtc, (DateTime?)now));
+
+                db.StageInstanceEvents.Add(new StageInstanceEventEntity
+                {
+                    StageInstanceDiscordId = e.StageInstance.Id,
+                    GuildDiscordId = e.StageInstance.GuildId,
+                    ChannelDiscordId = e.StageInstance.ChannelId,
+                    EventType = StageInstanceEventType.Deleted,
+                    TopicBefore = e.StageInstance.Topic,
+                    PrivacyLevelBefore = (int)e.StageInstance.PrivacyLevel,
+                    EventTimestampUtc = now,
+                    ReceivedAtUtc = now,
+                    RawEventJson = rawJson
+                });
+
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error handling stage instance deleted");
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "StageInstanceDeleted", nameof(StageInstanceEventHandler), ex,
+                    e.StageInstance?.GuildId, e.StageInstance?.ChannelId, null, rawJson, correlationId: correlationId);
+            }
         }
     }
 }

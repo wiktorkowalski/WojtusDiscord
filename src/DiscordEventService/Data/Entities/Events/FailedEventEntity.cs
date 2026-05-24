@@ -91,4 +91,6 @@ public class FailedEventEntity
     /// Notes about resolution
     /// </summary>
     public string? ResolutionNotes { get; set; }
+
+    public Guid? CorrelationId { get; set; }
 }

@@ -13,45 +13,49 @@ public class TypingEventHandler(IServiceScopeFactory scopeFactory, ILogger<Typin
 
     public async Task HandleEventAsync(DiscordClient sender, TypingStartedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            // Throttle: skip if we've seen this user+channel combo recently
-            var cacheKey = $"typing:{e.User.Id}:{e.Channel.Id}";
-            if (cache.TryGetValue(cacheKey, out _))
+            string? rawJson = null;
+            try
             {
-                return;
+                // Throttle: skip if we've seen this user+channel combo recently
+                var cacheKey = $"typing:{e.User.Id}:{e.Channel.Id}";
+                if (cache.TryGetValue(cacheKey, out _))
+                {
+                    return;
+                }
+                cache.Set(cacheKey, true, ThrottleWindow);
+
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "TypingStarted", e.Guild?.Id ?? 0, e.Channel.Id, e.User.Id, correlationId: correlationId);
+
+                var entity = new TypingEventEntity
+                {
+                    UserDiscordId = e.User.Id,
+                    ChannelDiscordId = e.Channel.Id,
+                    GuildDiscordId = e.Guild?.Id,
+                    StartedAt = e.StartedAt.UtcDateTime,
+                    ReceivedAtUtc = DateTime.UtcNow,
+                    RawEventJson = rawJson
+                };
+
+                db.TypingEvents.Add(entity);
+                await db.SaveChangesAsync();
             }
-            cache.Set(cacheKey, true, ThrottleWindow);
-
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "TypingStarted", e.Guild?.Id ?? 0, e.Channel.Id, e.User.Id);
-
-            var entity = new TypingEventEntity
+            catch (Exception ex)
             {
-                UserDiscordId = e.User.Id,
-                ChannelDiscordId = e.Channel.Id,
-                GuildDiscordId = e.Guild?.Id,
-                StartedAt = e.StartedAt.UtcDateTime,
-                ReceivedAtUtc = DateTime.UtcNow,
-                RawEventJson = rawJson
-            };
-
-            db.TypingEvents.Add(entity);
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling typing started");
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "TypingStarted", nameof(TypingEventHandler), ex,
-                e.Guild?.Id, e.Channel?.Id, e.User?.Id, rawJson);
+                logger.LogError(ex, "Error handling typing started");
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "TypingStarted", nameof(TypingEventHandler), ex,
+                    e.Guild?.Id, e.Channel?.Id, e.User?.Id, rawJson, correlationId: correlationId);
+            }
         }
     }
 }

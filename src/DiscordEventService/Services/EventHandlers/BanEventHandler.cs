@@ -13,112 +13,120 @@ public class BanEventHandler(IServiceScopeFactory scopeFactory, ILogger<BanEvent
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildBanAddedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var now = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "GuildBanAdded", e.Guild.Id, null, e.Member.Id);
-
-            await userService.UpsertUserAsync(e.Member);
-
-            // Look up Guid FKs
-            var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
-            var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == e.Member.Id);
-
-            if (guild != null && user != null)
+            string? rawJson = null;
+            try
             {
-                // Add or update ban entity
-                var existingBan = await db.Bans
-                    .FirstOrDefaultAsync(b => b.GuildId == guild.Id && b.UserId == user.Id && b.IsActive);
+                var now = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-                if (existingBan == null)
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "GuildBanAdded", e.Guild.Id, null, e.Member.Id, correlationId: correlationId);
+
+                await userService.UpsertUserAsync(e.Member);
+
+                // Look up Guid FKs
+                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+                var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == e.Member.Id);
+
+                if (guild != null && user != null)
                 {
-                    db.Bans.Add(new BanEntity
+                    // Add or update ban entity
+                    var existingBan = await db.Bans
+                        .FirstOrDefaultAsync(b => b.GuildId == guild.Id && b.UserId == user.Id && b.IsActive);
+
+                    if (existingBan == null)
                     {
-                        GuildId = guild.Id,
-                        UserId = user.Id,
-                        IsActive = true,
-                        BannedAtUtc = now
-                    });
+                        db.Bans.Add(new BanEntity
+                        {
+                            GuildId = guild.Id,
+                            UserId = user.Id,
+                            IsActive = true,
+                            BannedAtUtc = now
+                        });
+                    }
                 }
+
+                db.BanEvents.Add(new BanEventEntity
+                {
+                    GuildDiscordId = e.Guild.Id,
+                    UserDiscordId = e.Member.Id,
+                    EventType = BanEventType.Added,
+                    EventTimestampUtc = now,
+                    ReceivedAtUtc = now,
+                    RawEventJson = rawJson
+                });
+
+                await db.SaveChangesAsync();
             }
-
-            db.BanEvents.Add(new BanEventEntity
+            catch (Exception ex)
             {
-                GuildDiscordId = e.Guild.Id,
-                UserDiscordId = e.Member.Id,
-                EventType = BanEventType.Added,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
-                RawEventJson = rawJson
-            });
-
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling ban added for UserId={UserId}", e.Member.Id);
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "GuildBanAdded", nameof(BanEventHandler), ex,
-                e.Guild?.Id, null, e.Member?.Id, rawJson);
+                logger.LogError(ex, "Error handling ban added for UserId={UserId}", e.Member.Id);
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "GuildBanAdded", nameof(BanEventHandler), ex,
+                    e.Guild?.Id, null, e.Member?.Id, rawJson, correlationId: correlationId);
+            }
         }
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildBanRemovedEventArgs e)
     {
-        string? rawJson = null;
-        try
+        var correlationId = Guid.NewGuid();
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
-            var now = DateTime.UtcNow;
-            using var scope = scopeFactory.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-            var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-            rawJson = await rawEventService.SerializeAndLogAsync(
-                e, "GuildBanRemoved", e.Guild.Id, null, e.Member.Id);
-
-            // Look up Guid FKs
-            var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
-            var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == e.Member.Id);
-
-            if (guild != null && user != null)
+            string? rawJson = null;
+            try
             {
-                // Mark ban as inactive
-                await db.Bans
-                    .Where(b => b.GuildId == guild.Id && b.UserId == user.Id && b.IsActive)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(b => b.IsActive, false)
-                        .SetProperty(b => b.UnbannedAtUtc, now));
+                var now = DateTime.UtcNow;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+
+                rawJson = await rawEventService.SerializeAndLogAsync(
+                    e, "GuildBanRemoved", e.Guild.Id, null, e.Member.Id, correlationId: correlationId);
+
+                // Look up Guid FKs
+                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+                var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == e.Member.Id);
+
+                if (guild != null && user != null)
+                {
+                    // Mark ban as inactive
+                    await db.Bans
+                        .Where(b => b.GuildId == guild.Id && b.UserId == user.Id && b.IsActive)
+                        .ExecuteUpdateAsync(s => s
+                            .SetProperty(b => b.IsActive, false)
+                            .SetProperty(b => b.UnbannedAtUtc, now));
+                }
+
+                db.BanEvents.Add(new BanEventEntity
+                {
+                    GuildDiscordId = e.Guild.Id,
+                    UserDiscordId = e.Member.Id,
+                    EventType = BanEventType.Removed,
+                    EventTimestampUtc = now,
+                    ReceivedAtUtc = now,
+                    RawEventJson = rawJson
+                });
+
+                await db.SaveChangesAsync();
             }
-
-            db.BanEvents.Add(new BanEventEntity
+            catch (Exception ex)
             {
-                GuildDiscordId = e.Guild.Id,
-                UserDiscordId = e.Member.Id,
-                EventType = BanEventType.Removed,
-                EventTimestampUtc = now,
-                ReceivedAtUtc = now,
-                RawEventJson = rawJson
-            });
-
-            await db.SaveChangesAsync();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error handling ban removed for UserId={UserId}", e.Member.Id);
-            using var failureScope = scopeFactory.CreateScope();
-            var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-            await failedEventService.RecordFailureAsync(
-                "GuildBanRemoved", nameof(BanEventHandler), ex,
-                e.Guild?.Id, null, e.Member?.Id, rawJson);
+                logger.LogError(ex, "Error handling ban removed for UserId={UserId}", e.Member.Id);
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    "GuildBanRemoved", nameof(BanEventHandler), ex,
+                    e.Guild?.Id, null, e.Member?.Id, rawJson, correlationId: correlationId);
+            }
         }
     }
 }
