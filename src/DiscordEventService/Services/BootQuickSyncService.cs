@@ -69,70 +69,74 @@ public class BootQuickSyncService(
                 var existingSet = existingDiscordIds.ToHashSet();
 
                 var newMessages = messages.Where(m => !existingSet.Contains(m.Id)).ToList();
+                if (newMessages.Count == 0) continue;
+
+                var uniqueAuthors = newMessages.Select(m => m.Author).DistinctBy(a => a.Id).ToList();
+                foreach (var author in uniqueAuthors)
+                    await userService.UpsertUserAsync(author);
+
+                var authorDiscordIds = newMessages.Select(m => m.Author.Id).Distinct().ToList();
+                var authorLookup = await db.Users
+                    .Where(u => authorDiscordIds.Contains(u.DiscordId))
+                    .ToDictionaryAsync(u => u.DiscordId, u => u.Id);
 
                 foreach (var message in newMessages)
                 {
-                    try
+                    if (!authorLookup.TryGetValue(message.Author.Id, out var authorId))
+                        continue;
+
+                    var attachmentsJson = message.Attachments.Count > 0
+                        ? JsonSerializer.Serialize(message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
+                        : null;
+                    var embedsJson = message.Embeds.Count > 0
+                        ? JsonSerializer.Serialize(message.Embeds)
+                        : null;
+
+                    db.Messages.Add(new MessageEntity
                     {
-                        await userService.UpsertUserAsync(message.Author);
-                        var authorId = await db.Users
-                            .Where(u => u.DiscordId == message.Author.Id)
-                            .Select(u => u.Id)
-                            .FirstOrDefaultAsync();
+                        DiscordId = message.Id,
+                        ChannelId = channelId,
+                        GuildId = guildId,
+                        AuthorId = authorId,
+                        Content = message.Content,
+                        ReplyToDiscordId = message.ReferencedMessage?.Id,
+                        HasAttachments = message.Attachments.Count > 0,
+                        HasEmbeds = message.Embeds.Count > 0,
+                        AttachmentsJson = attachmentsJson,
+                        EmbedsJson = embedsJson,
+                        Flags = (int)(message.Flags ?? 0),
+                        CreatedAtUtc = message.Timestamp.UtcDateTime,
+                        EditedAtUtc = message.EditedTimestamp?.UtcDateTime
+                    });
 
-                        if (authorId == Guid.Empty) continue;
-
-                        var attachmentsJson = message.Attachments.Count > 0
-                            ? JsonSerializer.Serialize(message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
-                            : null;
-                        var embedsJson = message.Embeds.Count > 0
-                            ? JsonSerializer.Serialize(message.Embeds)
-                            : null;
-
-                        db.Messages.Add(new MessageEntity
-                        {
-                            DiscordId = message.Id,
-                            ChannelId = channelId,
-                            GuildId = guildId,
-                            AuthorId = authorId,
-                            Content = message.Content,
-                            ReplyToDiscordId = message.ReferencedMessage?.Id,
-                            HasAttachments = message.Attachments.Count > 0,
-                            HasEmbeds = message.Embeds.Count > 0,
-                            AttachmentsJson = attachmentsJson,
-                            EmbedsJson = embedsJson,
-                            Flags = (int)(message.Flags ?? 0),
-                            CreatedAtUtc = message.Timestamp.UtcDateTime,
-                            EditedAtUtc = message.EditedTimestamp?.UtcDateTime
-                        });
-
-                        db.MessageEvents.Add(new MessageEventEntity
-                        {
-                            MessageDiscordId = message.Id,
-                            ChannelDiscordId = channel.Id,
-                            AuthorDiscordId = message.Author.Id,
-                            GuildDiscordId = guild.Id,
-                            EventType = MessageEventType.Backfilled,
-                            Content = message.Content,
-                            HasAttachments = message.Attachments.Count > 0,
-                            HasEmbeds = message.Embeds.Count > 0,
-                            ReplyToMessageDiscordId = message.ReferencedMessage?.Id,
-                            AttachmentsJson = attachmentsJson,
-                            EmbedsJson = embedsJson,
-                            EventTimestampUtc = message.Timestamp.UtcDateTime,
-                            ReceivedAtUtc = DateTime.UtcNow
-                        });
-
-                        totalInserted++;
-                    }
-                    catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+                    db.MessageEvents.Add(new MessageEventEntity
                     {
-                        db.ChangeTracker.Clear();
-                    }
+                        MessageDiscordId = message.Id,
+                        ChannelDiscordId = channel.Id,
+                        AuthorDiscordId = message.Author.Id,
+                        GuildDiscordId = guild.Id,
+                        EventType = MessageEventType.Backfilled,
+                        Content = message.Content,
+                        HasAttachments = message.Attachments.Count > 0,
+                        HasEmbeds = message.Embeds.Count > 0,
+                        ReplyToMessageDiscordId = message.ReferencedMessage?.Id,
+                        AttachmentsJson = attachmentsJson,
+                        EmbedsJson = embedsJson,
+                        EventTimestampUtc = message.Timestamp.UtcDateTime,
+                        ReceivedAtUtc = DateTime.UtcNow
+                    });
+
+                    totalInserted++;
                 }
 
-                if (newMessages.Count > 0)
+                try
+                {
                     await db.SaveChangesAsync();
+                }
+                catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+                {
+                    db.ChangeTracker.Clear();
+                }
             }
             catch (DSharpPlus.Exceptions.UnauthorizedException)
             {
@@ -160,6 +164,13 @@ public class BootQuickSyncService(
         int presenceSnapshots = 0;
         int activitiesInserted = 0;
         var now = DateTime.UtcNow;
+
+        var guildGuid = await db.Guilds
+            .Where(g => g.DiscordId == guild.Id)
+            .Select(g => g.Id)
+            .FirstOrDefaultAsync();
+
+        if (guildGuid == Guid.Empty) return (0, 0);
 
         var members = new List<DiscordMember>();
         await foreach (var member in guild.GetAllMembersAsync())
@@ -214,10 +225,7 @@ public class BootQuickSyncService(
                             db.Activities.Add(new ActivityEntity
                             {
                                 UserId = userGuid,
-                                GuildId = await db.Guilds
-                                    .Where(g => g.DiscordId == guild.Id)
-                                    .Select(g => g.Id)
-                                    .FirstAsync(),
+                                GuildId = guildGuid,
                                 ActivityType = (int)activity.ActivityType,
                                 Name = activity.Name,
                                 StreamUrl = activity.StreamUrl,
