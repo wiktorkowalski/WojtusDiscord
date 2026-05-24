@@ -68,6 +68,11 @@ public class MemberRoleSnapshotBackfillService(
 
             foreach (var roleId in rolesAdded)
             {
+                var alreadyOpen = await db.MemberRoleSnapshots
+                    .AnyAsync(s => s.MemberId == memberId && s.RoleDiscordId == roleId && s.RevokedAtUtc == null, ct);
+                if (alreadyOpen)
+                    continue;
+
                 try
                 {
                     db.MemberRoleSnapshots.Add(new MemberRoleSnapshotEntity
