@@ -82,6 +82,11 @@ public class EmojisBackfillJob(
             await MarkCompletedAsync(db, checkpoint);
             logger.LogInformation("Emojis backfill completed for guild {GuildId}: {Count} emojis", guildId, checkpoint.ProcessedCount);
         }
+        catch (OperationCanceledException ex)
+        {
+            logger.LogWarning("Emojis backfill cancelled for guild {GuildId} (likely deploy restart)", guildId);
+            await MarkFailedAsync(db, checkpoint, ex);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Emojis backfill failed for guild {GuildId}", guildId);

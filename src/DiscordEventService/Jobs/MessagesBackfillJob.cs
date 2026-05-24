@@ -112,6 +112,11 @@ public class MessagesBackfillJob(
             await MarkCompletedAsync(db, checkpoint);
             logger.LogInformation("Messages backfill completed for guild {GuildId}: {Count} messages", guildId, checkpoint.ProcessedCount);
         }
+        catch (OperationCanceledException ex)
+        {
+            logger.LogWarning("Messages backfill cancelled for guild {GuildId} (likely deploy restart)", guildId);
+            await MarkFailedAsync(db, checkpoint, ex);
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Messages backfill failed for guild {GuildId}", guildId);
