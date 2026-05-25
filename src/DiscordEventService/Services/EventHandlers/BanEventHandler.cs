@@ -28,24 +28,28 @@ public class BanEventHandler(IServiceScopeFactory scopeFactory, ILogger<BanEvent
                 rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "GuildBanAdded", e.Guild.Id, null, e.Member.Id, correlationId: correlationId);
 
+                await db.SaveChangesAsync();
+
+                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
                 await userService.UpsertUserAsync(e.Member);
+                var userGuid = await db.Users
+                    .Where(u => u.DiscordId == e.Member.Id)
+                    .Select(u => u.Id)
+                    .FirstOrDefaultAsync();
 
-                // Look up Guid FKs
-                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
-                var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == e.Member.Id);
-
-                if (guild != null && user != null)
+                if (guildGuid != Guid.Empty && userGuid != Guid.Empty)
                 {
                     // Add or update ban entity
                     var existingBan = await db.Bans
-                        .FirstOrDefaultAsync(b => b.GuildId == guild.Id && b.UserId == user.Id && b.IsActive);
+                        .FirstOrDefaultAsync(b => b.GuildId == guildGuid && b.UserId == userGuid && b.IsActive);
 
                     if (existingBan == null)
                     {
                         db.Bans.Add(new BanEntity
                         {
-                            GuildId = guild.Id,
-                            UserId = user.Id,
+                            GuildId = guildGuid,
+                            UserId = userGuid,
                             IsActive = true,
                             BannedAtUtc = now
                         });
@@ -88,19 +92,26 @@ public class BanEventHandler(IServiceScopeFactory scopeFactory, ILogger<BanEvent
                 using var scope = scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
                 var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
 
                 rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "GuildBanRemoved", e.Guild.Id, null, e.Member.Id, correlationId: correlationId);
 
-                // Look up Guid FKs
-                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
-                var user = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == e.Member.Id);
+                await db.SaveChangesAsync();
 
-                if (guild != null && user != null)
+                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
+                await userService.UpsertUserAsync(e.Member);
+                var userGuid = await db.Users
+                    .Where(u => u.DiscordId == e.Member.Id)
+                    .Select(u => u.Id)
+                    .FirstOrDefaultAsync();
+
+                if (guildGuid != Guid.Empty && userGuid != Guid.Empty)
                 {
                     // Mark ban as inactive
                     await db.Bans
-                        .Where(b => b.GuildId == guild.Id && b.UserId == user.Id && b.IsActive)
+                        .Where(b => b.GuildId == guildGuid && b.UserId == userGuid && b.IsActive)
                         .ExecuteUpdateAsync(s => s
                             .SetProperty(b => b.IsActive, false)
                             .SetProperty(b => b.UnbannedAtUtc, now));

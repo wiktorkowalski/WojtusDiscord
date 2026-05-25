@@ -310,13 +310,21 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
 
     private static async Task UpsertScheduledEventAsync(DiscordDbContext db, DiscordScheduledGuildEvent evt, ulong? creatorDiscordId)
     {
-        // Look up Guid FKs
-        var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == evt.GuildId);
-        var channel = evt.ChannelId.HasValue
-            ? await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == evt.ChannelId.Value)
+        var guildGuid = await db.Guilds
+            .Where(g => g.DiscordId == evt.GuildId)
+            .Select(g => g.Id)
+            .FirstOrDefaultAsync();
+        Guid? channelGuid = evt.ChannelId.HasValue
+            ? await db.Channels
+                .Where(c => c.DiscordId == evt.ChannelId.Value)
+                .Select(c => (Guid?)c.Id)
+                .FirstOrDefaultAsync()
             : null;
-        var creator = creatorDiscordId.HasValue
-            ? await db.Users.FirstOrDefaultAsync(u => u.DiscordId == creatorDiscordId.Value)
+        Guid? creatorGuid = creatorDiscordId.HasValue
+            ? await db.Users
+                .Where(u => u.DiscordId == creatorDiscordId.Value)
+                .Select(u => (Guid?)u.Id)
+                .FirstOrDefaultAsync()
             : null;
 
         var existing = await db.GuildScheduledEvents.FirstOrDefaultAsync(s => s.DiscordId == evt.Id);
@@ -326,9 +334,9 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
             db.GuildScheduledEvents.Add(existing);
         }
 
-        existing.GuildId = guild?.Id ?? Guid.Empty;
-        existing.ChannelId = channel?.Id;
-        existing.CreatorId = creator?.Id;
+        existing.GuildId = guildGuid;
+        existing.ChannelId = channelGuid;
+        existing.CreatorId = creatorGuid;
         existing.Name = evt.Name;
         existing.Description = evt.Description;
         existing.Status = (int)evt.Status;

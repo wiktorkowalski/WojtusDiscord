@@ -26,12 +26,14 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
                 using var scope = scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
                 var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
 
                 rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "ChannelCreated", e.Guild.Id, e.Channel.Id, null, correlationId: correlationId);
 
-                // Look up Guild Guid
-                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+                await db.SaveChangesAsync();
+
+                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
 
                 ChannelEventEntity NewChannelEvent() => new()
                 {
@@ -55,7 +57,7 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
                     channelEntity = new ChannelEntity
                     {
                         DiscordId = e.Channel.Id,
-                        GuildId = guild?.Id ?? Guid.Empty
+                        GuildId = guildGuid
                     };
                     db.Channels.Add(channelEntity);
                 }
