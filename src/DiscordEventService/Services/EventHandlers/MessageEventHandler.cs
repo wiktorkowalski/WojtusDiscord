@@ -85,7 +85,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     AuthorDiscordId = e.Author.Id,
                     GuildDiscordId = e.Guild.Id,
                     EventType = MessageEventType.Created,
-                    Content = e.Message.Content,
+                    Content = NormalizeContent(e.Message.Content),
                     HasAttachments = e.Message.Attachments.Count > 0,
                     HasEmbeds = e.Message.Embeds.Count > 0,
                     ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
@@ -111,7 +111,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                         ChannelId = channelId,
                         GuildId = guildId,
                         AuthorId = authorId,
-                        Content = e.Message.Content,
+                        Content = NormalizeContent(e.Message.Content),
                         ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
                         HasAttachments = e.Message.Attachments.Count > 0,
                         HasEmbeds = e.Message.Embeds.Count > 0,
@@ -132,10 +132,11 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
                     {
                         db.ChangeTracker.Clear();
+                        var normalizedContent = NormalizeContent(e.Message.Content);
                         await db.Messages
                             .Where(m => m.DiscordId == e.Message.Id)
                             .ExecuteUpdateAsync(s => s
-                                .SetProperty(m => m.Content, e.Message.Content)
+                                .SetProperty(m => m.Content, normalizedContent)
                                 .SetProperty(m => m.HasAttachments, e.Message.Attachments.Count > 0)
                                 .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
                                 .SetProperty(m => m.AttachmentsJson, attachmentsJson)
@@ -197,9 +198,9 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 var message = await db.Messages.FirstOrDefaultAsync(m => m.DiscordId == e.Message.Id);
                 var messageGuid = message?.Id;
 
-                var contentBefore = e.MessageBefore is { } beforeForContent
+                var contentBefore = NormalizeContent(e.MessageBefore is { } beforeForContent
                     ? beforeForContent.Content
-                    : message?.Content;
+                    : message?.Content);
                 var attachmentsBeforeJson = e.MessageBefore is { } beforeForAttachments
                     ? (beforeForAttachments.Attachments.Count > 0
                         ? JsonSerializer.Serialize(beforeForAttachments.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
@@ -226,10 +227,11 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     db.ChangeTracker.Clear();
                     await using var tx = await db.Database.BeginTransactionAsync();
 
+                    var normalizedContent = NormalizeContent(e.Message.Content);
                     await db.Messages
                         .Where(m => m.DiscordId == e.Message.Id)
                         .ExecuteUpdateAsync(s => s
-                            .SetProperty(m => m.Content, e.Message.Content)
+                            .SetProperty(m => m.Content, normalizedContent)
                             .SetProperty(m => m.HasAttachments, e.Message.Attachments.Count > 0)
                             .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
                             .SetProperty(m => m.AttachmentsJson, attachmentsJson)
@@ -244,8 +246,8 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                         AuthorDiscordId = e.Author?.Id,
                         GuildDiscordId = e.Guild.Id,
                         EventType = MessageEventType.Updated,
-                        Content = e.Message.Content,
-                        ContentBefore = e.MessageBefore?.Content,
+                        Content = normalizedContent,
+                        ContentBefore = contentBefore,
                         HasAttachments = e.Message.Attachments.Count > 0,
                         HasEmbeds = e.Message.Embeds.Count > 0,
                         ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
@@ -256,7 +258,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                         RawEventJson = rawJson
                     });
 
-                    var contentChanged = contentBefore != e.Message.Content;
+                    var contentChanged = contentBefore != normalizedContent;
                     // jsonb columns get PG-normalized on storage; freshly-serialized strings
                     // (from e.Message or e.MessageBefore) won't byte-match the DB-loaded value
                     // even when the underlying data is identical. Structural compare.
@@ -272,7 +274,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                             MessageId = mid,
                             MessageDiscordId = e.Message.Id,
                             ContentBefore = contentBefore,
-                            ContentAfter = e.Message.Content,
+                            ContentAfter = normalizedContent,
                             AttachmentsBeforeJson = attachmentsBeforeJson,
                             AttachmentsAfterJson = attachmentsJson,
                             EmbedsBeforeJson = embedsBeforeJson,
@@ -337,7 +339,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     AuthorDiscordId = e.Message.Author?.Id,
                     GuildDiscordId = e.Guild.Id,
                     EventType = MessageEventType.Deleted,
-                    Content = e.Message.Content,
+                    Content = NormalizeContent(e.Message.Content),
                     EventTimestampUtc = receivedAt,
                     ReceivedAtUtc = receivedAt,
                     RawEventJson = rawJson
@@ -420,6 +422,9 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         }
     }
 
+    private static string? NormalizeContent(string? content) =>
+        string.IsNullOrEmpty(content) ? null : content;
+
     private static bool JsonEquals(string? a, string? b)
     {
         if (a == b) return true;
@@ -459,7 +464,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                     AuthorDiscordId = msg.Author?.Id,
                     GuildDiscordId = e.Guild.Id,
                     EventType = MessageEventType.BulkDeleted,
-                    Content = msg.Content,
+                    Content = NormalizeContent(msg.Content),
                     EventTimestampUtc = receivedAt,
                     ReceivedAtUtc = receivedAt,
                     RawEventJson = rawJson
