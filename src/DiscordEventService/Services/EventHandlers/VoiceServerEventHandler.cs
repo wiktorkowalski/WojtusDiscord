@@ -13,6 +13,7 @@ public class VoiceServerEventHandler(IServiceScopeFactory scopeFactory, ILogger<
         var correlationId = Guid.NewGuid();
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
+            string? rawJson = null;
             try
             {
                 var now = DateTime.UtcNow;
@@ -23,7 +24,7 @@ public class VoiceServerEventHandler(IServiceScopeFactory scopeFactory, ILogger<
 
                 // TODO: VoiceServerUpdatedEventArgs contains a Token property that may be serialized to raw JSON.
                 // Investigate if this is a security concern and consider excluding it from serialization.
-                var rawJson = await rawEventService.SerializeAndLogAsync(
+                rawJson = await rawEventService.SerializeAndLogAsync(
                     args, "VoiceServerUpdated", args.Guild.Id, null, null, correlationId: correlationId);
 
                 var voiceServerEvent = new VoiceServerEventEntity
@@ -48,7 +49,7 @@ public class VoiceServerEventHandler(IServiceScopeFactory scopeFactory, ILogger<
                 var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
                 await failedEventService.RecordFailureAsync(
                     "VoiceServerUpdated", nameof(VoiceServerEventHandler), ex,
-                    args.Guild.Id, null, null, correlationId: correlationId);
+                    args.Guild.Id, null, null, eventJson: rawJson, correlationId: correlationId);
             }
         }
     }

@@ -25,6 +25,7 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
         var correlationId = Guid.NewGuid();
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
+            string? rawJson = null;
             try
             {
                 var now = DateTime.UtcNow;
@@ -57,7 +58,7 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
                     }
                 };
 
-                var rawJson = await rawEventService.SerializeAndLogAsync(
+                rawJson = await rawEventService.SerializeAndLogAsync(
                     eventDto, "PresenceUpdated", guildId, null, args.User.Id, correlationId: correlationId);
 
                 // Record the presence event
@@ -115,7 +116,7 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
                 var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
                 await failedEventService.RecordFailureAsync(
                     "PresenceUpdated", nameof(PresenceEventHandler), ex,
-                    null, null, args.User.Id, correlationId: correlationId);
+                    null, null, args.User.Id, eventJson: rawJson, correlationId: correlationId);
             }
         }
     }
