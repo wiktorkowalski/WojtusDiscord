@@ -28,13 +28,15 @@ public class IntegrationEventHandler(IServiceScopeFactory scopeFactory, ILogger<
                 rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "IntegrationCreated", e.Guild.Id, null, null, correlationId: correlationId);
 
-                // Look up Guid FK
-                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+                await db.SaveChangesAsync();
+
+                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
 
                 db.Integrations.Add(new IntegrationEntity
                 {
                     DiscordId = e.Integration.Id,
-                    GuildId = guild?.Id ?? Guid.Empty,
+                    GuildId = guildGuid,
                     Name = e.Integration.Name,
                     Type = e.Integration.Type,
                     IsEnabled = e.Integration.IsEnabled

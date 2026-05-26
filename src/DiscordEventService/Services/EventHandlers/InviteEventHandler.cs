@@ -23,16 +23,26 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
                 using var scope = scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
                 var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+                var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
+                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
 
                 rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "InviteCreated", e.Guild.Id, e.Channel.Id, e.Invite.Inviter?.Id, correlationId: correlationId);
 
-                // Look up Guid FKs
-                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
-                var channel = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
-                var inviter = e.Invite.Inviter != null
-                    ? await db.Users.FirstOrDefaultAsync(u => u.DiscordId == e.Invite.Inviter.Id)
-                    : null;
+                await db.SaveChangesAsync();
+
+                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var channelGuid = await channelUpsert.UpsertChannelAsync(e.Channel, guildGuid);
+                Guid? inviterGuid = null;
+                if (e.Invite.Inviter != null)
+                {
+                    await userService.UpsertUserAsync(e.Invite.Inviter);
+                    inviterGuid = await db.Users
+                        .Where(u => u.DiscordId == e.Invite.Inviter.Id)
+                        .Select(u => u.Id)
+                        .FirstOrDefaultAsync();
+                }
 
                 // Upsert InviteEntity
                 var invite = e.Invite;
@@ -43,9 +53,9 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
                     db.Invites.Add(inviteEntity);
                 }
 
-                if (guild != null) inviteEntity.GuildId = guild.Id;
-                if (channel != null) inviteEntity.ChannelId = channel.Id;
-                inviteEntity.InviterId = inviter?.Id;
+                if (guildGuid != Guid.Empty) inviteEntity.GuildId = guildGuid;
+                if (channelGuid != Guid.Empty) inviteEntity.ChannelId = channelGuid;
+                inviteEntity.InviterId = inviterGuid;
                 inviteEntity.MaxAge = invite.MaxAge;
                 inviteEntity.MaxUses = invite.MaxUses;
                 inviteEntity.Uses = invite.Uses;

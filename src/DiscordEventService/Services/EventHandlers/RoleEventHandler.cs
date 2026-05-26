@@ -25,12 +25,14 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
                 using var scope = scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
                 var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
 
                 rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "GuildRoleCreated", e.Guild.Id, null, null, correlationId: correlationId);
 
-                // Look up Guild Guid
-                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+                await db.SaveChangesAsync();
+
+                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
 
                 RoleEventEntity NewRoleEvent() => new()
                 {
@@ -52,7 +54,7 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
                     roleEntity = new RoleEntity
                     {
                         DiscordId = e.Role.Id,
-                        GuildId = guild?.Id ?? Guid.Empty
+                        GuildId = guildGuid
                     };
                     db.Roles.Add(roleEntity);
                 }

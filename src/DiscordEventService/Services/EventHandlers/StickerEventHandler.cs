@@ -27,8 +27,10 @@ public class StickerEventHandler(IServiceScopeFactory scopeFactory, ILogger<Stic
                 rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "GuildStickersUpdated", e.Guild.Id, null, null, correlationId: correlationId);
 
-                // Look up Guild Guid
-                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+                await db.SaveChangesAsync();
+
+                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
 
                 var beforeIds = e.StickersBefore.Keys.ToHashSet();
                 var afterIds = e.StickersAfter.Keys.ToHashSet();
@@ -49,7 +51,7 @@ public class StickerEventHandler(IServiceScopeFactory scopeFactory, ILogger<Stic
                         db.Stickers.Add(new StickerEntity
                         {
                             DiscordId = sticker.Id,
-                            GuildId = guild?.Id,
+                            GuildId = guildGuid != Guid.Empty ? guildGuid : null,
                             Name = sticker.Name ?? string.Empty,
                             Description = sticker.Description,
                             Tags = sticker.Tags != null ? string.Join(",", sticker.Tags) : null,

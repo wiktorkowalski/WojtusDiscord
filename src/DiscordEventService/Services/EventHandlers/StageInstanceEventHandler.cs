@@ -28,15 +28,22 @@ public class StageInstanceEventHandler(IServiceScopeFactory scopeFactory, ILogge
                 rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "StageInstanceCreated", e.StageInstance.GuildId, e.StageInstance.ChannelId, null, correlationId: correlationId);
 
-                // Look up Guid FKs
-                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.StageInstance.GuildId);
-                var channel = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == e.StageInstance.ChannelId);
+                await db.SaveChangesAsync();
+
+                var guildGuid = await db.Guilds
+                    .Where(g => g.DiscordId == e.StageInstance.GuildId)
+                    .Select(g => g.Id)
+                    .FirstOrDefaultAsync();
+                var channelGuid = await db.Channels
+                    .Where(c => c.DiscordId == e.StageInstance.ChannelId)
+                    .Select(c => c.Id)
+                    .FirstOrDefaultAsync();
 
                 db.StageInstances.Add(new StageInstanceEntity
                 {
                     DiscordId = e.StageInstance.Id,
-                    GuildId = guild?.Id ?? Guid.Empty,
-                    ChannelId = channel?.Id ?? Guid.Empty,
+                    GuildId = guildGuid,
+                    ChannelId = channelGuid,
                     Topic = e.StageInstance.Topic,
                     PrivacyLevel = (int)e.StageInstance.PrivacyLevel
                 });

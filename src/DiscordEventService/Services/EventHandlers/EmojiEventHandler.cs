@@ -27,8 +27,10 @@ public class EmojiEventHandler(IServiceScopeFactory scopeFactory, ILogger<EmojiE
                 rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "GuildEmojisUpdated", e.Guild.Id, null, null, correlationId: correlationId);
 
-                // Look up Guild Guid
-                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+                await db.SaveChangesAsync();
+
+                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
 
                 var beforeIds = e.EmojisBefore.Keys.ToHashSet();
                 var afterIds = e.EmojisAfter.Keys.ToHashSet();
@@ -50,7 +52,7 @@ public class EmojiEventHandler(IServiceScopeFactory scopeFactory, ILogger<EmojiE
                         db.Emotes.Add(new EmoteEntity
                         {
                             DiscordId = emoji.Id,
-                            GuildId = guild?.Id,
+                            GuildId = guildGuid != Guid.Empty ? guildGuid : null,
                             Name = emoji.Name,
                             IsAnimated = emoji.IsAnimated,
                             IsAvailable = emoji.IsAvailable
