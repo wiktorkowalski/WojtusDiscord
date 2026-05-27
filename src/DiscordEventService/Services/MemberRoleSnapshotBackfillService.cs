@@ -66,11 +66,15 @@ public class MemberRoleSnapshotBackfillService(
                 ? JsonSerializer.Deserialize<List<ulong>>(evt.RolesRemovedJson) ?? []
                 : [];
 
+            var openRoles = (await db.MemberRoleSnapshots
+                .Where(s => s.MemberId == memberId && s.RevokedAtUtc == null)
+                .Select(s => s.RoleDiscordId)
+                .ToListAsync(ct))
+                .ToHashSet();
+
             foreach (var roleId in rolesAdded)
             {
-                var alreadyOpen = await db.MemberRoleSnapshots
-                    .AnyAsync(s => s.MemberId == memberId && s.RoleDiscordId == roleId && s.RevokedAtUtc == null, ct);
-                if (alreadyOpen)
+                if (openRoles.Contains(roleId))
                     continue;
 
                 try
@@ -148,12 +152,15 @@ public class MemberRoleSnapshotBackfillService(
                 if (!memberLookup.TryGetValue((member.Id, guildDiscordId), out var memberId))
                     continue;
 
+                var openRolesForMember = (await db.MemberRoleSnapshots
+                    .Where(s => s.MemberId == memberId && s.RevokedAtUtc == null)
+                    .Select(s => s.RoleDiscordId)
+                    .ToListAsync(ct))
+                    .ToHashSet();
+
                 foreach (var role in member.Roles)
                 {
-                    var hasOpen = await db.MemberRoleSnapshots
-                        .AnyAsync(s => s.MemberId == memberId && s.RoleDiscordId == role.Id && s.RevokedAtUtc == null, ct);
-
-                    if (hasOpen)
+                    if (openRolesForMember.Contains(role.Id))
                         continue;
 
                     try
