@@ -120,7 +120,9 @@ public class HealthCheckJob(
     {
         var windowStart = now.AddMinutes(-30);
         var recentRestarts = await db.BotDowntimeIntervals
-            .Where(d => d.StartedAtUtc > windowStart && d.EndedAtUtc != null)
+            .Where(d => d.StartedAtUtc > windowStart && d.EndedAtUtc != null
+                && d.Type != Data.Entities.Core.BotDowntimeType.GracefulShutdown
+                && d.Type != Data.Entities.Core.BotDowntimeType.Deploy)
             .CountAsync();
 
         if (recentRestarts < 3)
