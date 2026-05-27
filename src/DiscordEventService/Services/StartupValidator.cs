@@ -1,5 +1,6 @@
 using DiscordEventService.Data;
 using DiscordEventService.Jobs;
+using DiscordEventService.Services.Pipeline;
 using Hangfire;
 using Microsoft.Extensions.Caching.Memory;
 
@@ -30,6 +31,7 @@ public static class StartupValidator
         typeof(IHostEnvironment),
         typeof(IMemoryCache),
         typeof(BootQuickSyncService),
+        typeof(EventPipeline),
     ];
 
     public static void ValidateChildContainer(IServiceProvider childProvider, ILogger logger)

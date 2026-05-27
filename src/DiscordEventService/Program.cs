@@ -4,6 +4,7 @@ using DiscordEventService.Endpoints;
 using DiscordEventService.Jobs;
 using DiscordEventService.Services;
 using DiscordEventService.Services.EventHandlers;
+using DiscordEventService.Services.Pipeline;
 using DotNetEnv;
 using DSharpPlus;
 using Hangfire;
@@ -81,6 +82,7 @@ builder.Services.AddSingleton(rootSp =>
             .UseSnakeCaseNamingConvention());
 
         services.AddSingleton<IHostEnvironment>(builder.Environment);
+        services.AddSingleton<EventPipeline>();
         services.AddScoped<UserService>();
         services.AddScoped<GuildUpsertService>();
         services.AddScoped<ChannelUpsertService>();
