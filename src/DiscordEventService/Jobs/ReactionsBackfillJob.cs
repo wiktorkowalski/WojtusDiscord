@@ -54,7 +54,11 @@ public class ReactionsBackfillJob(
 
             // Get all text channels
             var textChannels = channels
-                .Where(c => c.Type is DiscordChannelType.Text or DiscordChannelType.News)
+                .Where(c => c.Type is DiscordChannelType.Text
+                         or DiscordChannelType.News
+                         or DiscordChannelType.PublicThread
+                         or DiscordChannelType.PrivateThread
+                         or DiscordChannelType.NewsThread)
                 .OrderBy(c => c.Id)
                 .ToList();
 
