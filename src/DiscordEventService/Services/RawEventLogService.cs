@@ -107,6 +107,11 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
         // recursion. Strip it so the default object/dictionary serializer runs.
         private const string ProblemConverterName = "SnowflakeArrayAsDictionaryJsonConverter";
 
+        private static readonly HashSet<string> SensitiveProperties = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "VoiceToken"
+        };
+
         protected override JsonProperty CreateProperty(MemberInfo member, MemberSerialization memberSerialization)
         {
             var property = base.CreateProperty(member, memberSerialization);
@@ -116,6 +121,8 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
                 property.MemberConverter = null;
             if (property.ItemConverter?.GetType().Name == ProblemConverterName)
                 property.ItemConverter = null;
+            if (SensitiveProperties.Contains(member.Name))
+                property.ShouldSerialize = _ => false;
             return property;
         }
 

@@ -22,8 +22,6 @@ public class VoiceServerEventHandler(IServiceScopeFactory scopeFactory, ILogger<
                 var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
                 var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-                // TODO: VoiceServerUpdatedEventArgs contains a Token property that may be serialized to raw JSON.
-                // Investigate if this is a security concern and consider excluding it from serialization.
                 rawJson = await rawEventService.SerializeAndLogAsync(
                     args, "VoiceServerUpdated", args.Guild.Id, null, null, correlationId: correlationId);
 
