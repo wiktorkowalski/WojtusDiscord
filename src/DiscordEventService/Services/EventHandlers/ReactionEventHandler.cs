@@ -1,11 +1,11 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<ReactionEventHandler> logger) :
+public sealed class ReactionEventHandler(EventPipeline pipeline) :
     IEventHandler<MessageReactionAddedEventArgs>,
     IEventHandler<MessageReactionRemovedEventArgs>,
     IEventHandler<MessageReactionsClearedEventArgs>,
@@ -15,20 +15,9 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
     {
         if (e.Guild is null) return;
 
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "MessageReactionAdded", nameof(ReactionEventHandler),
+            e.Guild.Id, e.Channel.Id, e.User.Id, async ctx =>
             {
-                var receivedAt = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "MessageReactionAdded", e.Guild.Id, e.Channel.Id, e.User.Id, correlationId: correlationId);
-
                 var reactionEvent = new ReactionEventEntity
                 {
                     MessageDiscordId = e.Message.Id,
@@ -40,44 +29,23 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
                     IsAnimated = e.Emoji.IsAnimated,
                     IsBurst = false,
                     EventType = ReactionEventType.Added,
-                    EventTimestampUtc = receivedAt,
-                    ReceivedAtUtc = receivedAt,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 };
 
-                db.ReactionEvents.Add(reactionEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling reaction added for MessageId={MessageId}", e.Message.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "MessageReactionAdded", nameof(ReactionEventHandler), ex,
-                    e.Guild?.Id, e.Channel.Id, e.User.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                ctx.Db.ReactionEvents.Add(reactionEvent);
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, MessageReactionRemovedEventArgs e)
     {
         if (e.Guild is null) return;
 
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "MessageReactionRemoved", nameof(ReactionEventHandler),
+            e.Guild.Id, e.Channel.Id, e.User.Id, async ctx =>
             {
-                var receivedAt = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "MessageReactionRemoved", e.Guild.Id, e.Channel.Id, e.User.Id, correlationId: correlationId);
-
                 var reactionEvent = new ReactionEventEntity
                 {
                     MessageDiscordId = e.Message.Id,
@@ -89,44 +57,23 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
                     IsAnimated = e.Emoji.IsAnimated,
                     IsBurst = false,
                     EventType = ReactionEventType.Removed,
-                    EventTimestampUtc = receivedAt,
-                    ReceivedAtUtc = receivedAt,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 };
 
-                db.ReactionEvents.Add(reactionEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling reaction removed for MessageId={MessageId}", e.Message.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "MessageReactionRemoved", nameof(ReactionEventHandler), ex,
-                    e.Guild?.Id, e.Channel.Id, e.User.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                ctx.Db.ReactionEvents.Add(reactionEvent);
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, MessageReactionsClearedEventArgs e)
     {
         if (e.Guild is null) return;
 
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "MessageReactionsCleared", nameof(ReactionEventHandler),
+            e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
-                var receivedAt = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "MessageReactionsCleared", e.Guild.Id, e.Channel.Id, null, correlationId: correlationId);
-
                 var reactionEvent = new ReactionEventEntity
                 {
                     MessageDiscordId = e.Message.Id,
@@ -138,44 +85,23 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
                     IsAnimated = false,
                     IsBurst = false,
                     EventType = ReactionEventType.Cleared,
-                    EventTimestampUtc = receivedAt,
-                    ReceivedAtUtc = receivedAt,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 };
 
-                db.ReactionEvents.Add(reactionEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling reactions cleared for MessageId={MessageId}", e.Message.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "MessageReactionsCleared", nameof(ReactionEventHandler), ex,
-                    e.Guild?.Id, e.Channel.Id, null, rawJson, correlationId: correlationId);
-            }
-        }
+                ctx.Db.ReactionEvents.Add(reactionEvent);
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, MessageReactionRemovedEmojiEventArgs e)
     {
         if (e.Guild is null) return;
 
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "MessageReactionRemovedEmoji", nameof(ReactionEventHandler),
+            e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
-                var receivedAt = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "MessageReactionRemovedEmoji", e.Guild.Id, e.Channel.Id, null, correlationId: correlationId);
-
                 var reactionEvent = new ReactionEventEntity
                 {
                     MessageDiscordId = e.Message.Id,
@@ -187,23 +113,13 @@ public class ReactionEventHandler(IServiceScopeFactory scopeFactory, ILogger<Rea
                     IsAnimated = e.Emoji.IsAnimated,
                     IsBurst = false,
                     EventType = ReactionEventType.EmojiCleared,
-                    EventTimestampUtc = receivedAt,
-                    ReceivedAtUtc = receivedAt,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 };
 
-                db.ReactionEvents.Add(reactionEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling emoji cleared for MessageId={MessageId}", e.Message.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "MessageReactionRemovedEmoji", nameof(ReactionEventHandler), ex,
-                    e.Guild?.Id, e.Channel.Id, null, rawJson, correlationId: correlationId);
-            }
-        }
+                ctx.Db.ReactionEvents.Add(reactionEvent);
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 }
