@@ -15,6 +15,8 @@ public class HealthCheckJob(
 {
     private static DateTime _lastFailedEventAlert = DateTime.MinValue;
     private static DateTime _lastIngestStallAlert = DateTime.MinValue;
+    private static DateTime _lastEventRatioAlert = DateTime.MinValue;
+    private static DateTime _lastCrashLoopAlert = DateTime.MinValue;
     private static readonly object _lock = new();
     private static readonly TimeSpan WebhookTimeout = TimeSpan.FromSeconds(10);
 
@@ -33,6 +35,8 @@ public class HealthCheckJob(
 
         await CheckFailedEventsAsync(db, opts, now);
         await CheckIngestStallAsync(db, opts, now);
+        await CheckEventTypeRatioAsync(db, opts, now);
+        await CheckCrashLoopAsync(db, opts, now);
     }
 
     private async Task CheckFailedEventsAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now)
@@ -110,6 +114,84 @@ public class HealthCheckJob(
         lock (_lock) { _lastIngestStallAlert = now; }
 
         logger.LogWarning("Health check alert: ingest stall, last event {MinutesAgo:F0} min ago", eventAge.TotalMinutes);
+    }
+
+    private async Task CheckCrashLoopAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now)
+    {
+        var windowStart = now.AddMinutes(-30);
+        var recentRestarts = await db.BotDowntimeIntervals
+            .Where(d => d.StartedAtUtc > windowStart && d.EndedAtUtc != null)
+            .CountAsync();
+
+        if (recentRestarts < 3)
+            return;
+
+        lock (_lock)
+        {
+            if ((now - _lastCrashLoopAlert).TotalMinutes < opts.AlertCooldownMinutes)
+                return;
+        }
+
+        if (!await SendWebhookAsync(opts.WebhookUrl!,
+            $"**Possible crash-loop** — {recentRestarts} restarts in the last 30 minutes. Check container logs for `Stack overflow` or other fatal errors."))
+            return;
+
+        lock (_lock) { _lastCrashLoopAlert = now; }
+
+        logger.LogWarning("Health check alert: {Restarts} restarts in last 30 min — possible crash-loop", recentRestarts);
+    }
+
+    private async Task CheckEventTypeRatioAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now)
+    {
+        var baselineStart = now.AddDays(-opts.EventRatioBaselineDays);
+        var recentStart = now.AddHours(-opts.EventRatioRecentHours);
+
+        var baseline = await db.RawEventLogs
+            .Where(r => r.ReceivedAtUtc > baselineStart)
+            .GroupBy(r => r.EventType)
+            .Select(g => new { EventType = g.Key, DailyAvg = (double)g.Count() / opts.EventRatioBaselineDays })
+            .ToListAsync();
+
+        var recent = await db.RawEventLogs
+            .Where(r => r.ReceivedAtUtc > recentStart)
+            .GroupBy(r => r.EventType)
+            .Select(g => new { EventType = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(g => g.EventType, g => g.Count);
+
+        var dropped = baseline
+            .Where(b => b.DailyAvg >= opts.EventRatioMinDailyBaseline)
+            .Where(b =>
+            {
+                var recentCount = recent.GetValueOrDefault(b.EventType, 0);
+                var expectedInWindow = b.DailyAvg * opts.EventRatioRecentHours / 24.0;
+                return recentCount < expectedInWindow * opts.EventRatioDropThreshold;
+            })
+            .ToList();
+
+        if (dropped.Count == 0)
+            return;
+
+        lock (_lock)
+        {
+            if ((now - _lastEventRatioAlert).TotalMinutes < opts.AlertCooldownMinutes)
+                return;
+        }
+
+        var details = string.Join("\n", dropped.Select(d =>
+        {
+            var recentCount = recent.GetValueOrDefault(d.EventType, 0);
+            var expectedInWindow = d.DailyAvg * opts.EventRatioRecentHours / 24.0;
+            return $"- `{d.EventType}`: {recentCount} in last {opts.EventRatioRecentHours}h (expected ~{expectedInWindow:F0} based on {d.DailyAvg:F1}/day baseline)";
+        }));
+
+        if (!await SendWebhookAsync(opts.WebhookUrl!,
+            $"**Event type ratio drop** — {dropped.Count} event type(s) below {opts.EventRatioDropThreshold:P0} of baseline:\n{details}"))
+            return;
+
+        lock (_lock) { _lastEventRatioAlert = now; }
+
+        logger.LogWarning("Health check alert: event type ratio drop for {Types}",
+            string.Join(", ", dropped.Select(d => d.EventType)));
     }
 
     private async Task<bool> SendWebhookAsync(string webhookUrl, string message)
