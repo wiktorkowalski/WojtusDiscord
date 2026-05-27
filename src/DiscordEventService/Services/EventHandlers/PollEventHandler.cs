@@ -1,11 +1,11 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class PollEventHandler(IServiceScopeFactory scopeFactory, ILogger<PollEventHandler> logger) :
+public sealed class PollEventHandler(EventPipeline pipeline) :
     IEventHandler<MessagePollVotedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, MessagePollVotedEventArgs e)
@@ -13,44 +13,23 @@ public class PollEventHandler(IServiceScopeFactory scopeFactory, ILogger<PollEve
         var update = e.PollVoteUpdate;
         if (update.Guild is null) return;
 
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "MessagePollVoted", nameof(PollEventHandler),
+            update.Guild.Id, update.Message?.ChannelId, update.User?.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "MessagePollVoted", update.Guild.Id, update.Message?.ChannelId, update.User?.Id, correlationId: correlationId);
-
-                db.PollEvents.Add(new PollEventEntity
+                ctx.Db.PollEvents.Add(new PollEventEntity
                 {
                     MessageDiscordId = update.Message?.Id ?? 0,
                     ChannelDiscordId = update.Message?.ChannelId ?? 0,
                     GuildDiscordId = update.Guild.Id,
                     UserDiscordId = update.User?.Id ?? 0,
-                    AnswerId = 0, // AnswerId not exposed in this event
+                    AnswerId = 0,
                     EventType = update.WasAdded ? PollEventType.VoteAdded : PollEventType.VoteRemoved,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 });
 
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling poll vote");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "MessagePollVoted", nameof(PollEventHandler), ex,
-                    update.Guild?.Id, update.Message?.ChannelId, update.User?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 }
