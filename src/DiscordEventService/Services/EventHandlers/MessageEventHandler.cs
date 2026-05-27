@@ -174,6 +174,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         var correlationId = Guid.NewGuid();
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
+            string? rawJson = null;
             try
             {
                 var receivedAt = DateTime.UtcNow;
@@ -181,7 +182,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
                 var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-                var rawJson = await rawEventService.SerializeAndLogAsync(
+                rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "MessageUpdated", e.Guild.Id, e.Channel.Id, e.Author?.Id, correlationId: correlationId);
 
                 var attachmentsJson = e.Message.Attachments.Count > 0
@@ -303,7 +304,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
                 await failedEventService.RecordFailureAsync(
                     "MessageUpdated", nameof(MessageEventHandler), ex,
-                    e.Guild?.Id, e.Channel.Id, e.Author?.Id, correlationId: correlationId);
+                    e.Guild?.Id, e.Channel.Id, e.Author?.Id, eventJson: rawJson, correlationId: correlationId);
             }
         }
     }
@@ -315,6 +316,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         var correlationId = Guid.NewGuid();
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
+            string? rawJson = null;
             try
             {
                 var receivedAt = DateTime.UtcNow;
@@ -322,7 +324,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
                 var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-                var rawJson = await rawEventService.SerializeAndLogAsync(
+                rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "MessageDeleted", e.Guild.Id, e.Channel.Id, e.Message.Author?.Id, correlationId: correlationId);
 
                 // Mark message as deleted
@@ -354,7 +356,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
                 await failedEventService.RecordFailureAsync(
                     "MessageDeleted", nameof(MessageEventHandler), ex,
-                    e.Guild?.Id, e.Channel.Id, e.Message.Author?.Id, correlationId: correlationId);
+                    e.Guild?.Id, e.Channel.Id, e.Message.Author?.Id, eventJson: rawJson, correlationId: correlationId);
             }
         }
     }
@@ -439,6 +441,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
         var correlationId = Guid.NewGuid();
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
+            string? rawJson = null;
             try
             {
                 var receivedAt = DateTime.UtcNow;
@@ -446,7 +449,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
                 var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-                var rawJson = await rawEventService.SerializeAndLogAsync(
+                rawJson = await rawEventService.SerializeAndLogAsync(
                     e, "MessagesBulkDeleted", e.Guild.Id, e.Channel.Id, null, correlationId: correlationId);
 
                 // Mark all messages as deleted
@@ -480,7 +483,7 @@ public class MessageEventHandler(IServiceScopeFactory scopeFactory, ILogger<Mess
                 var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
                 await failedEventService.RecordFailureAsync(
                     "MessagesBulkDeleted", nameof(MessageEventHandler), ex,
-                    e.Guild?.Id, e.Channel.Id, null, correlationId: correlationId);
+                    e.Guild?.Id, e.Channel.Id, null, eventJson: rawJson, correlationId: correlationId);
             }
         }
     }

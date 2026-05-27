@@ -14,6 +14,7 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
         var correlationId = Guid.NewGuid();
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
+            string? rawJson = null;
             try
             {
                 var now = DateTime.UtcNow;
@@ -23,7 +24,7 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
                 var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
                 var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-                var rawJson = await rawEventService.SerializeAndLogAsync(
+                rawJson = await rawEventService.SerializeAndLogAsync(
                     args, "VoiceStateUpdated", args.Guild.Id, args.After?.Channel?.Id, args.User.Id, correlationId: correlationId);
 
                 var voiceEvent = new VoiceStateEventEntity
@@ -72,7 +73,7 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
                 var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
                 await failedEventService.RecordFailureAsync(
                     "VoiceStateUpdated", nameof(VoiceEventHandler), ex,
-                    args.Guild.Id, args.After?.Channel?.Id, args.User.Id, correlationId: correlationId);
+                    args.Guild.Id, args.After?.Channel?.Id, args.User.Id, eventJson: rawJson, correlationId: correlationId);
             }
         }
     }
