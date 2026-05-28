@@ -1,30 +1,19 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class AuditLogEventHandler(IServiceScopeFactory scopeFactory, ILogger<AuditLogEventHandler> logger) :
+public sealed class AuditLogEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildAuditLogCreatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildAuditLogCreatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "GuildAuditLogCreated", nameof(AuditLogEventHandler),
+            e.Guild.Id, null, e.AuditLogEntry.UserResponsible?.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "GuildAuditLogCreated", e.Guild.Id, null, e.AuditLogEntry.UserResponsible?.Id, correlationId: correlationId);
-
-                db.AuditLogEvents.Add(new AuditLogEventEntity
+                ctx.Db.AuditLogEvents.Add(new AuditLogEventEntity
                 {
                     AuditLogDiscordId = e.AuditLogEntry.Id,
                     GuildDiscordId = e.Guild.Id,
@@ -34,22 +23,12 @@ public class AuditLogEventHandler(IServiceScopeFactory scopeFactory, ILogger<Aud
                     Reason = e.AuditLogEntry.Reason,
                     ChangesJson = null,
                     OptionsJson = null,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 });
 
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling audit log entry");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildAuditLogCreated", nameof(AuditLogEventHandler), ex,
-                    e.Guild?.Id, null, e.AuditLogEntry?.UserResponsible?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 }

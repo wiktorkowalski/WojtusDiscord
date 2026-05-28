@@ -1,12 +1,12 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class ThreadSyncHandler(IServiceScopeFactory scopeFactory, ILogger<ThreadSyncHandler> logger) :
+public sealed class ThreadSyncHandler(EventPipeline pipeline) :
     IEventHandler<ThreadListSyncedEventArgs>
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -17,22 +17,10 @@ public class ThreadSyncHandler(IServiceScopeFactory scopeFactory, ILogger<Thread
 
     public async Task HandleEventAsync(DiscordClient sender, ThreadListSyncedEventArgs args)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(args, "ThreadListSynced", nameof(ThreadSyncHandler),
+            args.Guild.Id, null, null, async ctx =>
             {
-                var now = DateTime.UtcNow;
-
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    args, "ThreadListSynced", args.Guild.Id, null, null, correlationId: correlationId);
-
-                var syncEvent = new ThreadSyncEventEntity
+                ctx.Db.ThreadSyncEvents.Add(new ThreadSyncEventEntity
                 {
                     GuildDiscordId = args.Guild.Id,
                     ThreadCount = args.Threads.Count,
@@ -40,26 +28,15 @@ public class ThreadSyncHandler(IServiceScopeFactory scopeFactory, ILogger<Thread
                     ChannelIdsJson = args.Channels?.Count > 0
                         ? JsonSerializer.Serialize(args.Channels.Select(c => c.Id.ToString()), JsonOptions)
                         : null,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                await db.ThreadSyncEvents.AddAsync(syncEvent);
-                await db.SaveChangesAsync();
+                await ctx.Db.SaveChangesAsync();
 
-                logger.LogDebug("Recorded thread list sync for guild {GuildId} with {ThreadCount} threads",
+                ctx.Logger.LogDebug("Recorded thread list sync for guild {GuildId} with {ThreadCount} threads",
                     args.Guild.Id, args.Threads.Count);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling thread list sync for guild {GuildId}", args.Guild.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ThreadListSynced", nameof(ThreadSyncHandler), ex,
-                    args.Guild?.Id, null, null, rawJson, correlationId: correlationId);
-            }
-        }
+            });
     }
 }
