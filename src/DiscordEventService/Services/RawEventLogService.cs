@@ -117,8 +117,6 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
             var property = base.CreateProperty(member, memberSerialization);
             if (property.Converter?.GetType().Name == ProblemConverterName)
                 property.Converter = null;
-            if (property.MemberConverter?.GetType().Name == ProblemConverterName)
-                property.MemberConverter = null;
             if (property.ItemConverter?.GetType().Name == ProblemConverterName)
                 property.ItemConverter = null;
             if (SensitiveProperties.Contains(member.Name))
