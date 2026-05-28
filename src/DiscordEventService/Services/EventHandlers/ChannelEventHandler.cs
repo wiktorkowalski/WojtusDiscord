@@ -21,7 +21,7 @@ public sealed class ChannelEventHandler(EventPipeline pipeline) :
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
-                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
 
                 ChannelEventEntity NewChannelEvent() => new()
                 {

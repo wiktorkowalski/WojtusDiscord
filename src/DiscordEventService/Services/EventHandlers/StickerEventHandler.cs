@@ -17,7 +17,8 @@ public sealed class StickerEventHandler(EventPipeline pipeline) :
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
-                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var guildResult = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var guildGuid = guildResult.IsSuccess ? guildResult.Value : (Guid?)null;
 
                 var beforeIds = e.StickersBefore.Keys.ToHashSet();
                 var afterIds = e.StickersAfter.Keys.ToHashSet();
@@ -37,7 +38,7 @@ public sealed class StickerEventHandler(EventPipeline pipeline) :
                         ctx.Db.Stickers.Add(new StickerEntity
                         {
                             DiscordId = sticker.Id,
-                            GuildId = guildGuid != Guid.Empty ? guildGuid : null,
+                            GuildId = guildGuid,
                             Name = sticker.Name ?? string.Empty,
                             Description = sticker.Description,
                             Tags = sticker.Tags != null ? string.Join(",", sticker.Tags) : null,

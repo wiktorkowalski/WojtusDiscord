@@ -18,7 +18,7 @@ public sealed class IntegrationEventHandler(EventPipeline pipeline) :
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
-                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
 
                 ctx.Db.Integrations.Add(new IntegrationEntity
                 {

@@ -20,16 +20,13 @@ public sealed class InviteEventHandler(EventPipeline pipeline) :
                 var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
                 var userService = ctx.Services.GetRequiredService<UserService>();
 
-                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
-                var channelGuid = await channelUpsert.UpsertChannelAsync(e.Channel, guildGuid);
+                var guildResult = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var channelResult = await channelUpsert.UpsertChannelAsync(e.Channel, guildResult.Value);
                 Guid? inviterGuid = null;
                 if (e.Invite.Inviter != null)
                 {
-                    await userService.UpsertUserAsync(e.Invite.Inviter);
-                    inviterGuid = await ctx.Db.Users
-                        .Where(u => u.DiscordId == e.Invite.Inviter.Id)
-                        .Select(u => u.Id)
-                        .FirstOrDefaultAsync();
+                    var inviterResult = await userService.UpsertUserAsync(e.Invite.Inviter);
+                    inviterGuid = inviterResult.IsSuccess ? inviterResult.Value : null;
                 }
 
                 var invite = e.Invite;
@@ -40,8 +37,8 @@ public sealed class InviteEventHandler(EventPipeline pipeline) :
                     ctx.Db.Invites.Add(inviteEntity);
                 }
 
-                if (guildGuid != Guid.Empty) inviteEntity.GuildId = guildGuid;
-                if (channelGuid != Guid.Empty) inviteEntity.ChannelId = channelGuid;
+                if (guildResult.IsSuccess) inviteEntity.GuildId = guildResult.Value;
+                if (channelResult.IsSuccess) inviteEntity.ChannelId = channelResult.Value;
                 inviteEntity.InviterId = inviterGuid;
                 inviteEntity.MaxAge = invite.MaxAge;
                 inviteEntity.MaxUses = invite.MaxUses;

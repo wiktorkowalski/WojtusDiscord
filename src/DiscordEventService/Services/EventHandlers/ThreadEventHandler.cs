@@ -23,7 +23,7 @@ public sealed class ThreadEventHandler(EventPipeline pipeline) :
 
                 // Threads are channels (ADR-0003): upsert the thread into `channels` so messages
                 // sent into it have a non-null channel_id from the first event onward.
-                var guildId = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var guildId = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
                 await channelUpsert.UpsertChannelAsync(e.Thread, guildId);
 
                 // For message threads (parent is text/news), thread ID == starter message ID
@@ -57,7 +57,7 @@ public sealed class ThreadEventHandler(EventPipeline pipeline) :
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
 
-                var guildId = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var guildId = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
                 await channelUpsert.UpsertChannelAsync(e.ThreadAfter, guildId);
 
                 ctx.Db.ThreadEvents.Add(new ThreadEventEntity

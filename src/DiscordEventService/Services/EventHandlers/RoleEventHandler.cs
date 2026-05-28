@@ -20,7 +20,7 @@ public sealed class RoleEventHandler(EventPipeline pipeline) :
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
-                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
 
                 RoleEventEntity NewRoleEvent() => new()
                 {

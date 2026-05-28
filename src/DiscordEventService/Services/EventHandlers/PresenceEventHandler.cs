@@ -75,15 +75,11 @@ public sealed class PresenceEventHandler(EventPipeline pipeline) :
                 // Track activities in ActivityEntity — upsert the user first so we never silently
                 // skip activity tracking for unknown users (87k presence events historically).
                 var userService = ctx.Services.GetRequiredService<UserService>();
-                await userService.UpsertUserAsync(args.User);
-                var userGuid = await ctx.Db.Users
-                    .Where(u => u.DiscordId == args.User.Id)
-                    .Select(u => u.Id)
-                    .FirstOrDefaultAsync();
+                var userResult = await userService.UpsertUserAsync(args.User);
 
-                if (userGuid != Guid.Empty)
+                if (userResult.IsSuccess)
                 {
-                    await UpdateActivityTracking(ctx.Db, userGuid, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, ctx.ReceivedAtUtc);
+                    await UpdateActivityTracking(ctx.Db, userResult.Value, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, ctx.ReceivedAtUtc);
                     await ctx.Db.SaveChangesAsync();
                 }
                 else

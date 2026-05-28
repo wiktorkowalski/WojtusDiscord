@@ -7,7 +7,7 @@ namespace DiscordEventService.Services;
 
 public class ChannelUpsertService(DiscordDbContext db, ILogger<ChannelUpsertService> logger)
 {
-    public async Task<Guid> UpsertChannelAsync(DiscordChannel channel, Guid guildId)
+    public async Task<UpsertResult<Guid>> UpsertChannelAsync(DiscordChannel channel, Guid guildId)
     {
         var id = await db.Channels.UpsertAsync(
             c => c.DiscordId == channel.Id,
@@ -41,9 +41,10 @@ public class ChannelUpsertService(DiscordDbContext db, ILogger<ChannelUpsertServ
         if (id == Guid.Empty)
         {
             logger.LogError("ChannelUpsert lost the row for DiscordId={DiscordId} after upsert", channel.Id);
+            return UpsertResult<Guid>.Failure($"Channel upsert lost the row for DiscordId={channel.Id}");
         }
 
-        return id;
+        return UpsertResult<Guid>.Success(id);
     }
 
     public async Task<Guid> InsertPlaceholderAsync(ulong channelDiscordId, Guid guildId, DateTime firstOrphanSeenUtc)

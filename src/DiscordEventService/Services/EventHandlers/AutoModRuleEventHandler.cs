@@ -25,19 +25,16 @@ public sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
                 if (e.Rule.Guild != null)
                 {
                     var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
-                    var id = await guildUpsert.UpsertGuildAsync(e.Rule.Guild);
-                    guildGuid = id != Guid.Empty ? id : null;
+                    var guildResult = await guildUpsert.UpsertGuildAsync(e.Rule.Guild);
+                    guildGuid = guildResult.IsSuccess ? guildResult.Value : null;
                 }
 
                 Guid? creatorGuid = null;
                 if (e.Rule.Creator != null)
                 {
                     var userService = ctx.Services.GetRequiredService<UserService>();
-                    await userService.UpsertUserAsync(e.Rule.Creator);
-                    creatorGuid = await ctx.Db.Users
-                        .Where(u => u.DiscordId == e.Rule.Creator.Id)
-                        .Select(u => (Guid?)u.Id)
-                        .FirstOrDefaultAsync();
+                    var creatorResult = await userService.UpsertUserAsync(e.Rule.Creator);
+                    creatorGuid = creatorResult.IsSuccess ? creatorResult.Value : null;
                 }
 
                 ctx.Db.AutoModRules.Add(new AutoModRuleEntity
