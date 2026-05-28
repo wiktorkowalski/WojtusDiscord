@@ -1,6 +1,7 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
@@ -8,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<ScheduledEventHandler> logger) :
+public sealed class ScheduledEventHandler(EventPipeline pipeline) :
     IEventHandler<ScheduledGuildEventCreatedEventArgs>,
     IEventHandler<ScheduledGuildEventUpdatedEventArgs>,
     IEventHandler<ScheduledGuildEventDeletedEventArgs>,
@@ -18,23 +19,12 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
 {
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventCreatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ScheduledGuildEventCreated", nameof(ScheduledEventHandler),
+            e.Guild.Id, e.Channel?.Id, e.Creator?.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+                await UpsertScheduledEventAsync(ctx.Db, e.Event, e.Creator?.Id);
 
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ScheduledGuildEventCreated", e.Guild.Id, e.Channel?.Id, e.Creator?.Id, correlationId: correlationId);
-
-                await UpsertScheduledEventAsync(db, e.Event, e.Creator?.Id);
-
-                var entity = new ScheduledEventEntity
+                ctx.Db.ScheduledEvents.Add(new ScheduledEventEntity
                 {
                     EventDiscordId = e.Event.Id,
                     GuildDiscordId = e.Guild.Id,
@@ -47,45 +37,23 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
                     EntityType = (int)e.Event.Type,
                     ScheduledStartTime = e.Event.StartTime.UtcDateTime,
                     ScheduledEndTime = e.Event.EndTime?.UtcDateTime,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ScheduledEvents.Add(entity);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling scheduled event created");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ScheduledGuildEventCreated", nameof(ScheduledEventHandler), ex,
-                    e.Guild?.Id, e.Channel?.Id, e.Creator?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ScheduledGuildEventUpdated", nameof(ScheduledEventHandler),
+            e.EventAfter.GuildId, e.EventAfter.ChannelId, e.EventAfter.Creator?.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+                await UpsertScheduledEventAsync(ctx.Db, e.EventAfter, e.EventAfter.Creator?.Id);
 
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ScheduledGuildEventUpdated", e.EventAfter.GuildId, e.EventAfter.ChannelId, e.EventAfter.Creator?.Id, correlationId: correlationId);
-
-                await UpsertScheduledEventAsync(db, e.EventAfter, e.EventAfter.Creator?.Id);
-
-                var entity = new ScheduledEventEntity
+                ctx.Db.ScheduledEvents.Add(new ScheduledEventEntity
                 {
                     EventDiscordId = e.EventAfter.Id,
                     GuildDiscordId = e.EventAfter.GuildId,
@@ -98,95 +66,50 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
                     EntityType = (int)e.EventAfter.Type,
                     ScheduledStartTime = e.EventAfter.StartTime.UtcDateTime,
                     ScheduledEndTime = e.EventAfter.EndTime?.UtcDateTime,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ScheduledEvents.Add(entity);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling scheduled event updated");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ScheduledGuildEventUpdated", nameof(ScheduledEventHandler), ex,
-                    e.EventAfter?.GuildId, e.EventAfter?.ChannelId, e.EventAfter?.Creator?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventDeletedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ScheduledGuildEventDeleted", nameof(ScheduledEventHandler),
+            e.Event.GuildId, e.Event.ChannelId, null, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ScheduledGuildEventDeleted", e.Event.GuildId, e.Event.ChannelId, null, correlationId: correlationId);
-
-                // Mark as deleted
-                await db.GuildScheduledEvents
+                await ctx.Db.GuildScheduledEvents
                     .Where(s => s.DiscordId == e.Event.Id)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(x => x.IsDeleted, true)
-                        .SetProperty(x => x.DeletedAtUtc, (DateTime?)now));
+                        .SetProperty(x => x.DeletedAtUtc, (DateTime?)ctx.ReceivedAtUtc));
 
-                var entity = new ScheduledEventEntity
+                ctx.Db.ScheduledEvents.Add(new ScheduledEventEntity
                 {
                     EventDiscordId = e.Event.Id,
                     GuildDiscordId = e.Event.GuildId,
                     ChannelDiscordId = e.Event.ChannelId,
                     EventType = ScheduledEventEventType.Deleted,
                     Name = e.Event.Name,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ScheduledEvents.Add(entity);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling scheduled event deleted");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ScheduledGuildEventDeleted", nameof(ScheduledEventHandler), ex,
-                    e.Event?.GuildId, e.Event?.ChannelId, null, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventCompletedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ScheduledGuildEventCompleted", nameof(ScheduledEventHandler),
+            e.Event.GuildId, e.Event.ChannelId, null, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+                await UpsertScheduledEventAsync(ctx.Db, e.Event, e.Event.Creator?.Id);
 
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ScheduledGuildEventCompleted", e.Event.GuildId, e.Event.ChannelId, null, correlationId: correlationId);
-
-                await UpsertScheduledEventAsync(db, e.Event, e.Event.Creator?.Id);
-
-                var entity = new ScheduledEventEntity
+                ctx.Db.ScheduledEvents.Add(new ScheduledEventEntity
                 {
                     EventDiscordId = e.Event.Id,
                     GuildDiscordId = e.Event.GuildId,
@@ -194,118 +117,61 @@ public class ScheduledEventHandler(IServiceScopeFactory scopeFactory, ILogger<Sc
                     EventType = ScheduledEventEventType.Completed,
                     Name = e.Event.Name,
                     Status = (int)e.Event.Status,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ScheduledEvents.Add(entity);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling scheduled event completed");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ScheduledGuildEventCompleted", nameof(ScheduledEventHandler), ex,
-                    e.Event?.GuildId, e.Event?.ChannelId, null, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventUserAddedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ScheduledGuildEventUserAdded", nameof(ScheduledEventHandler),
+            e.Guild.Id, null, e.User.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ScheduledGuildEventUserAdded", e.Guild.Id, null, e.User.Id, correlationId: correlationId);
-
-                // Increment user count
-                await db.GuildScheduledEvents
+                await ctx.Db.GuildScheduledEvents
                     .Where(s => s.DiscordId == e.Event.Id)
                     .ExecuteUpdateAsync(s => s.SetProperty(x => x.UserCount, x => x.UserCount + 1));
 
-                var entity = new ScheduledEventEntity
+                ctx.Db.ScheduledEvents.Add(new ScheduledEventEntity
                 {
                     EventDiscordId = e.Event.Id,
                     GuildDiscordId = e.Guild.Id,
                     EventType = ScheduledEventEventType.UserAdded,
                     UserDiscordId = e.User.Id,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ScheduledEvents.Add(entity);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling scheduled event user added");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ScheduledGuildEventUserAdded", nameof(ScheduledEventHandler), ex,
-                    e.Guild?.Id, null, e.User?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventUserRemovedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ScheduledGuildEventUserRemoved", nameof(ScheduledEventHandler),
+            e.Guild.Id, null, e.User.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ScheduledGuildEventUserRemoved", e.Guild.Id, null, e.User.Id, correlationId: correlationId);
-
-                // Decrement user count
-                await db.GuildScheduledEvents
+                await ctx.Db.GuildScheduledEvents
                     .Where(s => s.DiscordId == e.Event.Id)
                     .ExecuteUpdateAsync(s => s.SetProperty(x => x.UserCount, x => x.UserCount - 1));
 
-                var entity = new ScheduledEventEntity
+                ctx.Db.ScheduledEvents.Add(new ScheduledEventEntity
                 {
                     EventDiscordId = e.Event.Id,
                     GuildDiscordId = e.Guild.Id,
                     EventType = ScheduledEventEventType.UserRemoved,
                     UserDiscordId = e.User.Id,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ScheduledEvents.Add(entity);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling scheduled event user removed");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ScheduledGuildEventUserRemoved", nameof(ScheduledEventHandler), ex,
-                    e.Guild?.Id, null, e.User?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     private static async Task UpsertScheduledEventAsync(DiscordDbContext db, DiscordScheduledGuildEvent evt, ulong? creatorDiscordId)
