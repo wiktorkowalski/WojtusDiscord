@@ -1,49 +1,28 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class WebhookEventHandler(IServiceScopeFactory scopeFactory, ILogger<WebhookEventHandler> logger) :
+public sealed class WebhookEventHandler(EventPipeline pipeline) :
     IEventHandler<WebhooksUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, WebhooksUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "WebhooksUpdated", nameof(WebhookEventHandler),
+            e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "WebhooksUpdated", e.Guild.Id, e.Channel.Id, null, correlationId: correlationId);
-
-                db.WebhookEvents.Add(new WebhookEventEntity
+                ctx.Db.WebhookEvents.Add(new WebhookEventEntity
                 {
                     GuildDiscordId = e.Guild.Id,
                     ChannelDiscordId = e.Channel.Id,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 });
 
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling webhooks updated for ChannelId={ChannelId}", e.Channel.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "WebhooksUpdated", nameof(WebhookEventHandler), ex,
-                    e.Guild?.Id, e.Channel?.Id, null, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 }

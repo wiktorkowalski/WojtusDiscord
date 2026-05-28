@@ -1,33 +1,21 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
-using DiscordEventService.Services;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceEventHandler> logger) :
+public sealed class VoiceEventHandler(EventPipeline pipeline) :
     IEventHandler<VoiceStateUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, VoiceStateUpdatedEventArgs args)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        var eventType = DetermineEventType(args);
+
+        await pipeline.Execute(args, "VoiceStateUpdated", nameof(VoiceEventHandler),
+            args.Guild.Id, args.After?.Channel?.Id, args.User.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                var eventType = DetermineEventType(args);
-
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    args, "VoiceStateUpdated", args.Guild.Id, args.After?.Channel?.Id, args.User.Id, correlationId: correlationId);
-
-                var voiceEvent = new VoiceStateEventEntity
+                ctx.Db.VoiceStateEvents.Add(new VoiceStateEventEntity
                 {
                     UserDiscordId = args.User.Id,
                     GuildDiscordId = args.Guild.Id,
@@ -54,28 +42,16 @@ public class VoiceEventHandler(IServiceScopeFactory scopeFactory, ILogger<VoiceE
                     IsSuppressed = args.After?.IsSuppressed ?? false,
 
                     SessionId = args.After?.SessionId,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.VoiceStateEvents.Add(voiceEvent);
-                await db.SaveChangesAsync();
+                await ctx.Db.SaveChangesAsync();
 
-                logger.LogDebug("Recorded voice event: {EventType} for user {UserId} in guild {GuildId}",
+                ctx.Logger.LogDebug("Recorded voice event: {EventType} for user {UserId} in guild {GuildId}",
                     eventType, args.User.Id, args.Guild.Id);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling voice state update for user {UserId} in guild {GuildId}",
-                    args.User.Id, args.Guild.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "VoiceStateUpdated", nameof(VoiceEventHandler), ex,
-                    args.Guild.Id, args.After?.Channel?.Id, args.User.Id, eventJson: rawJson, correlationId: correlationId);
-            }
-        }
+            });
     }
 
     private static VoiceEventType DetermineEventType(VoiceStateUpdatedEventArgs args)
