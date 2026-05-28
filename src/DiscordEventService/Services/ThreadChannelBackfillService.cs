@@ -75,12 +75,12 @@ public class ThreadChannelBackfillService(
         {
             var existing = await db.Channels
                 .Where(c => c.DiscordId == entry.ChannelDiscordId)
-                .Select(c => c.Id)
+                .Select(c => (Guid?)c.Id)
                 .FirstOrDefaultAsync(ct);
 
-            if (existing != Guid.Empty)
+            if (existing is not null)
             {
-                resolvedChannelGuids[entry.ChannelDiscordId] = existing;
+                resolvedChannelGuids[entry.ChannelDiscordId] = existing.Value;
                 continue;
             }
 
@@ -93,10 +93,10 @@ public class ThreadChannelBackfillService(
             var guildDiscordId = entry.GuildDiscordIds[0];
             var guildGuid = await db.Guilds
                 .Where(g => g.DiscordId == guildDiscordId)
-                .Select(g => g.Id)
+                .Select(g => (Guid?)g.Id)
                 .FirstOrDefaultAsync(ct);
 
-            if (guildGuid == Guid.Empty)
+            if (guildGuid is null)
             {
                 logger.LogError(
                     "Guild {GuildDiscordId} for orphan channel {ChannelDiscordId} not present in DB; skipping",
@@ -107,7 +107,7 @@ public class ThreadChannelBackfillService(
             try
             {
                 var live = await client.GetChannelAsync(entry.ChannelDiscordId);
-                var id = await channelUpsert.UpsertChannelAsync(live, guildGuid);
+                var id = (await channelUpsert.UpsertChannelAsync(live, guildGuid.Value)).Value;
                 resolvedChannelGuids[entry.ChannelDiscordId] = id;
                 fetched++;
                 logger.LogInformation("Backfilled channel {DiscordId} via Discord API as {Type}", entry.ChannelDiscordId, live.Type);
@@ -129,7 +129,7 @@ public class ThreadChannelBackfillService(
             var firstOrphan = orphans
                 .Where(o => orphanResolution.TryGetValue(o.Id, out var c) && c.ChannelDiscordId == entry.ChannelDiscordId)
                 .Min(o => o.FirstSeenUtc);
-            var placeholderId = await channelUpsert.InsertPlaceholderAsync(entry.ChannelDiscordId, guildGuid, firstOrphan);
+            var placeholderId = await channelUpsert.InsertPlaceholderAsync(entry.ChannelDiscordId, guildGuid.Value, firstOrphan);
             resolvedChannelGuids[entry.ChannelDiscordId] = placeholderId;
             placeholders++;
         }

@@ -17,7 +17,8 @@ public sealed class EmojiEventHandler(EventPipeline pipeline) :
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
-                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var guildResult = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var guildGuid = guildResult.IsSuccess ? guildResult.Value : (Guid?)null;
 
                 var beforeIds = e.EmojisBefore.Keys.ToHashSet();
                 var afterIds = e.EmojisAfter.Keys.ToHashSet();
@@ -38,7 +39,7 @@ public sealed class EmojiEventHandler(EventPipeline pipeline) :
                         ctx.Db.Emotes.Add(new EmoteEntity
                         {
                             DiscordId = emoji.Id,
-                            GuildId = guildGuid != Guid.Empty ? guildGuid : null,
+                            GuildId = guildGuid,
                             Name = emoji.Name,
                             IsAnimated = emoji.IsAnimated,
                             IsAvailable = emoji.IsAvailable

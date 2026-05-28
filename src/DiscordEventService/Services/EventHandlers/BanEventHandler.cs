@@ -19,15 +19,14 @@ public sealed class BanEventHandler(EventPipeline pipeline) :
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var userService = ctx.Services.GetRequiredService<UserService>();
 
-                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
-                await userService.UpsertUserAsync(e.Member);
-                var userGuid = await ctx.Db.Users
-                    .Where(u => u.DiscordId == e.Member.Id)
-                    .Select(u => u.Id)
-                    .FirstOrDefaultAsync();
+                var guildResult = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var userResult = await userService.UpsertUserAsync(e.Member);
 
-                if (guildGuid != Guid.Empty && userGuid != Guid.Empty)
+                if (guildResult.IsSuccess && userResult.IsSuccess)
                 {
+                    var guildGuid = guildResult.Value;
+                    var userGuid = userResult.Value;
+
                     var existingBan = await ctx.Db.Bans
                         .FirstOrDefaultAsync(b => b.GuildId == guildGuid && b.UserId == userGuid && b.IsActive);
 
@@ -65,15 +64,14 @@ public sealed class BanEventHandler(EventPipeline pipeline) :
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var userService = ctx.Services.GetRequiredService<UserService>();
 
-                var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
-                await userService.UpsertUserAsync(e.Member);
-                var userGuid = await ctx.Db.Users
-                    .Where(u => u.DiscordId == e.Member.Id)
-                    .Select(u => u.Id)
-                    .FirstOrDefaultAsync();
+                var guildResult = await guildUpsert.UpsertGuildAsync(e.Guild);
+                var userResult = await userService.UpsertUserAsync(e.Member);
 
-                if (guildGuid != Guid.Empty && userGuid != Guid.Empty)
+                if (guildResult.IsSuccess && userResult.IsSuccess)
                 {
+                    var guildGuid = guildResult.Value;
+                    var userGuid = userResult.Value;
+
                     await ctx.Db.Bans
                         .Where(b => b.GuildId == guildGuid && b.UserId == userGuid && b.IsActive)
                         .ExecuteUpdateAsync(s => s

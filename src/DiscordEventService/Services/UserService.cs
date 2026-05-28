@@ -7,7 +7,7 @@ namespace DiscordEventService.Services;
 
 public class UserService(DiscordDbContext db, ILogger<UserService> logger)
 {
-    public async Task UpsertUserAsync(DiscordUser user)
+    public async Task<UpsertResult<Guid>> UpsertUserAsync(DiscordUser user)
     {
         // Pre-query old values for name-history detection: the primitive only does the write,
         // and on a 23505 race we have no reliable "before" to compare against (matches insert path).
@@ -16,7 +16,7 @@ public class UserService(DiscordDbContext db, ILogger<UserService> logger)
             .Select(u => new { u.Id, u.Username, u.GlobalName })
             .FirstOrDefaultAsync();
 
-        await db.Users.UpsertAsync(
+        var id = await db.Users.UpsertAsync(
             u => u.DiscordId == user.Id,
             s => s
                 .SetProperty(u => u.Username, user.Username)
@@ -35,9 +35,15 @@ public class UserService(DiscordDbContext db, ILogger<UserService> logger)
             },
             u => u.Id);
 
+        if (id == Guid.Empty)
+        {
+            logger.LogError("UserUpsert lost the row for DiscordId={DiscordId} after upsert", user.Id);
+            return UpsertResult<Guid>.Failure($"User upsert lost the row for DiscordId={user.Id}");
+        }
+
         if (existing is null)
         {
-            return;
+            return UpsertResult<Guid>.Success(id);
         }
 
         var usernameChanged = existing.Username != user.Username;
@@ -65,25 +71,31 @@ public class UserService(DiscordDbContext db, ILogger<UserService> logger)
                 globalNameChanged ? existing.GlobalName : "(unchanged)",
                 globalNameChanged ? user.GlobalName : "(unchanged)");
         }
+
+        return UpsertResult<Guid>.Success(id);
     }
 
     public async Task UpsertMemberAsync(DiscordMember member)
     {
-        await UpsertUserAsync(member);
+        var userResult = await UpsertUserAsync(member);
 
-        // Get the User and Guild Guids
-        var userEntity = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == member.Id);
-        var guildEntity = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == member.Guild.Id);
+        // User Guid comes back from the upsert; the guild must already exist (we don't upsert it here).
+        var guildId = await db.Guilds
+            .Where(g => g.DiscordId == member.Guild.Id)
+            .Select(g => g.Id)
+            .FirstOrDefaultAsync();
 
-        if (userEntity is null || guildEntity is null)
+        if (!userResult.IsSuccess || guildId == Guid.Empty)
         {
-            logger.LogWarning("Cannot upsert member: User={UserFound} Guild={GuildFound} for MemberId={MemberId} GuildId={GuildId}",
-                userEntity != null, guildEntity != null, member.Id, member.Guild.Id);
+            logger.LogWarning("Cannot upsert member: User={UserResolved} Guild={GuildResolved} for MemberId={MemberId} GuildId={GuildId}",
+                userResult.IsSuccess, guildId != Guid.Empty, member.Id, member.Guild.Id);
             return;
         }
 
+        var userId = userResult.Value;
+
         await db.Members.UpsertAsync(
-            m => m.UserId == userEntity.Id && m.GuildId == guildEntity.Id,
+            m => m.UserId == userId && m.GuildId == guildId,
             s => s
                 .SetProperty(m => m.Nickname, member.Nickname)
                 .SetProperty(m => m.GuildAvatarHash, member.GuildAvatarHash)
@@ -94,8 +106,8 @@ public class UserService(DiscordDbContext db, ILogger<UserService> logger)
                 .SetProperty(m => m.TimeoutUntilUtc, member.CommunicationDisabledUntil != null ? member.CommunicationDisabledUntil.Value.UtcDateTime : (DateTime?)null),
             () => new MemberEntity
             {
-                UserId = userEntity.Id,
-                GuildId = guildEntity.Id,
+                UserId = userId,
+                GuildId = guildId,
                 Nickname = member.Nickname,
                 GuildAvatarHash = member.GuildAvatarHash,
                 JoinedAtUtc = member.JoinedAt.UtcDateTime,

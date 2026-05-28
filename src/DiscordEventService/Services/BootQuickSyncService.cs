@@ -59,8 +59,8 @@ public class BootQuickSyncService(
                 var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
                 var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
 
-                var guildId = await guildUpsert.UpsertGuildAsync(guild);
-                var channelId = await channelUpsert.UpsertChannelAsync(channel, guildId);
+                var guildId = (await guildUpsert.UpsertGuildAsync(guild)).Value;
+                var channelId = (await channelUpsert.UpsertChannelAsync(channel, guildId)).Value;
 
                 var existingDiscordIds = await db.Messages
                     .Where(m => messages.Select(msg => msg.Id).Contains(m.DiscordId))
@@ -167,10 +167,10 @@ public class BootQuickSyncService(
 
         var guildGuid = await db.Guilds
             .Where(g => g.DiscordId == guild.Id)
-            .Select(g => g.Id)
+            .Select(g => (Guid?)g.Id)
             .FirstOrDefaultAsync();
 
-        if (guildGuid == Guid.Empty) return (0, 0);
+        if (guildGuid is null) return (0, 0);
 
         var members = new List<DiscordMember>();
         await foreach (var member in guild.GetAllMembersAsync())
@@ -185,13 +185,9 @@ public class BootQuickSyncService(
                 var presence = member.Presence;
                 if (presence is null) continue;
 
-                await userService.UpsertUserAsync(member);
-                var userGuid = await db.Users
-                    .Where(u => u.DiscordId == member.Id)
-                    .Select(u => u.Id)
-                    .FirstOrDefaultAsync();
-
-                if (userGuid == Guid.Empty) continue;
+                var userResult = await userService.UpsertUserAsync(member);
+                if (!userResult.IsSuccess) continue;
+                var userGuid = userResult.Value;
 
                 var activitiesJson = SerializeActivities(presence.Activities);
 
@@ -225,7 +221,7 @@ public class BootQuickSyncService(
                             db.Activities.Add(new ActivityEntity
                             {
                                 UserId = userGuid,
-                                GuildId = guildGuid,
+                                GuildId = guildGuid.Value,
                                 ActivityType = (int)activity.ActivityType,
                                 Name = activity.Name,
                                 StreamUrl = activity.StreamUrl,
