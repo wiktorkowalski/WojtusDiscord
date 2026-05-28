@@ -7,8 +7,10 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class SocketLifecycleHandler(
-    IServiceScopeFactory scopeFactory,
+public sealed class SocketLifecycleHandler(
+    DiscordDbContext db,
+    DowntimeTrackerService tracker,
+    GuildBackfillOrchestrator orchestrator,
     BootQuickSyncService quickSyncService,
     ILogger<SocketLifecycleHandler> logger) :
     IEventHandler<SocketClosedEventArgs>,
@@ -29,8 +31,6 @@ public class SocketLifecycleHandler(
         {
             try
             {
-                using var scope = scopeFactory.CreateScope();
-                var tracker = scope.ServiceProvider.GetRequiredService<DowntimeTrackerService>();
                 await tracker.OpenDowntimeAsync(
                     BotDowntimeType.GatewayDisconnect,
                     BotDowntimeDetectionMethod.GatewayEvent,
@@ -50,8 +50,6 @@ public class SocketLifecycleHandler(
         {
             try
             {
-                using var scope = scopeFactory.CreateScope();
-                var tracker = scope.ServiceProvider.GetRequiredService<DowntimeTrackerService>();
                 // Scope to GatewayDisconnect so a routine resume doesn't clobber a
                 // manually-opened Deploy/HostDown row from the ops endpoint.
                 await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow, onlyType: BotDowntimeType.GatewayDisconnect);
@@ -74,11 +72,6 @@ public class SocketLifecycleHandler(
             // reconnect) hit SessionResumed instead and don't reach here.
             try
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var orchestrator = scope.ServiceProvider.GetRequiredService<GuildBackfillOrchestrator>();
-                var tracker = scope.ServiceProvider.GetRequiredService<DowntimeTrackerService>();
-
                 // Ready can fire without a preceding Resumed (session invalidated).
                 await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow, onlyType: BotDowntimeType.GatewayDisconnect);
 

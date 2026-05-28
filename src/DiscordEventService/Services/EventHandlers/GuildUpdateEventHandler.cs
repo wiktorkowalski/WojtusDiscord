@@ -1,36 +1,25 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class GuildUpdateEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildUpdateEventHandler> logger) :
+public sealed class GuildUpdateEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "GuildUpdatedEvent", nameof(GuildUpdateEventHandler),
+            e.GuildAfter.Id, null, null, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "GuildUpdatedEvent", e.GuildAfter.Id, null, null, correlationId: correlationId);
-
                 var guildEvent = new GuildEventEntity
                 {
                     GuildDiscordId = e.GuildAfter.Id,
                     EventType = GuildEventType.Updated,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 };
 
                 if (e.GuildBefore.Name != e.GuildAfter.Name)
@@ -51,18 +40,8 @@ public class GuildUpdateEventHandler(IServiceScopeFactory scopeFactory, ILogger<
                     guildEvent.OwnerDiscordIdAfter = e.GuildAfter.OwnerId;
                 }
 
-                db.GuildEvents.Add(guildEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling guild updated for GuildId={GuildId}", e.GuildAfter.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildUpdatedEvent", nameof(GuildUpdateEventHandler), ex,
-                    e.GuildAfter?.Id, null, null, rawJson, correlationId: correlationId);
-            }
-        }
+                ctx.Db.GuildEvents.Add(guildEvent);
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 }
