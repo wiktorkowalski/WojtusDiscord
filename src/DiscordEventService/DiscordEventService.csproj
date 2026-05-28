@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="DiscordEventService.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="DotNetEnv" Version="3.1.1" />
     <PackageReference Include="DSharpPlus" Version="5.0.0-nightly-02485" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />

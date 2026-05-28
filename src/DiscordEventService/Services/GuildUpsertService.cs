@@ -1,7 +1,6 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DSharpPlus.Entities;
-using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
@@ -9,43 +8,21 @@ public class GuildUpsertService(DiscordDbContext db, ILogger<GuildUpsertService>
 {
     public async Task<Guid> UpsertGuildAsync(DiscordGuild guild)
     {
-        var rowsAffected = await db.Guilds
-            .Where(g => g.DiscordId == guild.Id)
-            .ExecuteUpdateAsync(s => s
+        var id = await db.Guilds.UpsertAsync(
+            g => g.DiscordId == guild.Id,
+            s => s
                 .SetProperty(g => g.Name, guild.Name)
                 .SetProperty(g => g.IconHash, guild.IconHash)
-                .SetProperty(g => g.OwnerId, guild.OwnerId));
-
-        if (rowsAffected == 0)
-        {
-            try
+                .SetProperty(g => g.OwnerId, guild.OwnerId),
+            () => new GuildEntity
             {
-                db.Guilds.Add(new GuildEntity
-                {
-                    DiscordId = guild.Id,
-                    Name = guild.Name,
-                    IconHash = guild.IconHash,
-                    OwnerId = guild.OwnerId,
-                    LeftAtUtc = null
-                });
-                await db.SaveChangesAsync();
-            }
-            catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-            {
-                db.ChangeTracker.Clear();
-                await db.Guilds
-                    .Where(g => g.DiscordId == guild.Id)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(g => g.Name, guild.Name)
-                        .SetProperty(g => g.IconHash, guild.IconHash)
-                        .SetProperty(g => g.OwnerId, guild.OwnerId));
-            }
-        }
-
-        var id = await db.Guilds
-            .Where(g => g.DiscordId == guild.Id)
-            .Select(g => g.Id)
-            .FirstOrDefaultAsync();
+                DiscordId = guild.Id,
+                Name = guild.Name,
+                IconHash = guild.IconHash,
+                OwnerId = guild.OwnerId,
+                LeftAtUtc = null
+            },
+            g => g.Id);
 
         if (id == Guid.Empty)
         {
