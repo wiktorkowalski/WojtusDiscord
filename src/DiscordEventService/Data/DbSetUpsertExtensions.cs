@@ -44,11 +44,12 @@ internal static class DbSetUpsertExtensions
     /// <b>without modifying it</b>. Use when the conflicting row must be preserved as-is
     /// (placeholder rows, snapshot insert-or-ignore, create-only message inserts) — routing
     /// those through <see cref="UpsertAsync{TEntity,TResult}"/> would overwrite real data.
-    /// Returns the inserted entity (keys populated, no extra query) on the happy path, or the
-    /// existing row on conflict; <c>null</c> only if the row vanished after the conflict.
+    /// Returns <c>(Entity, Inserted)</c>: on the happy path the freshly-inserted entity (keys
+    /// populated, no extra query) with <c>Inserted = true</c>; on conflict the existing row with
+    /// <c>Inserted = false</c> (<c>Entity = null</c> only if the row vanished after the conflict).
     /// Transaction-passive: never opens its own strategy/transaction.
     /// </summary>
-    public static async Task<TEntity?> GetOrInsertAsync<TEntity>(
+    public static async Task<(TEntity? Entity, bool Inserted)> GetOrInsertAsync<TEntity>(
         this DbSet<TEntity> set,
         Expression<Func<TEntity, bool>> match,
         Func<TEntity> create,
@@ -62,14 +63,14 @@ internal static class DbSetUpsertExtensions
         {
             set.Add(entity);
             await db.SaveChangesAsync(cancellationToken);
-            return entity;
+            return (entity, true);
         }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
         {
             // Race: another writer inserted first — drop the failed Add and return the existing
             // row untouched (deliberately NO update; the existing data may be richer than ours).
             db.ChangeTracker.Clear();
-            return await set.Where(match).FirstOrDefaultAsync(cancellationToken);
+            return (await set.Where(match).FirstOrDefaultAsync(cancellationToken), false);
         }
     }
 }

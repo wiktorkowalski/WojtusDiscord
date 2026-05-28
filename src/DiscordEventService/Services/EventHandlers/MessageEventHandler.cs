@@ -77,60 +77,40 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                     RawEventJson = ctx.RawJson
                 };
 
-                // Wrap multi-row writes in a transaction so the 23505 retry path
-                // (ExecuteUpdate + insert) is atomic. ExecutionStrategy is required
-                // because EnableRetryOnFailure is configured on the DbContext.
+                // Wrap message + event + mentions in one transaction so they commit atomically.
+                // ExecutionStrategy is required because EnableRetryOnFailure is configured on the
+                // DbContext. MessageCreated is insert-or-ignore: a duplicate carries identical
+                // create-time content (edits arrive as MessageUpdated), so on a 23505 race the
+                // existing row is kept untouched and we just log the Created event.
                 var strategy = ctx.Db.Database.CreateExecutionStrategy();
                 await strategy.ExecuteAsync(async () =>
                 {
                     ctx.Db.ChangeTracker.Clear();
                     await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                    var messageEntity = new MessageEntity
-                    {
-                        DiscordId = e.Message.Id,
-                        ChannelId = channelId,
-                        GuildId = guildId,
-                        AuthorId = authorId,
-                        Content = NormalizeContent(e.Message.Content),
-                        ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
-                        HasAttachments = e.Message.Attachments.Count > 0,
-                        HasEmbeds = e.Message.Embeds.Count > 0,
-                        AttachmentsJson = attachmentsJson,
-                        EmbedsJson = embedsJson,
-                        Flags = (int)(e.Message.Flags ?? 0),
-                        CreatedAtUtc = e.Message.Timestamp.UtcDateTime
-                    };
-                    ctx.Db.Messages.Add(messageEntity);
-                    ctx.Db.MessageEvents.Add(NewMessageEvent());
+                    // Insert the message first (before staging the event), so the primitive's
+                    // change-tracker clear on a conflict can't drop a pending event Add.
+                    var (messageEntity, _) = await ctx.Db.Messages.GetOrInsertAsync(
+                        m => m.DiscordId == e.Message.Id,
+                        () => new MessageEntity
+                        {
+                            DiscordId = e.Message.Id,
+                            ChannelId = channelId,
+                            GuildId = guildId,
+                            AuthorId = authorId,
+                            Content = NormalizeContent(e.Message.Content),
+                            ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
+                            HasAttachments = e.Message.Attachments.Count > 0,
+                            HasEmbeds = e.Message.Embeds.Count > 0,
+                            AttachmentsJson = attachmentsJson,
+                            EmbedsJson = embedsJson,
+                            Flags = (int)(e.Message.Flags ?? 0),
+                            CreatedAtUtc = e.Message.Timestamp.UtcDateTime
+                        });
 
-                    Guid messageId;
-                    try
-                    {
-                        await ctx.Db.SaveChangesAsync();
-                        messageId = messageEntity.Id;
-                    }
-                    catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                    {
-                        ctx.Db.ChangeTracker.Clear();
-                        var normalizedContent = NormalizeContent(e.Message.Content);
-                        await ctx.Db.Messages
-                            .Where(m => m.DiscordId == e.Message.Id)
-                            .ExecuteUpdateAsync(s => s
-                                .SetProperty(m => m.Content, normalizedContent)
-                                .SetProperty(m => m.HasAttachments, e.Message.Attachments.Count > 0)
-                                .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
-                                .SetProperty(m => m.AttachmentsJson, attachmentsJson)
-                                .SetProperty(m => m.EmbedsJson, embedsJson)
-                                .SetProperty(m => m.Flags, (int)(e.Message.Flags ?? 0))
-                                .SetProperty(m => m.ReplyToDiscordId, e.Message.ReferencedMessage?.Id));
-                        ctx.Db.MessageEvents.Add(NewMessageEvent());
-                        await ctx.Db.SaveChangesAsync();
-                        messageId = await ctx.Db.Messages
-                            .Where(m => m.DiscordId == e.Message.Id)
-                            .Select(m => m.Id)
-                            .FirstAsync();
-                    }
+                    var messageId = messageEntity!.Id;
+                    ctx.Db.MessageEvents.Add(NewMessageEvent());
+                    await ctx.Db.SaveChangesAsync();
 
                     await ExtractAndSaveMentionsAsync(ctx.Db, messageId, e.Message);
                     await tx.CommitAsync();

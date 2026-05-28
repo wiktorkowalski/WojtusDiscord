@@ -92,22 +92,30 @@ public class BootQuickSyncService(
                         ? JsonSerializer.Serialize(message.Embeds)
                         : null;
 
-                    db.Messages.Add(new MessageEntity
-                    {
-                        DiscordId = message.Id,
-                        ChannelId = channelId,
-                        GuildId = guildId,
-                        AuthorId = authorId,
-                        Content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
-                        ReplyToDiscordId = message.ReferencedMessage?.Id,
-                        HasAttachments = message.Attachments.Count > 0,
-                        HasEmbeds = message.Embeds.Count > 0,
-                        AttachmentsJson = attachmentsJson,
-                        EmbedsJson = embedsJson,
-                        Flags = (int)(message.Flags ?? 0),
-                        CreatedAtUtc = message.Timestamp.UtcDateTime,
-                        EditedAtUtc = message.EditedTimestamp?.UtcDateTime
-                    });
+                    // Insert-or-ignore per message: the existingSet pre-check filters known rows;
+                    // this guards the race where a live MessageCreated inserts the same message
+                    // during boot. On conflict we skip the backfilled event (the live path logs
+                    // its own Created event) and don't count it.
+                    var (_, inserted) = await db.Messages.GetOrInsertAsync(
+                        m => m.DiscordId == message.Id,
+                        () => new MessageEntity
+                        {
+                            DiscordId = message.Id,
+                            ChannelId = channelId,
+                            GuildId = guildId,
+                            AuthorId = authorId,
+                            Content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
+                            ReplyToDiscordId = message.ReferencedMessage?.Id,
+                            HasAttachments = message.Attachments.Count > 0,
+                            HasEmbeds = message.Embeds.Count > 0,
+                            AttachmentsJson = attachmentsJson,
+                            EmbedsJson = embedsJson,
+                            Flags = (int)(message.Flags ?? 0),
+                            CreatedAtUtc = message.Timestamp.UtcDateTime,
+                            EditedAtUtc = message.EditedTimestamp?.UtcDateTime
+                        });
+
+                    if (!inserted) continue;
 
                     db.MessageEvents.Add(new MessageEventEntity
                     {
@@ -125,17 +133,9 @@ public class BootQuickSyncService(
                         EventTimestampUtc = message.Timestamp.UtcDateTime,
                         ReceivedAtUtc = DateTime.UtcNow
                     });
+                    await db.SaveChangesAsync();
 
                     totalInserted++;
-                }
-
-                try
-                {
-                    await db.SaveChangesAsync();
-                }
-                catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                {
-                    db.ChangeTracker.Clear();
                 }
             }
             catch (DSharpPlus.Exceptions.UnauthorizedException)
