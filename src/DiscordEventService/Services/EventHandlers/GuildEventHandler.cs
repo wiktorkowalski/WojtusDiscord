@@ -22,80 +22,33 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
             {
                 ctx.Logger.LogInformation("GuildCreated event received for GuildId={GuildId} Name={GuildName}", e.Guild.Id, e.Guild.Name);
 
-                void ApplyGuildFields(GuildEntity g)
-                {
-                    g.Name = e.Guild.Name;
-                    g.IconHash = e.Guild.IconHash;
-                    g.OwnerId = e.Guild.OwnerId;
-                    g.LeftAtUtc = null;
-                }
-
-                // Wrap the two-stage upsert (Guild flush for Guid, then channels/roles) in
-                // one transaction so a partial failure (e.g. FK error on roles after Guild
-                // already flushed) rolls back atomically. ExecutionStrategy is required
-                // because EnableRetryOnFailure is configured on the DbContext.
+                // Upsert the guild (for its Guid) then every channel/role, all in one transaction
+                // so a partial failure rolls back atomically. Each upsert handles its own 23505
+                // race internally. ExecutionStrategy is required because EnableRetryOnFailure is
+                // configured on the DbContext.
                 var strategy = ctx.Db.Database.CreateExecutionStrategy();
                 await strategy.ExecuteAsync(async () =>
                 {
-                    ctx.Db.ChangeTracker.Clear();
                     await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                    var existingGuild = await ctx.Db.Guilds
-                        .Where(g => g.DiscordId == e.Guild.Id)
-                        .FirstOrDefaultAsync();
-                    if (existingGuild == null)
-                    {
-                        existingGuild = new GuildEntity
+                    var guildGuid = await ctx.Db.Guilds.UpsertAsync(
+                        g => g.DiscordId == e.Guild.Id,
+                        s => s
+                            .SetProperty(g => g.Name, e.Guild.Name)
+                            .SetProperty(g => g.IconHash, e.Guild.IconHash)
+                            .SetProperty(g => g.OwnerId, e.Guild.OwnerId)
+                            .SetProperty(g => g.LeftAtUtc, (DateTime?)null),
+                        () => new GuildEntity
                         {
                             DiscordId = e.Guild.Id,
                             Name = e.Guild.Name,
                             IconHash = e.Guild.IconHash,
                             OwnerId = e.Guild.OwnerId,
                             LeftAtUtc = null
-                        };
-                        ctx.Db.Guilds.Add(existingGuild);
-                        try
-                        {
-                            await ctx.Db.SaveChangesAsync(); // Flush to get the Guid Id (committed atomically with the rest at tx.CommitAsync).
-                        }
-                        catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                        {
-                            // Concurrent insert won the race. Re-fetch and update.
-                            ctx.Db.ChangeTracker.Clear();
-                            existingGuild = await ctx.Db.Guilds
-                                .Where(g => g.DiscordId == e.Guild.Id)
-                                .FirstOrDefaultAsync()
-                                ?? throw new InvalidOperationException($"Guild {e.Guild.Id} disappeared after 23505 conflict");
-                            ApplyGuildFields(existingGuild);
-                        }
-                    }
-                    else
-                    {
-                        ApplyGuildFields(existingGuild);
-                    }
-
-                    var guildGuid = existingGuild.Id;
+                        },
+                        g => g.Id);
 
                     await UpsertChannelsAndRolesAsync(ctx.Db, ctx.Logger, e.Guild, guildGuid);
-
-                    try
-                    {
-                        await ctx.Db.SaveChangesAsync();
-                    }
-                    catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                    {
-                        // Concurrent GuildCreated inserted a channel/role that wasn't in our batch lookup.
-                        // Clear drops the Guild field updates set above, so re-fetch and re-apply them
-                        // alongside the channel/role re-batch-load before saving.
-                        ctx.Db.ChangeTracker.Clear();
-                        var refreshedGuild = await ctx.Db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
-                        if (refreshedGuild != null)
-                        {
-                            ApplyGuildFields(refreshedGuild);
-                        }
-                        await UpsertChannelsAndRolesAsync(ctx.Db, ctx.Logger, e.Guild, guildGuid);
-                        await ctx.Db.SaveChangesAsync();
-                    }
 
                     await tx.CommitAsync();
                 });
@@ -199,23 +152,32 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
 
     private static async Task UpsertChannelsAndRolesAsync(DiscordDbContext db, ILogger logger, DiscordGuild guild, Guid guildGuid)
     {
-        // Batch load existing channels
-        var channelIds = guild.Channels.Keys.ToList();
-        var existingChannels = await db.Channels
-            .Where(c => channelIds.Contains(c.DiscordId))
-            .ToDictionaryAsync(c => c.DiscordId);
-
+        // Per-entity upsert: each channel/role goes through the shared primitive, which absorbs
+        // the 23505 race a concurrent GuildCreate could otherwise cause in a batched insert.
         foreach (var channel in guild.Channels.Values)
         {
-            if (!existingChannels.TryGetValue(channel.Id, out var existingChannel))
-            {
-                db.Channels.Add(new ChannelEntity
+            var mappedType = MapChannelType(channel.Type, logger);
+            await db.Channels.UpsertAsync(
+                c => c.DiscordId == channel.Id,
+                s => s
+                    .SetProperty(c => c.Name, channel.Name)
+                    .SetProperty(c => c.ParentDiscordId, channel.Parent?.Id)
+                    .SetProperty(c => c.Type, mappedType)
+                    .SetProperty(c => c.Topic, channel.Topic)
+                    .SetProperty(c => c.Bitrate, channel.Bitrate)
+                    .SetProperty(c => c.UserLimit, channel.UserLimit)
+                    .SetProperty(c => c.RateLimitPerUser, channel.PerUserRateLimit)
+                    .SetProperty(c => c.IsNsfw, false)
+                    .SetProperty(c => c.Position, channel.Position)
+                    .SetProperty(c => c.IsDeleted, false)
+                    .SetProperty(c => c.DeletedAtUtc, (DateTime?)null),
+                () => new ChannelEntity
                 {
                     DiscordId = channel.Id,
                     GuildId = guildGuid,
                     ParentDiscordId = channel.Parent?.Id,
                     Name = channel.Name,
-                    Type = MapChannelType(channel.Type, logger),
+                    Type = mappedType,
                     Topic = channel.Topic,
                     Bitrate = channel.Bitrate,
                     UserLimit = channel.UserLimit,
@@ -223,35 +185,26 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
                     IsNsfw = false,
                     Position = channel.Position,
                     IsDeleted = false
-                });
-            }
-            else
-            {
-                existingChannel.Name = channel.Name;
-                existingChannel.ParentDiscordId = channel.Parent?.Id;
-                existingChannel.Type = MapChannelType(channel.Type, logger);
-                existingChannel.Topic = channel.Topic;
-                existingChannel.Bitrate = channel.Bitrate;
-                existingChannel.UserLimit = channel.UserLimit;
-                existingChannel.RateLimitPerUser = channel.PerUserRateLimit;
-                existingChannel.IsNsfw = false;
-                existingChannel.Position = channel.Position;
-                existingChannel.IsDeleted = false;
-                existingChannel.DeletedAtUtc = null;
-            }
+                },
+                c => c.Id);
         }
-
-        // Batch load existing roles
-        var roleIds = guild.Roles.Keys.ToList();
-        var existingRoles = await db.Roles
-            .Where(r => roleIds.Contains(r.DiscordId))
-            .ToDictionaryAsync(r => r.DiscordId);
 
         foreach (var role in guild.Roles.Values)
         {
-            if (!existingRoles.TryGetValue(role.Id, out var existingRole))
-            {
-                db.Roles.Add(new RoleEntity
+            var permissions = long.TryParse(role.Permissions.ToString(), out var p) ? p : 0;
+            await db.Roles.UpsertAsync(
+                r => r.DiscordId == role.Id,
+                s => s
+                    .SetProperty(r => r.Name, role.Name)
+                    .SetProperty(r => r.Color, role.Color.Value)
+                    .SetProperty(r => r.IsHoisted, role.IsHoisted)
+                    .SetProperty(r => r.Position, role.Position)
+                    .SetProperty(r => r.Permissions, permissions)
+                    .SetProperty(r => r.IsManaged, role.IsManaged)
+                    .SetProperty(r => r.IsMentionable, role.IsMentionable)
+                    .SetProperty(r => r.IsDeleted, false)
+                    .SetProperty(r => r.DeletedAtUtc, (DateTime?)null),
+                () => new RoleEntity
                 {
                     DiscordId = role.Id,
                     GuildId = guildGuid,
@@ -259,24 +212,12 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
                     Color = role.Color.Value,
                     IsHoisted = role.IsHoisted,
                     Position = role.Position,
-                    Permissions = long.TryParse(role.Permissions.ToString(), out var p) ? p : 0,
+                    Permissions = permissions,
                     IsManaged = role.IsManaged,
                     IsMentionable = role.IsMentionable,
                     IsDeleted = false
-                });
-            }
-            else
-            {
-                existingRole.Name = role.Name;
-                existingRole.Color = role.Color.Value;
-                existingRole.IsHoisted = role.IsHoisted;
-                existingRole.Position = role.Position;
-                existingRole.Permissions = long.TryParse(role.Permissions.ToString(), out var perm) ? perm : 0;
-                existingRole.IsManaged = role.IsManaged;
-                existingRole.IsMentionable = role.IsMentionable;
-                existingRole.IsDeleted = false;
-                existingRole.DeletedAtUtc = null;
-            }
+                },
+                r => r.Id);
         }
     }
 

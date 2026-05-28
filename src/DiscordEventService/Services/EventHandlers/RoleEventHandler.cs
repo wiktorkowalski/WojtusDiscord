@@ -1,3 +1,4 @@
+using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Services.Pipeline;
@@ -33,38 +34,47 @@ public sealed class RoleEventHandler(EventPipeline pipeline) :
                     RawEventJson = ctx.RawJson
                 };
 
-                var roleEntity = await ctx.Db.Roles
-                    .FirstOrDefaultAsync(r => r.DiscordId == e.Role.Id);
+                var permissions = long.TryParse(e.Role.Permissions.ToString(), out var perm) ? perm : 0;
 
-                if (roleEntity == null)
+                // Upsert the role (handles the 23505 race internally) before staging the event,
+                // then commit role + event together. ExecutionStrategy is required because
+                // EnableRetryOnFailure is configured on the DbContext.
+                var strategy = ctx.Db.Database.CreateExecutionStrategy();
+                await strategy.ExecuteAsync(async () =>
                 {
-                    roleEntity = new RoleEntity
-                    {
-                        DiscordId = e.Role.Id,
-                        GuildId = guildGuid
-                    };
-                    ctx.Db.Roles.Add(roleEntity);
-                }
+                    await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                UpdateRoleEntity(roleEntity, e.Role);
-                ctx.Db.RoleEvents.Add(NewRoleEvent());
+                    await ctx.Db.Roles.UpsertAsync(
+                        r => r.DiscordId == e.Role.Id,
+                        s => s
+                            .SetProperty(r => r.Name, e.Role.Name)
+                            .SetProperty(r => r.Color, e.Role.Color.Value)
+                            .SetProperty(r => r.IsHoisted, e.Role.IsHoisted)
+                            .SetProperty(r => r.Position, e.Role.Position)
+                            .SetProperty(r => r.Permissions, permissions)
+                            .SetProperty(r => r.IsManaged, e.Role.IsManaged)
+                            .SetProperty(r => r.IsMentionable, e.Role.IsMentionable)
+                            .SetProperty(r => r.IsDeleted, false)
+                            .SetProperty(r => r.DeletedAtUtc, (DateTime?)null),
+                        () => new RoleEntity
+                        {
+                            DiscordId = e.Role.Id,
+                            GuildId = guildGuid,
+                            Name = e.Role.Name,
+                            Color = e.Role.Color.Value,
+                            IsHoisted = e.Role.IsHoisted,
+                            Position = e.Role.Position,
+                            Permissions = permissions,
+                            IsManaged = e.Role.IsManaged,
+                            IsMentionable = e.Role.IsMentionable,
+                            IsDeleted = false
+                        },
+                        r => r.Id);
 
-                try
-                {
-                    await ctx.Db.SaveChangesAsync();
-                }
-                catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                {
-                    // Concurrent insert won the race. Re-fetch, update, re-add the event.
-                    ctx.Db.ChangeTracker.Clear();
-                    var existing = await ctx.Db.Roles.FirstOrDefaultAsync(r => r.DiscordId == e.Role.Id);
-                    if (existing != null)
-                    {
-                        UpdateRoleEntity(existing, e.Role);
-                    }
                     ctx.Db.RoleEvents.Add(NewRoleEvent());
                     await ctx.Db.SaveChangesAsync();
-                }
+                    await tx.CommitAsync();
+                });
             });
     }
 
