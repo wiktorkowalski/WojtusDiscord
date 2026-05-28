@@ -1,143 +1,97 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class BanEventHandler(IServiceScopeFactory scopeFactory, ILogger<BanEventHandler> logger) :
+public sealed class BanEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildBanAddedEventArgs>,
     IEventHandler<GuildBanRemovedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildBanAddedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "GuildBanAdded", nameof(BanEventHandler),
+            e.Guild.Id, null, e.Member.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
+                var userService = ctx.Services.GetRequiredService<UserService>();
 
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "GuildBanAdded", e.Guild.Id, null, e.Member.Id, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
-
-                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
                 var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
                 await userService.UpsertUserAsync(e.Member);
-                var userGuid = await db.Users
+                var userGuid = await ctx.Db.Users
                     .Where(u => u.DiscordId == e.Member.Id)
                     .Select(u => u.Id)
                     .FirstOrDefaultAsync();
 
                 if (guildGuid != Guid.Empty && userGuid != Guid.Empty)
                 {
-                    // Add or update ban entity
-                    var existingBan = await db.Bans
+                    var existingBan = await ctx.Db.Bans
                         .FirstOrDefaultAsync(b => b.GuildId == guildGuid && b.UserId == userGuid && b.IsActive);
 
                     if (existingBan == null)
                     {
-                        db.Bans.Add(new BanEntity
+                        ctx.Db.Bans.Add(new BanEntity
                         {
                             GuildId = guildGuid,
                             UserId = userGuid,
                             IsActive = true,
-                            BannedAtUtc = now
+                            BannedAtUtc = ctx.ReceivedAtUtc
                         });
                     }
                 }
 
-                db.BanEvents.Add(new BanEventEntity
+                ctx.Db.BanEvents.Add(new BanEventEntity
                 {
                     GuildDiscordId = e.Guild.Id,
                     UserDiscordId = e.Member.Id,
                     EventType = BanEventType.Added,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 });
 
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling ban added for UserId={UserId}", e.Member.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildBanAdded", nameof(BanEventHandler), ex,
-                    e.Guild?.Id, null, e.Member?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildBanRemovedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "GuildBanRemoved", nameof(BanEventHandler),
+            e.Guild.Id, null, e.Member.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
-                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "GuildBanRemoved", e.Guild.Id, null, e.Member.Id, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
+                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
+                var userService = ctx.Services.GetRequiredService<UserService>();
 
                 var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
                 await userService.UpsertUserAsync(e.Member);
-                var userGuid = await db.Users
+                var userGuid = await ctx.Db.Users
                     .Where(u => u.DiscordId == e.Member.Id)
                     .Select(u => u.Id)
                     .FirstOrDefaultAsync();
 
                 if (guildGuid != Guid.Empty && userGuid != Guid.Empty)
                 {
-                    // Mark ban as inactive
-                    await db.Bans
+                    await ctx.Db.Bans
                         .Where(b => b.GuildId == guildGuid && b.UserId == userGuid && b.IsActive)
                         .ExecuteUpdateAsync(s => s
                             .SetProperty(b => b.IsActive, false)
-                            .SetProperty(b => b.UnbannedAtUtc, now));
+                            .SetProperty(b => b.UnbannedAtUtc, ctx.ReceivedAtUtc));
                 }
 
-                db.BanEvents.Add(new BanEventEntity
+                ctx.Db.BanEvents.Add(new BanEventEntity
                 {
                     GuildDiscordId = e.Guild.Id,
                     UserDiscordId = e.Member.Id,
                     EventType = BanEventType.Removed,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 });
 
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling ban removed for UserId={UserId}", e.Member.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildBanRemoved", nameof(BanEventHandler), ex,
-                    e.Guild?.Id, null, e.Member?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 }

@@ -1,36 +1,24 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<InviteEventHandler> logger) :
+public sealed class InviteEventHandler(EventPipeline pipeline) :
     IEventHandler<InviteCreatedEventArgs>,
     IEventHandler<InviteDeletedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, InviteCreatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "InviteCreated", nameof(InviteEventHandler),
+            e.Guild.Id, e.Channel.Id, e.Invite.Inviter?.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
-                var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
-                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "InviteCreated", e.Guild.Id, e.Channel.Id, e.Invite.Inviter?.Id, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
+                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
+                var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
+                var userService = ctx.Services.GetRequiredService<UserService>();
 
                 var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
                 var channelGuid = await channelUpsert.UpsertChannelAsync(e.Channel, guildGuid);
@@ -38,19 +26,18 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
                 if (e.Invite.Inviter != null)
                 {
                     await userService.UpsertUserAsync(e.Invite.Inviter);
-                    inviterGuid = await db.Users
+                    inviterGuid = await ctx.Db.Users
                         .Where(u => u.DiscordId == e.Invite.Inviter.Id)
                         .Select(u => u.Id)
                         .FirstOrDefaultAsync();
                 }
 
-                // Upsert InviteEntity
                 var invite = e.Invite;
-                var inviteEntity = await db.Invites.FirstOrDefaultAsync(i => i.Code == invite.Code);
+                var inviteEntity = await ctx.Db.Invites.FirstOrDefaultAsync(i => i.Code == invite.Code);
                 if (inviteEntity == null)
                 {
                     inviteEntity = new InviteEntity { Code = invite.Code };
-                    db.Invites.Add(inviteEntity);
+                    ctx.Db.Invites.Add(inviteEntity);
                 }
 
                 if (guildGuid != Guid.Empty) inviteEntity.GuildId = guildGuid;
@@ -65,7 +52,7 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
                 inviteEntity.IsDeleted = false;
                 inviteEntity.DeletedAtUtc = null;
 
-                var eventEntity = new InviteEventEntity
+                ctx.Db.InviteEvents.Add(new InviteEventEntity
                 {
                     GuildDiscordId = e.Guild.Id,
                     ChannelDiscordId = e.Channel.Id,
@@ -76,72 +63,38 @@ public class InviteEventHandler(IServiceScopeFactory scopeFactory, ILogger<Invit
                     MaxUses = invite.MaxUses,
                     IsTemporary = invite.IsTemporary,
                     Uses = invite.Uses,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.InviteEvents.Add(eventEntity);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling invite created");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "InviteCreated", nameof(InviteEventHandler), ex,
-                    e.Guild?.Id, e.Channel?.Id, e.Invite?.Inviter?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, InviteDeletedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "InviteDeleted", nameof(InviteEventHandler),
+            e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "InviteDeleted", e.Guild.Id, e.Channel.Id, null, correlationId: correlationId);
-
-                // Mark invite as deleted
-                await db.Invites
+                await ctx.Db.Invites
                     .Where(i => i.Code == e.Invite.Code)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(i => i.IsDeleted, true)
-                        .SetProperty(i => i.DeletedAtUtc, (DateTime?)now));
+                        .SetProperty(i => i.DeletedAtUtc, (DateTime?)ctx.ReceivedAtUtc));
 
-                var eventEntity = new InviteEventEntity
+                ctx.Db.InviteEvents.Add(new InviteEventEntity
                 {
                     GuildDiscordId = e.Guild.Id,
                     ChannelDiscordId = e.Channel.Id,
                     EventType = InviteEventType.Deleted,
                     Code = e.Invite.Code,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.InviteEvents.Add(eventEntity);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling invite deleted");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "InviteDeleted", nameof(InviteEventHandler), ex,
-                    e.Guild?.Id, e.Channel?.Id, null, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 }

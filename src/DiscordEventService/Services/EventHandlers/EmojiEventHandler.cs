@@ -1,6 +1,6 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
@@ -8,28 +8,15 @@ using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class EmojiEventHandler(IServiceScopeFactory scopeFactory, ILogger<EmojiEventHandler> logger) :
+public sealed class EmojiEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildEmojisUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildEmojisUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "GuildEmojisUpdated", nameof(EmojiEventHandler),
+            e.Guild.Id, null, null, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "GuildEmojisUpdated", e.Guild.Id, null, null, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
-
-                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
 
                 var beforeIds = e.EmojisBefore.Keys.ToHashSet();
@@ -41,15 +28,14 @@ public class EmojiEventHandler(IServiceScopeFactory scopeFactory, ILogger<EmojiE
                     .Where(id => e.EmojisBefore[id].Name != e.EmojisAfter[id].Name)
                     .ToList();
 
-                // Upsert emotes
                 foreach (var emoji in e.EmojisAfter.Values)
                 {
-                    var existing = await db.Emotes
+                    var existing = await ctx.Db.Emotes
                         .Where(em => em.DiscordId == emoji.Id)
                         .FirstOrDefaultAsync();
                     if (existing == null)
                     {
-                        db.Emotes.Add(new EmoteEntity
+                        ctx.Db.Emotes.Add(new EmoteEntity
                         {
                             DiscordId = emoji.Id,
                             GuildId = guildGuid != Guid.Empty ? guildGuid : null,
@@ -68,16 +54,15 @@ public class EmojiEventHandler(IServiceScopeFactory scopeFactory, ILogger<EmojiE
                     }
                 }
 
-                // Mark removed as deleted
                 foreach (var id in removedIds)
                 {
-                    await db.Emotes.Where(em => em.DiscordId == id)
+                    await ctx.Db.Emotes.Where(em => em.DiscordId == id)
                         .ExecuteUpdateAsync(s => s
                             .SetProperty(em => em.IsDeleted, true)
-                            .SetProperty(em => em.DeletedAtUtc, (DateTime?)now));
+                            .SetProperty(em => em.DeletedAtUtc, (DateTime?)ctx.ReceivedAtUtc));
                 }
 
-                var emojiEvent = new EmojiEventEntity
+                ctx.Db.EmojiEvents.Add(new EmojiEventEntity
                 {
                     GuildDiscordId = e.Guild.Id,
                     EmojisAddedJson = addedIds.Count > 0
@@ -89,23 +74,12 @@ public class EmojiEventHandler(IServiceScopeFactory scopeFactory, ILogger<EmojiE
                     EmojisUpdatedJson = updatedIds.Count > 0
                         ? JsonSerializer.Serialize(updatedIds.Select(id => new { Id = id, NameBefore = e.EmojisBefore[id].Name, NameAfter = e.EmojisAfter[id].Name }))
                         : null,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.EmojiEvents.Add(emojiEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling emojis updated for GuildId={GuildId}", e.Guild.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildEmojisUpdated", nameof(EmojiEventHandler), ex,
-                    e.Guild?.Id, null, null, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 }
