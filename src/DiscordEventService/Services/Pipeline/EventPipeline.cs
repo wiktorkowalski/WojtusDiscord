@@ -11,7 +11,8 @@ public sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFact
         ulong guildId,
         ulong? channelId,
         ulong? userId,
-        Func<EventContext, Task> handler) where TEventArgs : class
+        Func<EventContext, Task> handler,
+        bool logRawEvent = true) where TEventArgs : class
     {
         var logger = loggerFactory.CreateLogger(handlerName);
         var correlationId = Guid.NewGuid();
@@ -36,14 +37,19 @@ public sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFact
                 var receivedAt = DateTime.UtcNow;
                 using var scope = scopeFactory.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
 
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, eventType, guildId, channelId, userId, correlationId: correlationId);
+                // Some events are already raw-logged by a sibling handler (e.g. GuildUpdated by
+                // GuildUpdateEventHandler); pass logRawEvent: false to skip a duplicate row.
+                if (logRawEvent)
+                {
+                    var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+                    rawJson = await rawEventService.SerializeAndLogAsync(
+                        e, eventType, guildId, channelId, userId, correlationId: correlationId);
 
-                // Flush the raw event row before handler logic. Any ChangeTracker.Clear()
-                // in upsert services would silently drop staged raw_event_logs rows otherwise.
-                await db.SaveChangesAsync();
+                    // Flush the raw event row before handler logic. Any ChangeTracker.Clear()
+                    // in upsert services would silently drop staged raw_event_logs rows otherwise.
+                    await db.SaveChangesAsync();
+                }
 
                 var context = new EventContext(db, scope.ServiceProvider, correlationId, rawJson, receivedAt, logger, RecordFailureAsync);
                 await handler(context);

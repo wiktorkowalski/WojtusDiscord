@@ -1,5 +1,6 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
@@ -7,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildEventHandler> logger) :
+public sealed class GuildEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildCreatedEventArgs>,
     IEventHandler<GuildAvailableEventArgs>,
     IEventHandler<GuildUpdatedEventArgs>,
@@ -16,14 +17,10 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildCreatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            logger.LogInformation("GuildCreated event received for GuildId={GuildId} Name={GuildName}", e.Guild.Id, e.Guild.Name);
-            try
+        await pipeline.Execute(e, "GuildCreated", nameof(GuildEventHandler),
+            e.Guild.Id, null, null, async ctx =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+                ctx.Logger.LogInformation("GuildCreated event received for GuildId={GuildId} Name={GuildName}", e.Guild.Id, e.Guild.Name);
 
                 void ApplyGuildFields(GuildEntity g)
                 {
@@ -37,14 +34,13 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
                 // one transaction so a partial failure (e.g. FK error on roles after Guild
                 // already flushed) rolls back atomically. ExecutionStrategy is required
                 // because EnableRetryOnFailure is configured on the DbContext.
-                var strategy = db.Database.CreateExecutionStrategy();
+                var strategy = ctx.Db.Database.CreateExecutionStrategy();
                 await strategy.ExecuteAsync(async () =>
                 {
-                    db.ChangeTracker.Clear();
-                    await using var tx = await db.Database.BeginTransactionAsync();
+                    ctx.Db.ChangeTracker.Clear();
+                    await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                    // Upsert guild
-                    var existingGuild = await db.Guilds
+                    var existingGuild = await ctx.Db.Guilds
                         .Where(g => g.DiscordId == e.Guild.Id)
                         .FirstOrDefaultAsync();
                     if (existingGuild == null)
@@ -57,16 +53,16 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
                             OwnerId = e.Guild.OwnerId,
                             LeftAtUtc = null
                         };
-                        db.Guilds.Add(existingGuild);
+                        ctx.Db.Guilds.Add(existingGuild);
                         try
                         {
-                            await db.SaveChangesAsync(); // Flush to get the Guid Id (committed atomically with the rest at tx.CommitAsync).
+                            await ctx.Db.SaveChangesAsync(); // Flush to get the Guid Id (committed atomically with the rest at tx.CommitAsync).
                         }
                         catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
                         {
                             // Concurrent insert won the race. Re-fetch and update.
-                            db.ChangeTracker.Clear();
-                            existingGuild = await db.Guilds
+                            ctx.Db.ChangeTracker.Clear();
+                            existingGuild = await ctx.Db.Guilds
                                 .Where(g => g.DiscordId == e.Guild.Id)
                                 .FirstOrDefaultAsync()
                                 ?? throw new InvalidOperationException($"Guild {e.Guild.Id} disappeared after 23505 conflict");
@@ -80,40 +76,30 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
 
                     var guildGuid = existingGuild.Id;
 
-                    await UpsertChannelsAndRolesAsync(db, e.Guild, guildGuid);
+                    await UpsertChannelsAndRolesAsync(ctx.Db, ctx.Logger, e.Guild, guildGuid);
 
                     try
                     {
-                        await db.SaveChangesAsync();
+                        await ctx.Db.SaveChangesAsync();
                     }
                     catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
                     {
                         // Concurrent GuildCreated inserted a channel/role that wasn't in our batch lookup.
                         // Clear drops the Guild field updates set above, so re-fetch and re-apply them
                         // alongside the channel/role re-batch-load before saving.
-                        db.ChangeTracker.Clear();
-                        var refreshedGuild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+                        ctx.Db.ChangeTracker.Clear();
+                        var refreshedGuild = await ctx.Db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
                         if (refreshedGuild != null)
                         {
                             ApplyGuildFields(refreshedGuild);
                         }
-                        await UpsertChannelsAndRolesAsync(db, e.Guild, guildGuid);
-                        await db.SaveChangesAsync();
+                        await UpsertChannelsAndRolesAsync(ctx.Db, ctx.Logger, e.Guild, guildGuid);
+                        await ctx.Db.SaveChangesAsync();
                     }
 
                     await tx.CommitAsync();
                 });
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling guild created for GuildId={GuildId}", e.Guild.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildCreated", nameof(GuildEventHandler), ex,
-                    e.Guild?.Id, null, null, correlationId: correlationId);
-            }
-        }
+            });
     }
 
     public Task HandleEventAsync(DiscordClient sender, GuildAvailableEventArgs e)
@@ -124,15 +110,11 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
 
     public async Task HandleEventAsync(DiscordClient sender, GuildUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            try
+        // Already raw-logged by GuildUpdateEventHandler; skip the duplicate raw row here.
+        await pipeline.Execute(e, "GuildUpdated", nameof(GuildEventHandler),
+            e.GuildAfter.Id, null, null, async ctx =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-
-                var existingGuild = await db.Guilds
+                var existingGuild = await ctx.Db.Guilds
                     .Where(g => g.DiscordId == e.GuildAfter.Id)
                     .FirstOrDefaultAsync();
                 if (existingGuild != null)
@@ -141,90 +123,57 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
                     existingGuild.IconHash = e.GuildAfter.IconHash;
                     existingGuild.OwnerId = e.GuildAfter.OwnerId;
 
-                    await db.SaveChangesAsync();
+                    await ctx.Db.SaveChangesAsync();
                 }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling guild updated for GuildId={GuildId}", e.GuildAfter.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildUpdated", nameof(GuildEventHandler), ex,
-                    e.GuildAfter?.Id, null, null, correlationId: correlationId);
-            }
-        }
+            }, logRawEvent: false);
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildDeletedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            try
+        await pipeline.Execute(e, "GuildDeleted", nameof(GuildEventHandler),
+            e.Guild.Id, null, null, async ctx =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-
-                var existingGuild = await db.Guilds
+                var existingGuild = await ctx.Db.Guilds
                     .Where(g => g.DiscordId == e.Guild.Id)
                     .FirstOrDefaultAsync();
                 if (existingGuild != null)
                 {
-                    existingGuild.LeftAtUtc = DateTime.UtcNow;
-                    await db.SaveChangesAsync();
+                    existingGuild.LeftAtUtc = ctx.ReceivedAtUtc;
+                    await ctx.Db.SaveChangesAsync();
                 }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling guild deleted for GuildId={GuildId}", e.Guild.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildDeleted", nameof(GuildEventHandler), ex,
-                    e.Guild?.Id, null, null, correlationId: correlationId);
-            }
-        }
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildEmojisUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            try
+        // Already raw-logged by EmojiEventHandler; skip the duplicate raw row here.
+        await pipeline.Execute(e, "GuildEmojisUpdated", nameof(GuildEventHandler),
+            e.Guild.Id, null, null, async ctx =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-
-                // Look up Guild Guid
-                var guild = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
+                var guild = await ctx.Db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
                 var guildGuid = guild?.Id;
 
-                // Batch load existing emotes for this guild
-                var existingEmotes = await db.Emotes
+                var existingEmotes = await ctx.Db.Emotes
                     .Where(em => em.GuildId == guildGuid)
                     .ToDictionaryAsync(em => em.DiscordId);
 
                 var currentEmoteIds = e.EmojisAfter.Select(em => em.Key).ToHashSet();
 
-                // Mark deleted emotes
                 foreach (var existingEmote in existingEmotes.Values)
                 {
                     if (!currentEmoteIds.Contains(existingEmote.DiscordId))
                     {
                         existingEmote.IsDeleted = true;
-                        existingEmote.DeletedAtUtc ??= DateTime.UtcNow;
+                        existingEmote.DeletedAtUtc ??= ctx.ReceivedAtUtc;
                     }
                 }
 
-                // Upsert current emotes (use dictionary lookup instead of FindAsync)
                 foreach (var emoteKvp in e.EmojisAfter)
                 {
                     var emote = emoteKvp.Value;
                     if (!existingEmotes.TryGetValue(emote.Id, out var existingEmote))
                     {
-                        db.Emotes.Add(new EmoteEntity
+                        ctx.Db.Emotes.Add(new EmoteEntity
                         {
                             DiscordId = emote.Id,
                             GuildId = guildGuid,
@@ -244,21 +193,11 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
                     }
                 }
 
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling guild emojis updated for GuildId={GuildId}", e.Guild.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildEmojisUpdated", nameof(GuildEventHandler), ex,
-                    e.Guild?.Id, null, null, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            }, logRawEvent: false);
     }
 
-    private async Task UpsertChannelsAndRolesAsync(DiscordDbContext db, DiscordGuild guild, Guid guildGuid)
+    private static async Task UpsertChannelsAndRolesAsync(DiscordDbContext db, ILogger logger, DiscordGuild guild, Guid guildGuid)
     {
         // Batch load existing channels
         var channelIds = guild.Channels.Keys.ToList();
@@ -276,7 +215,7 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
                     GuildId = guildGuid,
                     ParentDiscordId = channel.Parent?.Id,
                     Name = channel.Name,
-                    Type = MapChannelType(channel.Type),
+                    Type = MapChannelType(channel.Type, logger),
                     Topic = channel.Topic,
                     Bitrate = channel.Bitrate,
                     UserLimit = channel.UserLimit,
@@ -290,7 +229,7 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
             {
                 existingChannel.Name = channel.Name;
                 existingChannel.ParentDiscordId = channel.Parent?.Id;
-                existingChannel.Type = MapChannelType(channel.Type);
+                existingChannel.Type = MapChannelType(channel.Type, logger);
                 existingChannel.Topic = channel.Topic;
                 existingChannel.Bitrate = channel.Bitrate;
                 existingChannel.UserLimit = channel.UserLimit;
@@ -341,7 +280,7 @@ public class GuildEventHandler(IServiceScopeFactory scopeFactory, ILogger<GuildE
         }
     }
 
-    private ChannelType MapChannelType(DiscordChannelType discordType)
+    private static ChannelType MapChannelType(DiscordChannelType discordType, ILogger logger)
     {
         // Add new DSharpPlus channel types here as they appear. Anything not
         // listed becomes Unknown (with a warning log) instead of silently
