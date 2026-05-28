@@ -15,14 +15,15 @@ public sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, AutoModerationRuleCreatedEventArgs e)
     {
-        var guildDiscordId = e.Rule.Guild?.Id ?? 0UL;
+        // DSharpPlus annotates Rule nullable on this EventArgs, but the gateway payload always carries it.
+        var guildDiscordId = e.Rule!.Guild?.Id ?? 0UL;
         var creatorDiscordId = e.Rule.Creator?.Id ?? 0UL;
 
         await pipeline.Execute(e, "AutoModRuleCreatedRule", nameof(AutoModRuleEventHandler),
             guildDiscordId, null, creatorDiscordId, async ctx =>
             {
                 Guid? guildGuid = null;
-                if (e.Rule.Guild != null)
+                if (e.Rule.Guild is not null)
                 {
                     var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                     var guildResult = await guildUpsert.UpsertGuildAsync(e.Rule.Guild);
@@ -30,7 +31,7 @@ public sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
                 }
 
                 Guid? creatorGuid = null;
-                if (e.Rule.Creator != null)
+                if (e.Rule.Creator is not null)
                 {
                     var userService = ctx.Services.GetRequiredService<UserService>();
                     var creatorResult = await userService.UpsertUserAsync(e.Rule.Creator);
@@ -69,7 +70,8 @@ public sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, AutoModerationRuleUpdatedEventArgs e)
     {
-        var guildDiscordId = e.Rule.Guild?.Id ?? 0UL;
+        // DSharpPlus annotates Rule nullable on this EventArgs, but the gateway payload always carries it.
+        var guildDiscordId = e.Rule!.Guild?.Id ?? 0UL;
 
         await pipeline.Execute(e, "AutoModRuleUpdatedRule", nameof(AutoModRuleEventHandler),
             guildDiscordId, null, e.Rule.Creator?.Id, async ctx =>
