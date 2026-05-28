@@ -1,6 +1,6 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
@@ -8,28 +8,15 @@ using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class StickerEventHandler(IServiceScopeFactory scopeFactory, ILogger<StickerEventHandler> logger) :
+public sealed class StickerEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildStickersUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildStickersUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "GuildStickersUpdated", nameof(StickerEventHandler),
+            e.Guild.Id, null, null, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "GuildStickersUpdated", e.Guild.Id, null, null, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
-
-                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
 
                 var beforeIds = e.StickersBefore.Keys.ToHashSet();
@@ -42,13 +29,12 @@ public class StickerEventHandler(IServiceScopeFactory scopeFactory, ILogger<Stic
                                  e.StickersBefore[id].Description != e.StickersAfter[id].Description)
                     .ToList();
 
-                // Upsert stickers
                 foreach (var sticker in e.StickersAfter.Values)
                 {
-                    var existing = await db.Stickers.FirstOrDefaultAsync(s => s.DiscordId == sticker.Id);
+                    var existing = await ctx.Db.Stickers.FirstOrDefaultAsync(s => s.DiscordId == sticker.Id);
                     if (existing == null)
                     {
-                        db.Stickers.Add(new StickerEntity
+                        ctx.Db.Stickers.Add(new StickerEntity
                         {
                             DiscordId = sticker.Id,
                             GuildId = guildGuid != Guid.Empty ? guildGuid : null,
@@ -70,16 +56,15 @@ public class StickerEventHandler(IServiceScopeFactory scopeFactory, ILogger<Stic
                     }
                 }
 
-                // Mark removed as deleted
                 foreach (var id in removedIds)
                 {
-                    await db.Stickers.Where(s => s.DiscordId == id)
+                    await ctx.Db.Stickers.Where(s => s.DiscordId == id)
                         .ExecuteUpdateAsync(s => s
                             .SetProperty(st => st.IsDeleted, true)
-                            .SetProperty(st => st.DeletedAtUtc, (DateTime?)now));
+                            .SetProperty(st => st.DeletedAtUtc, (DateTime?)ctx.ReceivedAtUtc));
                 }
 
-                var stickerEvent = new StickerEventEntity
+                ctx.Db.StickerEvents.Add(new StickerEventEntity
                 {
                     GuildDiscordId = e.Guild.Id,
                     StickersAddedJson = addedIds.Count > 0
@@ -91,23 +76,12 @@ public class StickerEventHandler(IServiceScopeFactory scopeFactory, ILogger<Stic
                     StickersUpdatedJson = updatedIds.Count > 0
                         ? JsonSerializer.Serialize(updatedIds.Select(id => new { Id = id, NameBefore = e.StickersBefore[id].Name, NameAfter = e.StickersAfter[id].Name }))
                         : null,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.StickerEvents.Add(stickerEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling stickers updated for GuildId={GuildId}", e.Guild.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildStickersUpdated", nameof(StickerEventHandler), ex,
-                    e.Guild?.Id, null, null, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 }

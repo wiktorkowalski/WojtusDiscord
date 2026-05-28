@@ -1,6 +1,6 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
@@ -8,37 +8,23 @@ using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<AutoModRuleEventHandler> logger) :
+public sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
     IEventHandler<AutoModerationRuleCreatedEventArgs>,
     IEventHandler<AutoModerationRuleUpdatedEventArgs>,
     IEventHandler<AutoModerationRuleDeletedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, AutoModerationRuleCreatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        var guildDiscordId = e.Rule.Guild?.Id ?? 0UL;
+        var creatorDiscordId = e.Rule.Creator?.Id ?? 0UL;
+
+        await pipeline.Execute(e, "AutoModRuleCreatedRule", nameof(AutoModRuleEventHandler),
+            guildDiscordId, null, creatorDiscordId, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-
-                var guildDiscordId = e.Rule.Guild?.Id ?? 0UL;
-                var creatorDiscordId = e.Rule.Creator?.Id ?? 0UL;
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "AutoModRuleCreatedRule", guildDiscordId, null, creatorDiscordId, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
-
                 Guid? guildGuid = null;
                 if (e.Rule.Guild != null)
                 {
-                    var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+                    var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                     var id = await guildUpsert.UpsertGuildAsync(e.Rule.Guild);
                     guildGuid = id != Guid.Empty ? id : null;
                 }
@@ -46,14 +32,15 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
                 Guid? creatorGuid = null;
                 if (e.Rule.Creator != null)
                 {
+                    var userService = ctx.Services.GetRequiredService<UserService>();
                     await userService.UpsertUserAsync(e.Rule.Creator);
-                    creatorGuid = await db.Users
+                    creatorGuid = await ctx.Db.Users
                         .Where(u => u.DiscordId == e.Rule.Creator.Id)
                         .Select(u => (Guid?)u.Id)
                         .FirstOrDefaultAsync();
                 }
 
-                db.AutoModRules.Add(new AutoModRuleEntity
+                ctx.Db.AutoModRules.Add(new AutoModRuleEntity
                 {
                     DiscordId = e.Rule.Id,
                     GuildId = guildGuid,
@@ -65,7 +52,7 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
                     ActionsJson = e.Rule.Actions != null ? JsonSerializer.Serialize(e.Rule.Actions) : null
                 });
 
-                db.AutoModRuleEvents.Add(new AutoModRuleEventEntity
+                ctx.Db.AutoModRuleEvents.Add(new AutoModRuleEventEntity
                 {
                     RuleDiscordId = e.Rule.Id,
                     GuildDiscordId = guildDiscordId,
@@ -74,53 +61,30 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
                     Name = e.Rule.Name ?? string.Empty,
                     TriggerType = (int)e.Rule.TriggerType,
                     IsEnabled = e.Rule.IsEnabled,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 });
 
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling automod rule created");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "AutoModRuleCreated", nameof(AutoModRuleEventHandler), ex,
-                    e.Rule.Guild?.Id, null, e.Rule.Creator?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, AutoModerationRuleUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        var guildDiscordId = e.Rule.Guild?.Id ?? 0UL;
+
+        await pipeline.Execute(e, "AutoModRuleUpdatedRule", nameof(AutoModRuleEventHandler),
+            guildDiscordId, null, e.Rule.Creator?.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                var guildDiscordId = e.Rule.Guild?.Id ?? 0UL;
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "AutoModRuleUpdatedRule", guildDiscordId, null, e.Rule.Creator?.Id, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
-
-                await db.AutoModRules
+                await ctx.Db.AutoModRules
                     .Where(r => r.DiscordId == e.Rule.Id)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(r => r.Name, e.Rule.Name ?? string.Empty)
                         .SetProperty(r => r.IsEnabled, e.Rule.IsEnabled)
                         .SetProperty(r => r.ActionsJson, e.Rule.Actions != null ? JsonSerializer.Serialize(e.Rule.Actions) : null));
 
-                db.AutoModRuleEvents.Add(new AutoModRuleEventEntity
+                ctx.Db.AutoModRuleEvents.Add(new AutoModRuleEventEntity
                 {
                     RuleDiscordId = e.Rule.Id,
                     GuildDiscordId = guildDiscordId,
@@ -129,74 +93,41 @@ public class AutoModRuleEventHandler(IServiceScopeFactory scopeFactory, ILogger<
                     Name = e.Rule.Name ?? string.Empty,
                     TriggerType = (int)e.Rule.TriggerType,
                     IsEnabled = e.Rule.IsEnabled,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 });
 
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling automod rule updated");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "AutoModRuleUpdated", nameof(AutoModRuleEventHandler), ex,
-                    e.Rule.Guild?.Id, null, e.Rule.Creator?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, AutoModerationRuleDeletedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        var guildDiscordId = e.Rule.Guild?.Id ?? 0UL;
+
+        await pipeline.Execute(e, "AutoModRuleDeletedRule", nameof(AutoModRuleEventHandler),
+            guildDiscordId, null, e.Rule.Creator?.Id, async ctx =>
             {
-                var now = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                var guildDiscordId = e.Rule.Guild?.Id ?? 0;
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "AutoModRuleDeletedRule", guildDiscordId, null, e.Rule.Creator?.Id, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
-
-                await db.AutoModRules
+                await ctx.Db.AutoModRules
                     .Where(r => r.DiscordId == e.Rule.Id)
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(r => r.IsDeleted, true)
-                        .SetProperty(r => r.DeletedAtUtc, (DateTime?)now));
+                        .SetProperty(r => r.DeletedAtUtc, (DateTime?)ctx.ReceivedAtUtc));
 
-                db.AutoModRuleEvents.Add(new AutoModRuleEventEntity
+                ctx.Db.AutoModRuleEvents.Add(new AutoModRuleEventEntity
                 {
                     RuleDiscordId = e.Rule.Id,
                     GuildDiscordId = guildDiscordId,
                     CreatorDiscordId = e.Rule.Creator?.Id ?? 0,
                     EventType = AutoModRuleEventType.Deleted,
                     Name = e.Rule.Name ?? string.Empty,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 });
 
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling automod rule deleted");
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "AutoModRuleDeleted", nameof(AutoModRuleEventHandler), ex,
-                    e.Rule.Guild?.Id, null, e.Rule.Creator?.Id, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 }
