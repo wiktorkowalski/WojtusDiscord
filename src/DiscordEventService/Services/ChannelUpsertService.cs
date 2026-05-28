@@ -52,9 +52,12 @@ public class ChannelUpsertService(DiscordDbContext db, ILogger<ChannelUpsertServ
             "Inserting placeholder channel row for unresolvable thread DiscordId={DiscordId}; first orphan message seen at {FirstSeen}",
             channelDiscordId, firstOrphanSeenUtc);
 
-        try
-        {
-            var placeholder = new ChannelEntity
+        // Insert-or-get: a concurrent writer (or a real ChannelCreate) may have inserted the row
+        // first. On conflict we return the existing row UNTOUCHED — never overwrite a real channel
+        // with placeholder values.
+        var (channel, _) = await db.Channels.GetOrInsertAsync(
+            c => c.DiscordId == channelDiscordId,
+            () => new ChannelEntity
             {
                 DiscordId = channelDiscordId,
                 GuildId = guildId,
@@ -62,19 +65,11 @@ public class ChannelUpsertService(DiscordDbContext db, ILogger<ChannelUpsertServ
                 Type = ChannelType.PublicThread,
                 Position = 0,
                 IsDeleted = false
-            };
-            db.Channels.Add(placeholder);
-            await db.SaveChangesAsync();
-            return placeholder.Id;
-        }
-        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-        {
-            db.ChangeTracker.Clear();
-            return await db.Channels
-                .Where(c => c.DiscordId == channelDiscordId)
-                .Select(c => c.Id)
-                .FirstAsync();
-        }
+            });
+
+        return channel?.Id
+            ?? throw new InvalidOperationException(
+                $"Placeholder channel {channelDiscordId} vanished after insert-or-get");
     }
 
     public async Task MarkDeletedAsync(ulong channelDiscordId, DateTime deletedAtUtc)

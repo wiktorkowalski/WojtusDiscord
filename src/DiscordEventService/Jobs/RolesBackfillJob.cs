@@ -42,9 +42,9 @@ public class RolesBackfillJob(
 
                 var permissions = long.TryParse(role.Permissions.ToString(), out var perm) ? perm : 0;
 
-                var rowsAffected = await db.Roles
-                    .Where(r => r.DiscordId == role.Id)
-                    .ExecuteUpdateAsync(s => s
+                await db.Roles.UpsertAsync(
+                    r => r.DiscordId == role.Id,
+                    s => s
                         .SetProperty(r => r.Name, role.Name)
                         .SetProperty(r => r.Color, role.Color.Value)
                         .SetProperty(r => r.IsHoisted, role.IsHoisted)
@@ -54,32 +54,20 @@ public class RolesBackfillJob(
                         .SetProperty(r => r.IsMentionable, role.IsMentionable)
                         .SetProperty(r => r.IsDeleted, false)
                         .SetProperty(r => r.DeletedAtUtc, (DateTime?)null),
+                    () => new RoleEntity
+                    {
+                        DiscordId = role.Id,
+                        GuildId = guildEntity.Id,
+                        Name = role.Name,
+                        Color = role.Color.Value,
+                        IsHoisted = role.IsHoisted,
+                        Position = role.Position,
+                        Permissions = permissions,
+                        IsManaged = role.IsManaged,
+                        IsMentionable = role.IsMentionable
+                    },
+                    r => r.Id,
                     cancellationToken);
-
-                if (rowsAffected == 0)
-                {
-                    try
-                    {
-                        db.Roles.Add(new RoleEntity
-                        {
-                            DiscordId = role.Id,
-                            GuildId = guildEntity.Id,
-                            Name = role.Name,
-                            Color = role.Color.Value,
-                            IsHoisted = role.IsHoisted,
-                            Position = role.Position,
-                            Permissions = permissions,
-                            IsManaged = role.IsManaged,
-                            IsMentionable = role.IsMentionable
-                        });
-                        await db.SaveChangesAsync(cancellationToken);
-                    }
-                    catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                    {
-                        logger.LogDebug("Role {RoleId} already exists (race condition), skipping insert", role.Id);
-                        db.ChangeTracker.Clear();
-                    }
-                }
 
                 checkpoint.ProcessedCount++;
 

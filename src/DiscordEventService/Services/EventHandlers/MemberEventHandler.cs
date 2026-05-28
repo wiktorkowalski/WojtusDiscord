@@ -176,23 +176,17 @@ public sealed class MemberEventHandler(EventPipeline pipeline) :
 
         foreach (var roleId in rolesAdded)
         {
-            try
-            {
-                db.MemberRoleSnapshots.Add(new MemberRoleSnapshotEntity
+            // Insert-or-ignore: an open snapshot for this (member, role) may already exist
+            // (filtered unique index). On conflict the existing snapshot is left untouched.
+            await db.MemberRoleSnapshots.GetOrInsertAsync(
+                s => s.MemberId == member.Id && s.RoleDiscordId == roleId && s.RevokedAtUtc == null,
+                () => new MemberRoleSnapshotEntity
                 {
                     MemberId = member.Id,
                     RoleDiscordId = roleId,
                     GrantedAtUtc = eventTime,
                     SourceEventId = sourceEventId
                 });
-                await db.SaveChangesAsync();
-            }
-            catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-            {
-                db.ChangeTracker.Clear();
-                logger.LogDebug("Duplicate role snapshot skipped: Member={MemberId} Role={RoleDiscordId}",
-                    member.Id, roleId);
-            }
         }
 
         foreach (var roleId in rolesRemoved)

@@ -40,36 +40,24 @@ public class EmojisBackfillJob(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var rowsAffected = await db.Emotes
-                    .Where(e => e.DiscordId == emoji.Id)
-                    .ExecuteUpdateAsync(s => s
+                await db.Emotes.UpsertAsync(
+                    e => e.DiscordId == emoji.Id,
+                    s => s
                         .SetProperty(e => e.Name, emoji.Name)
                         .SetProperty(e => e.IsAnimated, emoji.IsAnimated)
                         .SetProperty(e => e.IsAvailable, emoji.IsAvailable)
                         .SetProperty(e => e.IsDeleted, false)
                         .SetProperty(e => e.DeletedAtUtc, (DateTime?)null),
+                    () => new EmoteEntity
+                    {
+                        DiscordId = emoji.Id,
+                        GuildId = guildEntity.Id,
+                        Name = emoji.Name,
+                        IsAnimated = emoji.IsAnimated,
+                        IsAvailable = emoji.IsAvailable
+                    },
+                    e => e.Id,
                     cancellationToken);
-
-                if (rowsAffected == 0)
-                {
-                    try
-                    {
-                        db.Emotes.Add(new EmoteEntity
-                        {
-                            DiscordId = emoji.Id,
-                            GuildId = guildEntity.Id,
-                            Name = emoji.Name,
-                            IsAnimated = emoji.IsAnimated,
-                            IsAvailable = emoji.IsAvailable
-                        });
-                        await db.SaveChangesAsync(cancellationToken);
-                    }
-                    catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                    {
-                        logger.LogDebug("Emoji {EmojiId} already exists (race condition), skipping insert", emoji.Id);
-                        db.ChangeTracker.Clear();
-                    }
-                }
 
                 checkpoint.ProcessedCount++;
 

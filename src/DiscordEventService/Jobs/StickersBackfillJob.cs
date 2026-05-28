@@ -42,9 +42,9 @@ public class StickersBackfillJob(
 
                 var tags = sticker.Tags != null ? string.Join(",", sticker.Tags) : null;
 
-                var rowsAffected = await db.Stickers
-                    .Where(s => s.DiscordId == sticker.Id)
-                    .ExecuteUpdateAsync(s => s
+                await db.Stickers.UpsertAsync(
+                    s => s.DiscordId == sticker.Id,
+                    s => s
                         .SetProperty(st => st.Name, sticker.Name ?? string.Empty)
                         .SetProperty(st => st.Description, sticker.Description)
                         .SetProperty(st => st.Tags, tags)
@@ -53,32 +53,20 @@ public class StickersBackfillJob(
                         .SetProperty(st => st.IsAvailable, true)
                         .SetProperty(st => st.IsDeleted, false)
                         .SetProperty(st => st.DeletedAtUtc, (DateTime?)null),
+                    () => new StickerEntity
+                    {
+                        DiscordId = sticker.Id,
+                        GuildId = guildEntity.Id,
+                        PackId = sticker.PackId,
+                        Name = sticker.Name ?? string.Empty,
+                        Description = sticker.Description,
+                        Tags = tags,
+                        Type = (int)sticker.Type,
+                        FormatType = (int)sticker.FormatType,
+                        IsAvailable = true
+                    },
+                    s => s.Id,
                     cancellationToken);
-
-                if (rowsAffected == 0)
-                {
-                    try
-                    {
-                        db.Stickers.Add(new StickerEntity
-                        {
-                            DiscordId = sticker.Id,
-                            GuildId = guildEntity.Id,
-                            PackId = sticker.PackId,
-                            Name = sticker.Name ?? string.Empty,
-                            Description = sticker.Description,
-                            Tags = tags,
-                            Type = (int)sticker.Type,
-                            FormatType = (int)sticker.FormatType,
-                            IsAvailable = true
-                        });
-                        await db.SaveChangesAsync(cancellationToken);
-                    }
-                    catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                    {
-                        logger.LogDebug("Sticker {StickerId} already exists (race condition), skipping insert", sticker.Id);
-                        db.ChangeTracker.Clear();
-                    }
-                }
 
                 checkpoint.ProcessedCount++;
 

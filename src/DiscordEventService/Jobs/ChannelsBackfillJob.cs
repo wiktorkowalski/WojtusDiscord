@@ -41,9 +41,9 @@ public class ChannelsBackfillJob(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var rowsAffected = await db.Channels
-                    .Where(c => c.DiscordId == channel.Id)
-                    .ExecuteUpdateAsync(s => s
+                await db.Channels.UpsertAsync(
+                    c => c.DiscordId == channel.Id,
+                    s => s
                         .SetProperty(c => c.Name, channel.Name)
                         .SetProperty(c => c.Type, (ChannelType)(int)channel.Type)
                         .SetProperty(c => c.Topic, channel.Topic)
@@ -55,34 +55,22 @@ public class ChannelsBackfillJob(
                         .SetProperty(c => c.ParentDiscordId, channel.ParentId)
                         .SetProperty(c => c.IsDeleted, false)
                         .SetProperty(c => c.DeletedAtUtc, (DateTime?)null),
+                    () => new ChannelEntity
+                    {
+                        DiscordId = channel.Id,
+                        GuildId = guildEntity.Id,
+                        ParentDiscordId = channel.ParentId,
+                        Name = channel.Name,
+                        Type = (ChannelType)(int)channel.Type,
+                        Topic = channel.Topic,
+                        Bitrate = channel.Bitrate,
+                        UserLimit = channel.UserLimit,
+                        RateLimitPerUser = channel.PerUserRateLimit,
+                        IsNsfw = channel.IsNSFW,
+                        Position = channel.Position
+                    },
+                    c => c.Id,
                     cancellationToken);
-
-                if (rowsAffected == 0)
-                {
-                    try
-                    {
-                        db.Channels.Add(new ChannelEntity
-                        {
-                            DiscordId = channel.Id,
-                            GuildId = guildEntity.Id,
-                            ParentDiscordId = channel.ParentId,
-                            Name = channel.Name,
-                            Type = (ChannelType)(int)channel.Type,
-                            Topic = channel.Topic,
-                            Bitrate = channel.Bitrate,
-                            UserLimit = channel.UserLimit,
-                            RateLimitPerUser = channel.PerUserRateLimit,
-                            IsNsfw = channel.IsNSFW,
-                            Position = channel.Position
-                        });
-                        await db.SaveChangesAsync(cancellationToken);
-                    }
-                    catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                    {
-                        logger.LogDebug("Channel {ChannelId} already exists (race condition), skipping insert", channel.Id);
-                        db.ChangeTracker.Clear();
-                    }
-                }
 
                 checkpoint.ProcessedCount++;
 

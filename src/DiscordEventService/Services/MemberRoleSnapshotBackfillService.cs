@@ -77,22 +77,19 @@ public class MemberRoleSnapshotBackfillService(
                 if (openRoles.Contains(roleId))
                     continue;
 
-                try
-                {
-                    db.MemberRoleSnapshots.Add(new MemberRoleSnapshotEntity
+                // Insert-or-ignore: the openRoles pre-check skips known duplicates; this guards
+                // the rare race where a live event inserts the same open snapshot concurrently.
+                var (_, inserted) = await db.MemberRoleSnapshots.GetOrInsertAsync(
+                    s => s.MemberId == memberId && s.RoleDiscordId == roleId && s.RevokedAtUtc == null,
+                    () => new MemberRoleSnapshotEntity
                     {
                         MemberId = memberId,
                         RoleDiscordId = roleId,
                         GrantedAtUtc = evt.EventTimestampUtc,
                         SourceEventId = evt.Id
-                    });
-                    await db.SaveChangesAsync(ct);
-                    created++;
-                }
-                catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                {
-                    db.ChangeTracker.Clear();
-                }
+                    },
+                    ct);
+                if (inserted) created++;
             }
 
             foreach (var roleId in rolesRemoved)
@@ -163,21 +160,18 @@ public class MemberRoleSnapshotBackfillService(
                     if (openRolesForMember.Contains(role.Id))
                         continue;
 
-                    try
-                    {
-                        db.MemberRoleSnapshots.Add(new MemberRoleSnapshotEntity
+                    // Insert-or-ignore: openRolesForMember pre-check skips known duplicates; this
+                    // guards the rare race where a live event inserts the same snapshot concurrently.
+                    var (_, inserted) = await db.MemberRoleSnapshots.GetOrInsertAsync(
+                        s => s.MemberId == memberId && s.RoleDiscordId == role.Id && s.RevokedAtUtc == null,
+                        () => new MemberRoleSnapshotEntity
                         {
                             MemberId = memberId,
                             RoleDiscordId = role.Id,
                             GrantedAtUtc = DateTime.UtcNow
-                        });
-                        await db.SaveChangesAsync(ct);
-                        seeded++;
-                    }
-                    catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                    {
-                        db.ChangeTracker.Clear();
-                    }
+                        },
+                        ct);
+                    if (inserted) seeded++;
                 }
             }
         }

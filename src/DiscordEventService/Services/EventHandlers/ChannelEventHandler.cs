@@ -1,3 +1,4 @@
+using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Services.Pipeline;
@@ -36,38 +37,52 @@ public sealed class ChannelEventHandler(EventPipeline pipeline) :
                     RawEventJson = ctx.RawJson
                 };
 
-                var channelEntity = await ctx.Db.Channels
-                    .FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
-
-                if (channelEntity == null)
+                // Upsert the channel (handles the 23505 race internally) before staging the event,
+                // then commit channel + event together. ExecutionStrategy is required because
+                // EnableRetryOnFailure is configured on the DbContext.
+                var strategy = ctx.Db.Database.CreateExecutionStrategy();
+                await strategy.ExecuteAsync(async () =>
                 {
-                    channelEntity = new ChannelEntity
-                    {
-                        DiscordId = e.Channel.Id,
-                        GuildId = guildGuid
-                    };
-                    ctx.Db.Channels.Add(channelEntity);
-                }
-
-                UpdateChannelEntity(channelEntity, e.Channel);
-                ctx.Db.ChannelEvents.Add(NewChannelEvent());
-
-                try
-                {
-                    await ctx.Db.SaveChangesAsync();
-                }
-                catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-                {
-                    // Concurrent insert won the race. Re-fetch the now-existing row, update it, re-add the event.
+                    // Reset the tracker so an EnableRetryOnFailure retry doesn't re-stage entities
+                    // left Added by a rolled-back attempt.
                     ctx.Db.ChangeTracker.Clear();
-                    var existing = await ctx.Db.Channels.FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
-                    if (existing != null)
-                    {
-                        UpdateChannelEntity(existing, e.Channel);
-                    }
+                    await using var tx = await ctx.Db.Database.BeginTransactionAsync();
+
+                    await ctx.Db.Channels.UpsertAsync(
+                        c => c.DiscordId == e.Channel.Id,
+                        s => s
+                            .SetProperty(c => c.Name, e.Channel.Name)
+                            .SetProperty(c => c.Type, (ChannelType)e.Channel.Type)
+                            .SetProperty(c => c.Topic, e.Channel.Topic)
+                            .SetProperty(c => c.Position, e.Channel.Position)
+                            .SetProperty(c => c.ParentDiscordId, e.Channel.ParentId)
+                            .SetProperty(c => c.Bitrate, e.Channel.Bitrate)
+                            .SetProperty(c => c.UserLimit, e.Channel.UserLimit)
+                            .SetProperty(c => c.RateLimitPerUser, e.Channel.PerUserRateLimit)
+                            .SetProperty(c => c.IsNsfw, e.Channel.IsNSFW)
+                            .SetProperty(c => c.IsDeleted, false)
+                            .SetProperty(c => c.DeletedAtUtc, (DateTime?)null),
+                        () => new ChannelEntity
+                        {
+                            DiscordId = e.Channel.Id,
+                            GuildId = guildGuid,
+                            Name = e.Channel.Name,
+                            Type = (ChannelType)e.Channel.Type,
+                            Topic = e.Channel.Topic,
+                            Position = e.Channel.Position,
+                            ParentDiscordId = e.Channel.ParentId,
+                            Bitrate = e.Channel.Bitrate,
+                            UserLimit = e.Channel.UserLimit,
+                            RateLimitPerUser = e.Channel.PerUserRateLimit,
+                            IsNsfw = e.Channel.IsNSFW,
+                            IsDeleted = false
+                        },
+                        c => c.Id);
+
                     ctx.Db.ChannelEvents.Add(NewChannelEvent());
                     await ctx.Db.SaveChangesAsync();
-                }
+                    await tx.CommitAsync();
+                });
             });
     }
 
