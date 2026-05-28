@@ -29,6 +29,9 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
                 var strategy = ctx.Db.Database.CreateExecutionStrategy();
                 await strategy.ExecuteAsync(async () =>
                 {
+                    // Reset the tracker so an EnableRetryOnFailure retry doesn't re-stage entities
+                    // left Added by a rolled-back attempt.
+                    ctx.Db.ChangeTracker.Clear();
                     await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
                     var guildGuid = await ctx.Db.Guilds.UpsertAsync(
