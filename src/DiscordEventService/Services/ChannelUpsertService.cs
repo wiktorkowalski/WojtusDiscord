@@ -9,9 +9,9 @@ public class ChannelUpsertService(DiscordDbContext db, ILogger<ChannelUpsertServ
 {
     public async Task<Guid> UpsertChannelAsync(DiscordChannel channel, Guid guildId)
     {
-        var rowsAffected = await db.Channels
-            .Where(c => c.DiscordId == channel.Id)
-            .ExecuteUpdateAsync(s => s
+        var id = await db.Channels.UpsertAsync(
+            c => c.DiscordId == channel.Id,
+            s => s
                 .SetProperty(c => c.Name, channel.Name)
                 .SetProperty(c => c.Type, (ChannelType)channel.Type)
                 .SetProperty(c => c.Topic, channel.Topic)
@@ -20,51 +20,23 @@ public class ChannelUpsertService(DiscordDbContext db, ILogger<ChannelUpsertServ
                 .SetProperty(c => c.Bitrate, channel.Bitrate)
                 .SetProperty(c => c.UserLimit, channel.UserLimit)
                 .SetProperty(c => c.RateLimitPerUser, channel.PerUserRateLimit)
-                .SetProperty(c => c.IsNsfw, channel.IsNSFW));
-
-        if (rowsAffected == 0)
-        {
-            try
+                .SetProperty(c => c.IsNsfw, channel.IsNSFW),
+            () => new ChannelEntity
             {
-                db.Channels.Add(new ChannelEntity
-                {
-                    DiscordId = channel.Id,
-                    GuildId = guildId,
-                    Name = channel.Name,
-                    Type = (ChannelType)channel.Type,
-                    Topic = channel.Topic,
-                    Position = channel.Position,
-                    ParentDiscordId = channel.ParentId,
-                    Bitrate = channel.Bitrate,
-                    UserLimit = channel.UserLimit,
-                    RateLimitPerUser = channel.PerUserRateLimit,
-                    IsNsfw = channel.IsNSFW,
-                    IsDeleted = false
-                });
-                await db.SaveChangesAsync();
-            }
-            catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
-            {
-                db.ChangeTracker.Clear();
-                await db.Channels
-                    .Where(c => c.DiscordId == channel.Id)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(c => c.Name, channel.Name)
-                        .SetProperty(c => c.Type, (ChannelType)channel.Type)
-                        .SetProperty(c => c.Topic, channel.Topic)
-                        .SetProperty(c => c.Position, channel.Position)
-                        .SetProperty(c => c.ParentDiscordId, channel.ParentId)
-                        .SetProperty(c => c.Bitrate, channel.Bitrate)
-                        .SetProperty(c => c.UserLimit, channel.UserLimit)
-                        .SetProperty(c => c.RateLimitPerUser, channel.PerUserRateLimit)
-                        .SetProperty(c => c.IsNsfw, channel.IsNSFW));
-            }
-        }
-
-        var id = await db.Channels
-            .Where(c => c.DiscordId == channel.Id)
-            .Select(c => c.Id)
-            .FirstOrDefaultAsync();
+                DiscordId = channel.Id,
+                GuildId = guildId,
+                Name = channel.Name,
+                Type = (ChannelType)channel.Type,
+                Topic = channel.Topic,
+                Position = channel.Position,
+                ParentDiscordId = channel.ParentId,
+                Bitrate = channel.Bitrate,
+                UserLimit = channel.UserLimit,
+                RateLimitPerUser = channel.PerUserRateLimit,
+                IsNsfw = channel.IsNSFW,
+                IsDeleted = false
+            },
+            c => c.Id);
 
         if (id == Guid.Empty)
         {
