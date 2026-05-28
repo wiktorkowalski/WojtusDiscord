@@ -1,17 +1,16 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
-using DiscordEventService.Services;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<PresenceEventHandler> logger) :
+public sealed class PresenceEventHandler(EventPipeline pipeline) :
     IEventHandler<PresenceUpdatedEventArgs>
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -22,47 +21,35 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
 
     public async Task HandleEventAsync(DiscordClient sender, PresenceUpdatedEventArgs args)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
+        var guildId = args.PresenceAfter?.Guild?.Id ?? args.PresenceBefore?.Guild?.Id ?? 0;
+
+        // Serialize a DTO rather than the raw event args — DSharpPlus internals don't serialize
+        // cleanly, and the full presence payload is noisy. The pipeline serializes whatever we
+        // pass as the event object, so this DTO becomes the raw_event_logs row.
+        var eventDto = new
         {
-            string? rawJson = null;
-            try
+            UserId = args.User.Id,
+            GuildId = guildId,
+            Before = args.PresenceBefore == null ? null : new
             {
-                var now = DateTime.UtcNow;
+                Desktop = GetStatusValue(args.PresenceBefore.ClientStatus?.Desktop),
+                Mobile = GetStatusValue(args.PresenceBefore.ClientStatus?.Mobile),
+                Web = GetStatusValue(args.PresenceBefore.ClientStatus?.Web),
+                Activities = args.PresenceBefore.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
+            },
+            After = args.PresenceAfter == null ? null : new
+            {
+                Desktop = GetStatusValue(args.PresenceAfter.ClientStatus?.Desktop),
+                Mobile = GetStatusValue(args.PresenceAfter.ClientStatus?.Mobile),
+                Web = GetStatusValue(args.PresenceAfter.ClientStatus?.Web),
+                Activities = args.PresenceAfter.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
+            }
+        };
 
-                using var scope = scopeFactory.CreateScope();
-                var dbContext = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-
-                var guildId = args.PresenceAfter?.Guild?.Id ?? args.PresenceBefore?.Guild?.Id ?? 0;
-
-                // Create DTO to avoid serialization issues with DSharpPlus internals
-                var eventDto = new
-                {
-                    UserId = args.User.Id,
-                    GuildId = guildId,
-                    Before = args.PresenceBefore == null ? null : new
-                    {
-                        Desktop = GetStatusValue(args.PresenceBefore.ClientStatus?.Desktop),
-                        Mobile = GetStatusValue(args.PresenceBefore.ClientStatus?.Mobile),
-                        Web = GetStatusValue(args.PresenceBefore.ClientStatus?.Web),
-                        Activities = args.PresenceBefore.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
-                    },
-                    After = args.PresenceAfter == null ? null : new
-                    {
-                        Desktop = GetStatusValue(args.PresenceAfter.ClientStatus?.Desktop),
-                        Mobile = GetStatusValue(args.PresenceAfter.ClientStatus?.Mobile),
-                        Web = GetStatusValue(args.PresenceAfter.ClientStatus?.Web),
-                        Activities = args.PresenceAfter.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
-                    }
-                };
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    eventDto, "PresenceUpdated", guildId, null, args.User.Id, correlationId: correlationId);
-
-                // Record the presence event
-                var presenceEvent = new PresenceEventEntity
+        await pipeline.Execute(eventDto, "PresenceUpdated", nameof(PresenceEventHandler),
+            guildId, null, args.User.Id, async ctx =>
+            {
+                ctx.Db.PresenceEvents.Add(new PresenceEventEntity
                 {
                     UserDiscordId = args.User.Id,
                     GuildDiscordId = guildId,
@@ -78,50 +65,37 @@ public class PresenceEventHandler(IServiceScopeFactory scopeFactory, ILogger<Pre
                     ActivitiesBeforeJson = SerializeActivities(args.PresenceBefore?.Activities),
                     ActivitiesAfterJson = SerializeActivities(args.PresenceAfter?.Activities),
 
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                await dbContext.PresenceEvents.AddAsync(presenceEvent);
-
-                // Flush before the user upsert so its 23505 catch path (ChangeTracker.Clear)
-                // can't discard the staged raw_event_logs + presence_events rows.
-                await dbContext.SaveChangesAsync();
+                await ctx.Db.SaveChangesAsync();
 
                 // Track activities in ActivityEntity — upsert the user first so we never silently
                 // skip activity tracking for unknown users (87k presence events historically).
+                var userService = ctx.Services.GetRequiredService<UserService>();
                 await userService.UpsertUserAsync(args.User);
-                var userGuid = await dbContext.Users
+                var userGuid = await ctx.Db.Users
                     .Where(u => u.DiscordId == args.User.Id)
                     .Select(u => u.Id)
                     .FirstOrDefaultAsync();
 
                 if (userGuid != Guid.Empty)
                 {
-                    await UpdateActivityTracking(dbContext, userGuid, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, now);
-                    await dbContext.SaveChangesAsync();
+                    await UpdateActivityTracking(ctx.Db, userGuid, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, ctx.ReceivedAtUtc);
+                    await ctx.Db.SaveChangesAsync();
                 }
                 else
                 {
-                    logger.LogWarning("Skipping activity tracking: UpsertUserAsync did not produce a User row for {UserId}", args.User.Id);
+                    ctx.Logger.LogWarning("Skipping activity tracking: UpsertUserAsync did not produce a User row for {UserId}", args.User.Id);
                 }
 
-                logger.LogDebug("Recorded presence event for user {UserId}", args.User.Id);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling presence update for user {UserId}", args.User.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "PresenceUpdated", nameof(PresenceEventHandler), ex,
-                    null, null, args.User.Id, eventJson: rawJson, correlationId: correlationId);
-            }
-        }
+                ctx.Logger.LogDebug("Recorded presence event for user {UserId}", args.User.Id);
+            });
     }
 
-    private async Task UpdateActivityTracking(
+    private static async Task UpdateActivityTracking(
         DiscordDbContext dbContext,
         Guid userGuid,
         IReadOnlyList<DiscordActivity>? activitiesBefore,
