@@ -1,13 +1,13 @@
 using System.Text.Json;
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<ThreadEventHandler> logger) :
+public sealed class ThreadEventHandler(EventPipeline pipeline) :
     IEventHandler<ThreadCreatedEventArgs>,
     IEventHandler<ThreadUpdatedEventArgs>,
     IEventHandler<ThreadDeletedEventArgs>,
@@ -15,24 +15,11 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
 {
     public async Task HandleEventAsync(DiscordClient sender, ThreadCreatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ThreadCreated", nameof(ThreadEventHandler),
+            e.Guild.Id, e.Thread.Id, e.Thread.CreatorId, async ctx =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
-                var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ThreadCreated", e.Guild.Id, e.Thread.Id, e.Thread.CreatorId, correlationId: correlationId);
-
-                // Flush the raw event row before any upsert; the upsert services' 23505 catch path
-                // calls ChangeTracker.Clear() which would otherwise drop the staged raw_event_logs row.
-                await db.SaveChangesAsync();
+                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
+                var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
 
                 // Threads are channels (ADR-0003): upsert the thread into `channels` so messages
                 // sent into it have a non-null channel_id from the first event onward.
@@ -42,7 +29,7 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
                 // For message threads (parent is text/news), thread ID == starter message ID
                 var isMessageThread = e.Parent?.Type is DiscordChannelType.Text or DiscordChannelType.News;
 
-                var threadEvent = new ThreadEventEntity
+                ctx.Db.ThreadEvents.Add(new ThreadEventEntity
                 {
                     ThreadDiscordId = e.Thread.Id,
                     ParentChannelDiscordId = e.Thread.ParentId ?? 0,
@@ -53,49 +40,27 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
                     StarterMessageDiscordId = isMessageThread ? e.Thread.Id : null,
                     IsArchived = e.Thread.ThreadMetadata?.IsArchived ?? false,
                     IsLocked = e.Thread.ThreadMetadata?.IsLocked ?? false,
-                    EventTimestampUtc = DateTime.UtcNow,
-                    ReceivedAtUtc = DateTime.UtcNow,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ThreadEvents.Add(threadEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling thread created for ThreadId={ThreadId}", e.Thread.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ThreadCreated", nameof(ThreadEventHandler), ex,
-                    e.Guild?.Id, e.Thread?.Id, e.Thread?.CreatorId, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ThreadUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ThreadUpdated", nameof(ThreadEventHandler),
+            e.Guild.Id, e.ThreadAfter.Id, e.ThreadAfter.CreatorId, async ctx =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
-                var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ThreadUpdated", e.Guild.Id, e.ThreadAfter.Id, e.ThreadAfter.CreatorId, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
+                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
+                var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
 
                 var guildId = await guildUpsert.UpsertGuildAsync(e.Guild);
                 await channelUpsert.UpsertChannelAsync(e.ThreadAfter, guildId);
 
-                var threadEvent = new ThreadEventEntity
+                ctx.Db.ThreadEvents.Add(new ThreadEventEntity
                 {
                     ThreadDiscordId = e.ThreadAfter.Id,
                     ParentChannelDiscordId = e.ThreadAfter.ParentId ?? 0,
@@ -105,47 +70,24 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
                     OwnerDiscordId = e.ThreadAfter.CreatorId,
                     IsArchived = e.ThreadAfter.ThreadMetadata?.IsArchived ?? false,
                     IsLocked = e.ThreadAfter.ThreadMetadata?.IsLocked ?? false,
-                    EventTimestampUtc = DateTime.UtcNow,
-                    ReceivedAtUtc = DateTime.UtcNow,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ThreadEvents.Add(threadEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling thread updated for ThreadId={ThreadId}", e.ThreadAfter.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ThreadUpdated", nameof(ThreadEventHandler), ex,
-                    e.Guild?.Id, e.ThreadAfter?.Id, e.ThreadAfter?.CreatorId, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ThreadDeletedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ThreadDeleted", nameof(ThreadEventHandler),
+            e.Guild.Id, e.Thread.Id, e.Thread.CreatorId, async ctx =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-                var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
+                var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
+                await channelUpsert.MarkDeletedAsync(e.Thread.Id, ctx.ReceivedAtUtc);
 
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ThreadDeleted", e.Guild.Id, e.Thread.Id, e.Thread.CreatorId, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
-
-                await channelUpsert.MarkDeletedAsync(e.Thread.Id, DateTime.UtcNow);
-
-                var threadEvent = new ThreadEventEntity
+                ctx.Db.ThreadEvents.Add(new ThreadEventEntity
                 {
                     ThreadDiscordId = e.Thread.Id,
                     ParentChannelDiscordId = e.Thread.ParentId ?? 0,
@@ -155,41 +97,20 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
                     OwnerDiscordId = e.Thread.CreatorId,
                     IsArchived = e.Thread.ThreadMetadata?.IsArchived ?? false,
                     IsLocked = e.Thread.ThreadMetadata?.IsLocked ?? false,
-                    EventTimestampUtc = DateTime.UtcNow,
-                    ReceivedAtUtc = DateTime.UtcNow,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ThreadEvents.Add(threadEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling thread deleted for ThreadId={ThreadId}", e.Thread.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ThreadDeleted", nameof(ThreadEventHandler), ex,
-                    e.Guild?.Id, e.Thread?.Id, e.Thread?.CreatorId, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ThreadMembersUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ThreadMembersUpdated", nameof(ThreadEventHandler),
+            e.Guild.Id, e.Thread.Id, null, async ctx =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ThreadMembersUpdated", e.Guild.Id, e.Thread.Id, null, correlationId: correlationId);
-
                 string? membersAddedJson = null;
                 string? membersRemovedJson = null;
 
@@ -205,7 +126,7 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
                     membersRemovedJson = JsonSerializer.Serialize(removedMemberIds);
                 }
 
-                var threadEvent = new ThreadEventEntity
+                ctx.Db.ThreadEvents.Add(new ThreadEventEntity
                 {
                     ThreadDiscordId = e.Thread.Id,
                     ParentChannelDiscordId = e.Thread.ParentId ?? 0,
@@ -217,23 +138,12 @@ public class ThreadEventHandler(IServiceScopeFactory scopeFactory, ILogger<Threa
                     IsLocked = e.Thread.ThreadMetadata?.IsLocked ?? false,
                     MembersAddedJson = membersAddedJson,
                     MembersRemovedJson = membersRemovedJson,
-                    EventTimestampUtc = DateTime.UtcNow,
-                    ReceivedAtUtc = DateTime.UtcNow,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ThreadEvents.Add(threadEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling thread members updated for ThreadId={ThreadId}", e.Thread.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ThreadMembersUpdated", nameof(ThreadEventHandler), ex,
-                    e.Guild?.Id, e.Thread?.Id, null, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 }

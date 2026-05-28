@@ -1,6 +1,6 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<ChannelEventHandler> logger) :
+public sealed class ChannelEventHandler(EventPipeline pipeline) :
     IEventHandler<ChannelCreatedEventArgs>,
     IEventHandler<ChannelUpdatedEventArgs>,
     IEventHandler<ChannelDeletedEventArgs>,
@@ -16,23 +16,10 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
 {
     public async Task HandleEventAsync(DiscordClient sender, ChannelCreatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ChannelCreated", nameof(ChannelEventHandler),
+            e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
-                var receivedAt = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ChannelCreated", e.Guild.Id, e.Channel.Id, null, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
-
+                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
 
                 ChannelEventEntity NewChannelEvent() => new()
@@ -44,12 +31,12 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
                     NameAfter = e.Channel.Name,
                     TopicAfter = e.Channel.Topic,
                     PositionAfter = e.Channel.Position,
-                    EventTimestampUtc = receivedAt,
-                    ReceivedAtUtc = receivedAt,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 };
 
-                var channelEntity = await db.Channels
+                var channelEntity = await ctx.Db.Channels
                     .FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
 
                 if (channelEntity == null)
@@ -59,57 +46,37 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
                         DiscordId = e.Channel.Id,
                         GuildId = guildGuid
                     };
-                    db.Channels.Add(channelEntity);
+                    ctx.Db.Channels.Add(channelEntity);
                 }
 
                 UpdateChannelEntity(channelEntity, e.Channel);
-                db.ChannelEvents.Add(NewChannelEvent());
+                ctx.Db.ChannelEvents.Add(NewChannelEvent());
 
                 try
                 {
-                    await db.SaveChangesAsync();
+                    await ctx.Db.SaveChangesAsync();
                 }
                 catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
                 {
                     // Concurrent insert won the race. Re-fetch the now-existing row, update it, re-add the event.
-                    db.ChangeTracker.Clear();
-                    var existing = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
+                    ctx.Db.ChangeTracker.Clear();
+                    var existing = await ctx.Db.Channels.FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
                     if (existing != null)
                     {
                         UpdateChannelEntity(existing, e.Channel);
                     }
-                    db.ChannelEvents.Add(NewChannelEvent());
-                    await db.SaveChangesAsync();
+                    ctx.Db.ChannelEvents.Add(NewChannelEvent());
+                    await ctx.Db.SaveChangesAsync();
                 }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling channel created for ChannelId={ChannelId}", e.Channel.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ChannelCreated", nameof(ChannelEventHandler), ex,
-                    e.Guild?.Id, e.Channel.Id, null, rawJson, correlationId: correlationId);
-            }
-        }
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ChannelUpdated", nameof(ChannelEventHandler),
+            e.ChannelAfter.Guild.Id, e.ChannelAfter.Id, null, async ctx =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ChannelUpdated", e.ChannelAfter.Guild.Id, e.ChannelAfter.Id, null, correlationId: correlationId);
-
-                var channelEntity = await db.Channels
+                var channelEntity = await ctx.Db.Channels
                     .FirstOrDefaultAsync(c => c.DiscordId == e.ChannelAfter.Id);
 
                 if (channelEntity != null)
@@ -123,9 +90,9 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
                     GuildDiscordId = e.ChannelAfter.Guild.Id,
                     ChannelType = (int)e.ChannelAfter.Type,
                     EventType = ChannelEventType.Updated,
-                    EventTimestampUtc = DateTime.UtcNow,
-                    ReceivedAtUtc = DateTime.UtcNow,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 };
 
                 if (e.ChannelBefore.Name != e.ChannelAfter.Name)
@@ -146,46 +113,26 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
                     channelEvent.PositionAfter = e.ChannelAfter.Position;
                 }
 
-                db.ChannelEvents.Add(channelEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling channel updated for ChannelId={ChannelId}", e.ChannelAfter.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ChannelUpdated", nameof(ChannelEventHandler), ex,
-                    e.ChannelAfter.Guild?.Id, e.ChannelAfter.Id, null, rawJson, correlationId: correlationId);
-            }
-        }
+                ctx.Db.ChannelEvents.Add(channelEvent);
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelDeletedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ChannelDeleted", nameof(ChannelEventHandler),
+            e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ChannelDeleted", e.Guild.Id, e.Channel.Id, null, correlationId: correlationId);
-
-                var channelEntity = await db.Channels
+                var channelEntity = await ctx.Db.Channels
                     .FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
 
                 if (channelEntity != null)
                 {
                     channelEntity.IsDeleted = true;
-                    channelEntity.DeletedAtUtc = DateTime.UtcNow;
+                    channelEntity.DeletedAtUtc = ctx.ReceivedAtUtc;
                 }
 
-                var channelEvent = new ChannelEventEntity
+                ctx.Db.ChannelEvents.Add(new ChannelEventEntity
                 {
                     ChannelDiscordId = e.Channel.Id,
                     GuildDiscordId = e.Guild.Id,
@@ -194,65 +141,33 @@ public class ChannelEventHandler(IServiceScopeFactory scopeFactory, ILogger<Chan
                     NameBefore = e.Channel.Name,
                     TopicBefore = e.Channel.Topic,
                     PositionBefore = e.Channel.Position,
-                    EventTimestampUtc = DateTime.UtcNow,
-                    ReceivedAtUtc = DateTime.UtcNow,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ChannelEvents.Add(channelEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling channel deleted for ChannelId={ChannelId}", e.Channel.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ChannelDeleted", nameof(ChannelEventHandler), ex,
-                    e.Guild?.Id, e.Channel.Id, null, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelPinsUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "ChannelPinsUpdatedChannel", nameof(ChannelEventHandler),
+            e.Guild?.Id ?? 0, e.Channel.Id, null, async ctx =>
             {
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "ChannelPinsUpdatedChannel", e.Guild?.Id ?? 0, e.Channel.Id, null, correlationId: correlationId);
-
-                var channelEvent = new ChannelEventEntity
+                ctx.Db.ChannelEvents.Add(new ChannelEventEntity
                 {
                     ChannelDiscordId = e.Channel.Id,
                     GuildDiscordId = e.Guild?.Id ?? 0,
                     ChannelType = (int)e.Channel.Type,
                     EventType = ChannelEventType.PinsUpdated,
-                    EventTimestampUtc = e.LastPinTimestamp?.UtcDateTime ?? DateTime.UtcNow,
-                    ReceivedAtUtc = DateTime.UtcNow,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = e.LastPinTimestamp?.UtcDateTime ?? ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.ChannelEvents.Add(channelEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling channel pins updated for ChannelId={ChannelId}", e.Channel.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "ChannelPinsUpdatedChannel", nameof(ChannelEventHandler), ex,
-                    e.Guild?.Id, e.Channel.Id, null, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     private static void UpdateChannelEntity(ChannelEntity entity, DiscordChannel channel)

@@ -1,6 +1,6 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
@@ -8,30 +8,17 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEventHandler> logger) :
+public sealed class RoleEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildRoleCreatedEventArgs>,
     IEventHandler<GuildRoleUpdatedEventArgs>,
     IEventHandler<GuildRoleDeletedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildRoleCreatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "GuildRoleCreated", nameof(RoleEventHandler),
+            e.Guild.Id, null, null, async ctx =>
             {
-                var receivedAt = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "GuildRoleCreated", e.Guild.Id, null, null, correlationId: correlationId);
-
-                await db.SaveChangesAsync();
-
+                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var guildGuid = await guildUpsert.UpsertGuildAsync(e.Guild);
 
                 RoleEventEntity NewRoleEvent() => new()
@@ -41,12 +28,12 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
                     EventType = RoleEventType.Created,
                     NameAfter = e.Role.Name,
                     ColorAfter = e.Role.Color.Value,
-                    EventTimestampUtc = receivedAt,
-                    ReceivedAtUtc = receivedAt,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 };
 
-                var roleEntity = await db.Roles
+                var roleEntity = await ctx.Db.Roles
                     .FirstOrDefaultAsync(r => r.DiscordId == e.Role.Id);
 
                 if (roleEntity == null)
@@ -56,58 +43,37 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
                         DiscordId = e.Role.Id,
                         GuildId = guildGuid
                     };
-                    db.Roles.Add(roleEntity);
+                    ctx.Db.Roles.Add(roleEntity);
                 }
 
                 UpdateRoleEntity(roleEntity, e.Role);
-                db.RoleEvents.Add(NewRoleEvent());
+                ctx.Db.RoleEvents.Add(NewRoleEvent());
 
                 try
                 {
-                    await db.SaveChangesAsync();
+                    await ctx.Db.SaveChangesAsync();
                 }
                 catch (DbUpdateException dbEx) when (dbEx.InnerException is Npgsql.PostgresException { SqlState: "23505" })
                 {
                     // Concurrent insert won the race. Re-fetch, update, re-add the event.
-                    db.ChangeTracker.Clear();
-                    var existing = await db.Roles.FirstOrDefaultAsync(r => r.DiscordId == e.Role.Id);
+                    ctx.Db.ChangeTracker.Clear();
+                    var existing = await ctx.Db.Roles.FirstOrDefaultAsync(r => r.DiscordId == e.Role.Id);
                     if (existing != null)
                     {
                         UpdateRoleEntity(existing, e.Role);
                     }
-                    db.RoleEvents.Add(NewRoleEvent());
-                    await db.SaveChangesAsync();
+                    ctx.Db.RoleEvents.Add(NewRoleEvent());
+                    await ctx.Db.SaveChangesAsync();
                 }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling role created for RoleId={RoleId}", e.Role.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildRoleCreated", nameof(RoleEventHandler), ex,
-                    e.Guild?.Id, null, null, rawJson, correlationId: correlationId);
-            }
-        }
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildRoleUpdatedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "GuildRoleUpdated", nameof(RoleEventHandler),
+            e.Guild.Id, null, null, async ctx =>
             {
-                var receivedAt = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "GuildRoleUpdated", e.Guild.Id, null, null, correlationId: correlationId);
-
-                var roleEntity = await db.Roles
+                var roleEntity = await ctx.Db.Roles
                     .FirstOrDefaultAsync(r => r.DiscordId == e.RoleAfter.Id);
 
                 if (roleEntity != null)
@@ -120,9 +86,9 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
                     RoleDiscordId = e.RoleAfter.Id,
                     GuildDiscordId = e.Guild.Id,
                     EventType = RoleEventType.Updated,
-                    EventTimestampUtc = receivedAt,
-                    ReceivedAtUtc = receivedAt,
-                    RawEventJson = rawJson
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
                 };
 
                 if (e.RoleBefore.Name != e.RoleAfter.Name)
@@ -137,71 +103,39 @@ public class RoleEventHandler(IServiceScopeFactory scopeFactory, ILogger<RoleEve
                     roleEvent.ColorAfter = e.RoleAfter.Color.Value;
                 }
 
-                db.RoleEvents.Add(roleEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling role updated for RoleId={RoleId}", e.RoleAfter.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildRoleUpdated", nameof(RoleEventHandler), ex,
-                    e.Guild?.Id, null, null, rawJson, correlationId: correlationId);
-            }
-        }
+                ctx.Db.RoleEvents.Add(roleEvent);
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, GuildRoleDeletedEventArgs e)
     {
-        var correlationId = Guid.NewGuid();
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
-        {
-            string? rawJson = null;
-            try
+        await pipeline.Execute(e, "GuildRoleDeleted", nameof(RoleEventHandler),
+            e.Guild.Id, null, null, async ctx =>
             {
-                var receivedAt = DateTime.UtcNow;
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-
-                rawJson = await rawEventService.SerializeAndLogAsync(
-                    e, "GuildRoleDeleted", e.Guild.Id, null, null, correlationId: correlationId);
-
-                var roleEntity = await db.Roles
+                var roleEntity = await ctx.Db.Roles
                     .FirstOrDefaultAsync(r => r.DiscordId == e.Role.Id);
 
                 if (roleEntity != null)
                 {
                     roleEntity.IsDeleted = true;
-                    roleEntity.DeletedAtUtc = receivedAt;
+                    roleEntity.DeletedAtUtc = ctx.ReceivedAtUtc;
                 }
 
-                var roleEvent = new RoleEventEntity
+                ctx.Db.RoleEvents.Add(new RoleEventEntity
                 {
                     RoleDiscordId = e.Role.Id,
                     GuildDiscordId = e.Guild.Id,
                     EventType = RoleEventType.Deleted,
                     NameBefore = e.Role.Name,
                     ColorBefore = e.Role.Color.Value,
-                    EventTimestampUtc = receivedAt,
-                    ReceivedAtUtc = receivedAt,
-                    RawEventJson = rawJson
-                };
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson
+                });
 
-                db.RoleEvents.Add(roleEvent);
-                await db.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error handling role deleted for RoleId={RoleId}", e.Role.Id);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    "GuildRoleDeleted", nameof(RoleEventHandler), ex,
-                    e.Guild?.Id, null, null, rawJson, correlationId: correlationId);
-            }
-        }
+                await ctx.Db.SaveChangesAsync();
+            });
     }
 
     private static void UpdateRoleEntity(RoleEntity entity, DiscordRole role)
