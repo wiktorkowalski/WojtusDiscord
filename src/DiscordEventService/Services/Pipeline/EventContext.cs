@@ -8,4 +8,5 @@ public record EventContext(
     Guid CorrelationId,
     string? RawJson,
     DateTime ReceivedAtUtc,
-    ILogger Logger);
+    ILogger Logger,
+    Func<Exception, Task> RecordFailureAsync);

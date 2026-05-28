@@ -18,6 +18,19 @@ public sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFact
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
             string? rawJson = null;
+
+            // Records a FailedEvent in an isolated scope using this event's metadata. Used both
+            // by the pipeline's own exception path and by handlers that want to record a soft
+            // failure (e.g. an unresolved FK) and return without throwing.
+            async Task RecordFailureAsync(Exception ex)
+            {
+                using var failureScope = scopeFactory.CreateScope();
+                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+                await failedEventService.RecordFailureAsync(
+                    eventType, handlerName, ex,
+                    guildId, channelId, userId, rawJson, correlationId: correlationId);
+            }
+
             try
             {
                 var receivedAt = DateTime.UtcNow;
@@ -32,17 +45,13 @@ public sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFact
                 // in upsert services would silently drop staged raw_event_logs rows otherwise.
                 await db.SaveChangesAsync();
 
-                var context = new EventContext(db, scope.ServiceProvider, correlationId, rawJson, receivedAt, logger);
+                var context = new EventContext(db, scope.ServiceProvider, correlationId, rawJson, receivedAt, logger, RecordFailureAsync);
                 await handler(context);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Error handling {EventType} in {HandlerName}", eventType, handlerName);
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    eventType, handlerName, ex,
-                    guildId, channelId, userId, rawJson, correlationId: correlationId);
+                await RecordFailureAsync(ex);
             }
         }
     }
