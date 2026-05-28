@@ -145,14 +145,7 @@ public class HealthCheckJob(
 
     private async Task CheckEventTypeRatioAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now)
     {
-        var baselineStart = now.AddDays(-opts.EventRatioBaselineDays);
         var recentStart = now.AddHours(-opts.EventRatioRecentHours);
-
-        var baseline = await db.RawEventLogs
-            .Where(r => r.ReceivedAtUtc > baselineStart)
-            .GroupBy(r => r.EventType)
-            .Select(g => new { EventType = g.Key, DailyAvg = (double)g.Count() / opts.EventRatioBaselineDays })
-            .ToListAsync();
 
         var recent = await db.RawEventLogs
             .Where(r => r.ReceivedAtUtc > recentStart)
@@ -160,14 +153,28 @@ public class HealthCheckJob(
             .Select(g => new { EventType = g.Key, Count = g.Count() })
             .ToDictionaryAsync(g => g.EventType, g => g.Count);
 
-        var dropped = baseline
-            .Where(b => b.DailyAvg >= opts.EventRatioMinDailyBaseline)
-            .Where(b =>
-            {
-                var recentCount = recent.GetValueOrDefault(b.EventType, 0);
-                var expectedInWindow = b.DailyAvg * opts.EventRatioRecentHours / 24.0;
-                return recentCount < expectedInWindow * opts.EventRatioDropThreshold;
-            })
+        // Baseline = the same wall-clock window on each of the previous N days, so
+        // Discord's day/night activity cycle doesn't read as a drop (voice events
+        // legitimately fall to 0 overnight). Whole-day offsets keep this comparison
+        // independent of the database session timezone.
+        var baselineTotals = new Dictionary<string, int>();
+        for (var dayOffset = 1; dayOffset <= opts.EventRatioBaselineDays; dayOffset++)
+        {
+            var windowStart = recentStart.AddDays(-dayOffset);
+            var windowEnd = now.AddDays(-dayOffset);
+            var counts = await db.RawEventLogs
+                .Where(r => r.ReceivedAtUtc > windowStart && r.ReceivedAtUtc <= windowEnd)
+                .GroupBy(r => r.EventType)
+                .Select(g => new { EventType = g.Key, Count = g.Count() })
+                .ToListAsync();
+            foreach (var c in counts)
+                baselineTotals[c.EventType] = baselineTotals.GetValueOrDefault(c.EventType) + c.Count;
+        }
+
+        var dropped = baselineTotals
+            .Select(b => new { EventType = b.Key, ExpectedInWindow = (double)b.Value / opts.EventRatioBaselineDays })
+            .Where(b => b.ExpectedInWindow >= opts.EventRatioMinWindowBaseline)
+            .Where(b => recent.GetValueOrDefault(b.EventType, 0) < b.ExpectedInWindow * opts.EventRatioDropThreshold)
             .ToList();
 
         if (dropped.Count == 0)
@@ -182,8 +189,7 @@ public class HealthCheckJob(
         var details = string.Join("\n", dropped.Select(d =>
         {
             var recentCount = recent.GetValueOrDefault(d.EventType, 0);
-            var expectedInWindow = d.DailyAvg * opts.EventRatioRecentHours / 24.0;
-            return $"- `{d.EventType}`: {recentCount} in last {opts.EventRatioRecentHours}h (expected ~{expectedInWindow:F0} based on {d.DailyAvg:F1}/day baseline)";
+            return $"- `{d.EventType}`: {recentCount} in last {opts.EventRatioRecentHours}h (expected ~{d.ExpectedInWindow:F1} for this time of day)";
         }));
 
         if (!await SendWebhookAsync(opts.WebhookUrl!,
