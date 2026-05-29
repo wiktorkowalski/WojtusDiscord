@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Text;
-using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Dtos;
+using DiscordEventService.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -98,27 +98,13 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
             r.ReceivedAtUtc,
             r.JsonSizeBytes,
             r.SerializationFailed,
-            ParsePayload(r.EventJson))).ToList();
+            JsonPayload.Parse(r.EventJson))).ToList();
 
         var nextCursor = hasMore && events.Count > 0
             ? EncodeCursor(events[^1].ReceivedAtUtc, events[^1].Id)
             : null;
 
         return Ok(new TimelinePage(events, nextCursor, hasMore));
-    }
-
-    private static JsonElement ParsePayload(string json)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            return doc.RootElement.Clone();
-        }
-        catch (JsonException)
-        {
-            // Diagnostic stubs / malformed payloads: surface the raw text rather than 500.
-            return JsonSerializer.SerializeToElement(new { raw = json });
-        }
     }
 
     private static string EncodeCursor(DateTime receivedAtUtc, Guid id)
