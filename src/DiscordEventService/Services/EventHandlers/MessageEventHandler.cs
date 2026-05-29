@@ -24,12 +24,6 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
         await pipeline.Execute(e, "MessageCreated", nameof(MessageEventHandler),
             e.Guild.Id, e.Channel.Id, e.Author.Id, async ctx =>
             {
-                var userService = ctx.Services.GetRequiredService<UserService>();
-                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
-                var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
-
-                var authorResult = await userService.UpsertUserAsync(e.Author);
-
                 var attachmentsJson = e.Message.Attachments.Count > 0
                     ? JsonSerializer.Serialize(e.Message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
                     : null;
@@ -41,23 +35,15 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                 // channel_id IS NULL because the prior FirstOrDefault path silently wrote null when
                 // the channel (a thread) wasn't yet in our DB. §P1.9 closes that hole; §P2.6 (#74)
                 // makes the FKs NOT NULL so any regression in the upsert services becomes a loud
-                // skip + FailedEvent instead of a silent NULL FK row.
-                var guildResult = await guildUpsert.UpsertGuildAsync(e.Guild);
-                var channelResult = await channelUpsert.UpsertChannelAsync(e.Channel, guildResult.Value);
+                // skip + FailedEvent instead of a silent NULL FK row. FkResolver concentrates that
+                // resolve + all-or-fail validation + failure recording.
+                var fks = await ctx.Services.GetRequiredService<FkResolver>()
+                    .ResolveAsync(ctx, e.Guild, e.Channel, e.Author, $"MessageId={e.Message.Id}");
+                if (!fks.Success) return; // resolver already logged + recorded the failure
 
-                if (!guildResult.IsSuccess || !channelResult.IsSuccess || !authorResult.IsSuccess)
-                {
-                    ctx.Logger.LogError(
-                        "MessageCreated: could not resolve required FKs for MessageId={MessageId} (guildResolved={GuildResolved} channelResolved={ChannelResolved} authorResolved={AuthorResolved}); skipping insert",
-                        e.Message.Id, guildResult.IsSuccess, channelResult.IsSuccess, authorResult.IsSuccess);
-                    await ctx.RecordFailureAsync(new InvalidOperationException(
-                        $"Required FK not resolved: guildResolved={guildResult.IsSuccess} channelResolved={channelResult.IsSuccess} authorResolved={authorResult.IsSuccess}"));
-                    return;
-                }
-
-                var guildId = guildResult.Value;
-                var channelId = channelResult.Value;
-                var authorId = authorResult.Value;
+                var guildId = fks.GuildId;
+                var channelId = fks.ChannelId;
+                var authorId = fks.UserId;
 
                 MessageEventEntity NewMessageEvent() => new()
                 {
