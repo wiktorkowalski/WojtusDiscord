@@ -45,8 +45,15 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
             .Where(u => u.Id == id)
             .Select(u => new
             {
-                u.Id, u.DiscordId, u.Username, u.GlobalName, u.Discriminator,
-                u.IsBot, u.IsSystem, u.FirstSeenUtc, u.LastUpdatedUtc,
+                u.Id,
+                u.DiscordId,
+                u.Username,
+                u.GlobalName,
+                u.Discriminator,
+                u.IsBot,
+                u.IsSystem,
+                u.FirstSeenUtc,
+                u.LastUpdatedUtc,
                 MembershipCount = u.Memberships.Count,
             })
             .FirstOrDefaultAsync(ct);
@@ -86,8 +93,15 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
             .Where(c => c.Id == id)
             .Select(c => new
             {
-                c.Id, c.DiscordId, c.Name, c.Type, c.Topic, c.ParentDiscordId,
-                c.IsNsfw, c.Position, c.IsDeleted,
+                c.Id,
+                c.DiscordId,
+                c.Name,
+                c.Type,
+                c.Topic,
+                c.ParentDiscordId,
+                c.IsNsfw,
+                c.Position,
+                c.IsDeleted,
                 MessageCount = db.Messages.LongCount(m => m.ChannelId == c.Id),
             })
             .FirstOrDefaultAsync(ct);
@@ -141,11 +155,21 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
             .Where(m => m.Id == id)
             .Select(m => new
             {
-                m.Id, m.DiscordId, m.Content,
-                AuthorDiscordId = m.Author.DiscordId, AuthorName = m.Author.Username,
-                ChannelDiscordId = m.Channel.DiscordId, ChannelName = m.Channel.Name,
-                m.HasAttachments, m.HasEmbeds, m.AttachmentsJson, m.EmbedsJson,
-                m.IsDeleted, m.DeletedAtUtc, m.CreatedAtUtc, m.EditedAtUtc,
+                m.Id,
+                m.DiscordId,
+                m.Content,
+                AuthorDiscordId = m.Author.DiscordId,
+                AuthorName = m.Author.Username,
+                ChannelDiscordId = m.Channel.DiscordId,
+                ChannelName = m.Channel.Name,
+                m.HasAttachments,
+                m.HasEmbeds,
+                m.AttachmentsJson,
+                m.EmbedsJson,
+                m.IsDeleted,
+                m.DeletedAtUtc,
+                m.CreatedAtUtc,
+                m.EditedAtUtc,
             })
             .FirstOrDefaultAsync(ct);
 

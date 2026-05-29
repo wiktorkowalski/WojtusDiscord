@@ -141,29 +141,29 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
 
     private static VoiceStateEventEntity Voice(
         ulong user, ulong guild, ulong? before, ulong? after, VoiceEventType type, DateTime at) => new()
-    {
-        UserDiscordId = user,
-        GuildDiscordId = guild,
-        ChannelDiscordIdBefore = before,
-        ChannelDiscordIdAfter = after,
-        EventType = type,
-        ReceivedAtUtc = at,
-        EventTimestampUtc = at,
-    };
+        {
+            UserDiscordId = user,
+            GuildDiscordId = guild,
+            ChannelDiscordIdBefore = before,
+            ChannelDiscordIdAfter = after,
+            EventType = type,
+            ReceivedAtUtc = at,
+            EventTimestampUtc = at,
+        };
 
     private static ReactionEventEntity Reaction(
         ulong user, ulong guild, ulong channel, string emote, ulong? emoteId) => new()
-    {
-        UserDiscordId = user,
-        GuildDiscordId = guild,
-        ChannelDiscordId = channel,
-        MessageDiscordId = 1UL,
-        EmoteName = emote,
-        EmoteDiscordId = emoteId,
-        EventType = ReactionEventType.Added,
-        ReceivedAtUtc = DateTime.UtcNow,
-        EventTimestampUtc = DateTime.UtcNow,
-    };
+        {
+            UserDiscordId = user,
+            GuildDiscordId = guild,
+            ChannelDiscordId = channel,
+            MessageDiscordId = 1UL,
+            EmoteName = emote,
+            EmoteDiscordId = emoteId,
+            EventType = ReactionEventType.Added,
+            ReceivedAtUtc = DateTime.UtcNow,
+            EventTimestampUtc = DateTime.UtcNow,
+        };
 
     private static RawEventLogEntity Raw(string type, DateTime at) => new()
     {

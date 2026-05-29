@@ -11,7 +11,7 @@ namespace DiscordEventService.Infrastructure;
 /// <c>AddControllers().AddJsonOptions(...)</c>; also fires for boxed <c>ulong</c>
 /// values inside the generic explorer's <c>Dictionary&lt;string, object?&gt;</c> rows.
 /// </summary>
-public sealed class SnowflakeJsonConverter : JsonConverter<ulong>
+internal sealed class SnowflakeJsonConverter : JsonConverter<ulong>
 {
     public override ulong Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         => reader.TokenType switch
@@ -26,7 +26,7 @@ public sealed class SnowflakeJsonConverter : JsonConverter<ulong>
 }
 
 /// <summary>Nullable counterpart to <see cref="SnowflakeJsonConverter"/>.</summary>
-public sealed class NullableSnowflakeJsonConverter : JsonConverter<ulong?>
+internal sealed class NullableSnowflakeJsonConverter : JsonConverter<ulong?>
 {
     public override ulong? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
         => reader.TokenType switch
@@ -54,7 +54,7 @@ public sealed class NullableSnowflakeJsonConverter : JsonConverter<ulong?>
 /// Builds the <see cref="JsonSerializerOptions"/> the dashboard API uses, so tests can
 /// assert serialization (e.g. snowflake-as-string) through the exact same pipeline.
 /// </summary>
-public static class DashboardJson
+internal static class DashboardJson
 {
     public static void Configure(JsonSerializerOptions options)
     {
