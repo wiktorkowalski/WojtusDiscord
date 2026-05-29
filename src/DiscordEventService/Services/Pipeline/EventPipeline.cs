@@ -43,12 +43,25 @@ public sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFact
                 if (logRawEvent)
                 {
                     var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
-                    rawJson = await rawEventService.SerializeAndLogAsync(
+                    var serialized = await rawEventService.SerializeAndLogAsync(
                         e, eventType, guildId, channelId, userId, correlationId: correlationId);
+                    rawJson = serialized.Json;
 
                     // Flush the raw event row before handler logic. Any ChangeTracker.Clear()
                     // in upsert services would silently drop staged raw_event_logs rows otherwise.
                     await db.SaveChangesAsync();
+
+                    // Serialization failure means raw_event_logs holds an unreplayable stub. The
+                    // row is flagged (serialization_failed=true); surface it loudly and record a
+                    // FailedEvent so it is alertable. The handler still runs — it acts on the live
+                    // event args, not the JSON, so structured ingestion is unaffected.
+                    if (serialized.Error is not null)
+                    {
+                        logger.LogError(serialized.Error,
+                            "Failed to serialize {EventType} in {HandlerName}; stored a flagged stub in raw_event_logs (payload unrecoverable)",
+                            eventType, handlerName);
+                        await RecordFailureAsync(serialized.Error);
+                    }
                 }
 
                 var context = new EventContext(db, scope.ServiceProvider, correlationId, rawJson, receivedAt, logger, RecordFailureAsync);

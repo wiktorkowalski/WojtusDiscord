@@ -48,4 +48,11 @@ public class RawEventLogEntity
     public DateTime ReceivedAtUtc { get; set; } = DateTime.UtcNow;
 
     public Guid? CorrelationId { get; set; }
+
+    /// <summary>
+    /// True when <see cref="EventJson"/> is a diagnostic stub written because the event args
+    /// could not be serialized — the original payload is unrecoverable, so this row must be
+    /// excluded from replay. Queryable marker; supersedes matching the stub's error string.
+    /// </summary>
+    public bool SerializationFailed { get; set; }
 }

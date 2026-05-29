@@ -6,8 +6,23 @@ using System.Reflection;
 
 namespace DiscordEventService.Services;
 
+/// <summary>
+/// Outcome of serializing an event. <see cref="Error"/> is non-null when serialization failed,
+/// in which case <see cref="Json"/> is a diagnostic stub (not the real payload).
+/// </summary>
+public sealed record EventSerializationResult(string Json, Exception? Error)
+{
+    public bool Failed => Error is not null;
+}
+
 public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogService> logger)
 {
+    /// <summary>
+    /// Marker value placed in the <c>error</c> field of a serialization-failure stub.
+    /// Kept as a constant so detectors don't hard-code the literal.
+    /// </summary>
+    public const string SerializationFailedMarker = "Serialization failed";
+
     // #107 switched to Newtonsoft to fix System.Text.Json's
     // KeyNotFoundException('deprecated') on DSharpPlus's [JsonProperty]-tagged
     // properties (DiscordVoiceRegion.IsDeprecated). But Newtonsoft, when it
@@ -30,23 +45,28 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
     };
 
     /// <summary>
-    /// Serializes an event args object to JSON, handling any serialization errors gracefully.
+    /// Serializes an event args object to JSON. On failure returns a diagnostic stub and reports
+    /// the exception via <see cref="EventSerializationResult.Error"/> so the caller can flag the
+    /// row and record the failure — the failure is NOT swallowed here (no log; the caller owns it,
+    /// where it has handler/correlation context).
     /// </summary>
-    public string SerializeEvent<T>(T eventArgs) where T : class
+    public EventSerializationResult SerializeEvent<T>(T eventArgs) where T : class
     {
         try
         {
-            return JsonConvert.SerializeObject(eventArgs, JsonSettings);
+            return new EventSerializationResult(JsonConvert.SerializeObject(eventArgs, JsonSettings), null);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to serialize {EventType}, falling back to type info only", typeof(T).Name);
-            return JsonConvert.SerializeObject(new
+            // Keep a diagnostic stub (error type/message stay queryable), but surface the failure
+            // so the row is flagged and a FailedEvent is recorded instead of masquerading as success.
+            var stub = JsonConvert.SerializeObject(new
             {
-                Error = "Serialization failed",
+                Error = SerializationFailedMarker,
                 EventType = typeof(T).Name,
                 Message = ex.Message
             }, JsonSettings);
+            return new EventSerializationResult(stub, ex);
         }
     }
 
@@ -59,7 +79,8 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
         ulong guildId = 0,
         ulong? channelId = null,
         ulong? userId = null,
-        Guid? correlationId = null)
+        Guid? correlationId = null,
+        bool serializationFailed = false)
     {
         try
         {
@@ -72,7 +93,8 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
                 EventJson = eventJson,
                 JsonSizeBytes = System.Text.Encoding.UTF8.GetByteCount(eventJson),
                 ReceivedAtUtc = DateTime.UtcNow,
-                CorrelationId = correlationId
+                CorrelationId = correlationId,
+                SerializationFailed = serializationFailed
             };
 
             await dbContext.RawEventLogs.AddAsync(rawEvent);
@@ -87,7 +109,7 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
     /// <summary>
     /// Convenience method to serialize and log in one call.
     /// </summary>
-    public async Task<string> SerializeAndLogAsync<T>(
+    public async Task<EventSerializationResult> SerializeAndLogAsync<T>(
         T eventArgs,
         string eventType,
         ulong guildId = 0,
@@ -95,9 +117,9 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
         ulong? userId = null,
         Guid? correlationId = null) where T : class
     {
-        var json = SerializeEvent(eventArgs);
-        await LogRawEventAsync(eventType, json, guildId, channelId, userId, correlationId);
-        return json;
+        var result = SerializeEvent(eventArgs);
+        await LogRawEventAsync(eventType, result.Json, guildId, channelId, userId, correlationId, result.Failed);
+        return result;
     }
 
     private sealed class BypassRecursiveConverterResolver : CamelCasePropertyNamesContractResolver
