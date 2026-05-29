@@ -51,7 +51,8 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
         }
         if (since is not null)
         {
-            query = query.Where(r => r.ReceivedAtUtc >= since.Value);
+            var sinceUtc = since.Value.ToUtcInstant();
+            query = query.Where(r => r.ReceivedAtUtc >= sinceUtc);
         }
         if (failedOnly)
         {

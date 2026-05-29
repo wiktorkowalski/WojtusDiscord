@@ -82,6 +82,21 @@ public sealed class TimelineControllerTests(PostgresFixture fixture) : IClassFix
     }
 
     [Fact]
+    public async Task GetTimeline_WithUnspecifiedKindAfter_FiltersWithoutThrowing()
+    {
+        var t = new DateTime(2026, 5, 1, 12, 0, 0, DateTimeKind.Utc);
+        await SeedAsync(("A", t.AddMinutes(1), null), ("B", t.AddMinutes(5), null));
+        var controller = new TimelineController(_db);
+
+        // Kind=Unspecified, as query-string binding produces — must not throw against timestamptz.
+        var after = new DateTime(2026, 5, 1, 12, 3, 0, DateTimeKind.Unspecified);
+        var page = Ok(await controller.GetTimeline(after: after));
+
+        Assert.Single(page.Events);
+        Assert.Equal("B", page.Events[0].EventType);
+    }
+
+    [Fact]
     public async Task GetTimeline_PayloadIsStructuredJson()
     {
         await SeedAsync(("MessageCreated", DateTime.UtcNow, null));

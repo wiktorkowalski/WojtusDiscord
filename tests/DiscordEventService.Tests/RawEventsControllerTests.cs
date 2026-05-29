@@ -50,6 +50,20 @@ public sealed class RawEventsControllerTests(PostgresFixture fixture) : IClassFi
     }
 
     [Fact]
+    public async Task GetEvents_WithUnspecifiedKindSince_FiltersWithoutThrowing()
+    {
+        // Seeded at 12:00, 12:01, 12:02 (UTC).
+        await SeedAsync(("A", false), ("B", false), ("C", false));
+        var controller = new RawEventsController(_db);
+
+        // Kind=Unspecified, as query-string binding produces — must not throw against timestamptz.
+        var since = new DateTime(2026, 5, 1, 12, 1, 0, DateTimeKind.Unspecified);
+        var page = Ok<PagedResult<RawEventSummaryDto>>(await controller.GetEvents(since: since, ct: default));
+
+        Assert.Equal(2, page.TotalCount);
+    }
+
+    [Fact]
     public async Task GetEvent_ReturnsPayload_OrNotFound()
     {
         await SeedAsync(("MessageCreated", false));

@@ -37,11 +37,13 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
 
         if (after is not null)
         {
-            query = query.Where(r => r.ReceivedAtUtc >= after.Value);
+            var afterUtc = after.Value.ToUtcInstant();
+            query = query.Where(r => r.ReceivedAtUtc >= afterUtc);
         }
         if (before is not null)
         {
-            query = query.Where(r => r.ReceivedAtUtc <= before.Value);
+            var beforeUtc = before.Value.ToUtcInstant();
+            query = query.Where(r => r.ReceivedAtUtc <= beforeUtc);
         }
         if (!string.IsNullOrWhiteSpace(eventType))
         {
