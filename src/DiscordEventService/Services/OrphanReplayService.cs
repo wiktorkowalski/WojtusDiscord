@@ -31,14 +31,15 @@ public class OrphanReplayService(DiscordDbContext db, ILogger<OrphanReplayServic
                     && m.UserDiscordId == r.UserDiscordId
                     && m.ReceivedAtUtc >= r.ReceivedAtUtc.AddSeconds(-5)
                     && m.ReceivedAtUtc <= r.ReceivedAtUtc.AddSeconds(5)))
-            .Select(r => new { r.Id, r.UserDiscordId, r.ReceivedAtUtc, r.EventJson })
+            .Select(r => new { r.Id, r.UserDiscordId, r.ReceivedAtUtc, r.SerializationFailed })
             .ToListAsync(ct);
 
         var skipped = 0;
         foreach (var o in orphans)
         {
-            if (IsStubFallback(o.EventJson))
+            if (o.SerializationFailed)
             {
+                // Unreplayable serialization stub — the original payload is gone.
                 skipped++;
                 continue;
             }
@@ -52,11 +53,4 @@ public class OrphanReplayService(DiscordDbContext db, ILogger<OrphanReplayServic
 
         return new OrphanReplayResult(orphans.Count, 0, skipped);
     }
-
-    // Matches the stub written by RawEventLogService.SerializeEvent's catch path.
-    // Postgres jsonb normalizes whitespace to `"key": value` (with space), so
-    // we look for the spaced form. Substring match is order-independent because
-    // jsonb may reorder keys on storage.
-    private static bool IsStubFallback(string json)
-        => json.Contains("\"error\": \"Serialization failed\"", StringComparison.Ordinal);
 }
