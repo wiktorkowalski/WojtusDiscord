@@ -86,6 +86,7 @@ builder.Services.AddSingleton(rootSp =>
         services.AddScoped<UserService>();
         services.AddScoped<GuildUpsertService>();
         services.AddScoped<ChannelUpsertService>();
+        services.AddScoped<FkResolver>();
         services.AddScoped<RawEventLogService>();
         services.AddScoped<FailedEventService>();
         services.AddScoped<DowntimeTrackerService>();
@@ -164,6 +165,7 @@ builder.Services.AddMemoryCache();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<GuildUpsertService>();
 builder.Services.AddScoped<ChannelUpsertService>();
+builder.Services.AddScoped<FkResolver>();
 builder.Services.AddScoped<RawEventLogService>();
 builder.Services.AddScoped<FailedEventService>();
 builder.Services.AddScoped<DowntimeTrackerService>();
