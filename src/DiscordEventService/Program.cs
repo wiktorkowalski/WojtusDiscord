@@ -66,10 +66,10 @@ builder.Services.AddSingleton(rootSp =>
 {
     var clientBuilder = DiscordClientBuilder.CreateDefault(discordToken, DiscordIntents.All);
 
-    // Register ASP.NET Core services in DSharpPlus's DI container.
-    // NOTE: when adding a new registration here that event handlers depend on,
-    // also add the type to StartupValidator.RequiredChildContainerServices so
-    // missing registrations fail at startup instead of at runtime.
+    // Register ASP.NET Core services in DSharpPlus's DI container. Services event
+    // handlers share with the root container come from AddCoreServices(); add new
+    // shared services to CoreServiceRegistration.CoreServiceTypes (one line, both
+    // containers + StartupValidator pick them up automatically).
     clientBuilder.ConfigureServices(services =>
     {
         services.AddDbContext<DiscordDbContext>(options =>
@@ -83,18 +83,7 @@ builder.Services.AddSingleton(rootSp =>
 
         services.AddSingleton<IHostEnvironment>(builder.Environment);
         services.AddSingleton<EventPipeline>();
-        services.AddScoped<UserService>();
-        services.AddScoped<GuildUpsertService>();
-        services.AddScoped<ChannelUpsertService>();
-        services.AddScoped<FkResolver>();
-        services.AddScoped<RawEventLogService>();
-        services.AddScoped<FailedEventService>();
-        services.AddScoped<DowntimeTrackerService>();
-        // SocketLifecycleHandler.GuildDownloadCompleted enqueues backfills via
-        // GuildBackfillOrchestrator; it resolves from the DSharpPlus child
-        // container, so the orchestrator must be registered here too.
-        services.AddScoped<GuildBackfillOrchestrator>();
-        services.AddScoped<BootQuickSyncService>();
+        services.AddCoreServices();
         // IBackgroundJobClient forwards to the root container's registration.
         // Hangfire registers IBackgroundJobClient as Transient with DI-based
         // JobStorage resolution; using `new BackgroundJobClient()` directly
@@ -161,14 +150,10 @@ builder.Services.AddHostedService<HeartbeatBackgroundService>();
 // Memory cache for throttling
 builder.Services.AddMemoryCache();
 
-// Shared services
-builder.Services.AddScoped<UserService>();
-builder.Services.AddScoped<GuildUpsertService>();
-builder.Services.AddScoped<ChannelUpsertService>();
-builder.Services.AddScoped<FkResolver>();
-builder.Services.AddScoped<RawEventLogService>();
-builder.Services.AddScoped<FailedEventService>();
-builder.Services.AddScoped<DowntimeTrackerService>();
+// Shared services (registered in both the root and DSharpPlus child containers)
+builder.Services.AddCoreServices();
+
+// Root-only services (backfill/ops paths; event handlers don't resolve these)
 builder.Services.AddScoped<OrphanReplayService>();
 builder.Services.AddScoped<ThreadChannelBackfillService>();
 builder.Services.AddScoped<MemberRoleSnapshotBackfillService>();
@@ -203,7 +188,6 @@ builder.Services.AddScoped<ChannelsBackfillJob>();
 builder.Services.AddScoped<MembersBackfillJob>();
 builder.Services.AddScoped<MessagesBackfillJob>();
 builder.Services.AddScoped<ReactionsBackfillJob>();
-builder.Services.AddScoped<GuildBackfillOrchestrator>();
 builder.Services.AddScoped<PeriodicFullBackfillJob>();
 
 var app = builder.Build();
