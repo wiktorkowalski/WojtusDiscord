@@ -1,6 +1,8 @@
 import { Routes, Route } from 'react-router-dom'
 import AppShell from './components/AppShell'
 import Home from './pages/Home'
+import Tables from './pages/Tables'
+import TableExplorer from './pages/TableExplorer'
 import Placeholder from './components/Placeholder'
 
 // Routes are scaffolded now and filled in over slices S1–S7. AppShell wraps
@@ -12,7 +14,8 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/stats" element={<Placeholder title="Statistics" />} />
         <Route path="/entities" element={<Placeholder title="Entities" />} />
-        <Route path="/tables" element={<Placeholder title="Tables" />} />
+        <Route path="/tables" element={<Tables />} />
+        <Route path="/tables/:table" element={<TableExplorer />} />
         <Route path="/raw" element={<Placeholder title="Raw events" />} />
         <Route path="*" element={<Placeholder title="Not found" />} />
       </Routes>

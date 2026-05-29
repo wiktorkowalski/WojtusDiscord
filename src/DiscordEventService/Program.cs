@@ -1,6 +1,7 @@
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Endpoints;
+using DiscordEventService.Infrastructure;
 using DiscordEventService.Jobs;
 using DiscordEventService.Services;
 using DiscordEventService.Services.EventHandlers;
@@ -165,7 +166,19 @@ builder.Services.AddHealthChecks()
 
 // Dashboard read API (MVC controllers under Controllers/). Controllers are
 // auto-discovered by MapControllers(); no per-controller registration needed.
-builder.Services.AddControllers();
+// Snowflakes serialize as strings (JS number precision) for the whole API.
+builder.Services.AddControllers()
+    .AddJsonOptions(o => DashboardJson.Configure(o.JsonSerializerOptions));
+
+// Startup-cached whitelist of explorable tables/columns for the generic explorer,
+// built from the EF model. Constructing a DbContext to read its Model needs no DB
+// connection, so this is safe at DI-validation time.
+builder.Services.AddSingleton(sp =>
+{
+    using var scope = sp.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+    return SchemaCatalog.Build(db.Model);
+});
 
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<HealthCheckJob>();
