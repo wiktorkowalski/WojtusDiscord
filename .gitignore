@@ -400,3 +400,7 @@ Desktop.ini
 
 **/.env
 infra/data/*
+
+# Dashboard (Vite) generated artifacts — built locally/CI, not committed
+src/Dashboard/dist/
+src/DiscordEventService/wwwroot/

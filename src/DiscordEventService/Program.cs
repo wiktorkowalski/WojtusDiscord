@@ -163,6 +163,10 @@ builder.Services.AddScoped<MessageMentionsBackfillService>();
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<DiscordDbContext>();
 
+// Dashboard read API (MVC controllers under Controllers/). Controllers are
+// auto-discovered by MapControllers(); no per-controller registration needed.
+builder.Services.AddControllers();
+
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<HealthCheckJob>();
 
@@ -222,6 +226,15 @@ if (dbOptions.AutoMigrate)
     await db.Database.MigrateAsync();
 }
 
+// Serve the bundled dashboard SPA (Vite build output in wwwroot). Must precede
+// the route-mapping below; the SPA fallback is registered LAST so it never
+// swallows /api, /health, or /hangfire.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
+// Dashboard read API
+app.MapControllers();
+
 app.MapHealthChecks("/health");
 
 // Hangfire dashboard
@@ -244,5 +257,9 @@ app.MapBackfillEndpoints();
 
 // Operations API
 app.MapOpsEndpoints();
+
+// SPA fallback — LAST so it only catches client-side routes (any non-/api,
+// non-/health, non-/hangfire GET) and serves index.html for deep links.
+app.MapFallbackToFile("index.html");
 
 app.Run();

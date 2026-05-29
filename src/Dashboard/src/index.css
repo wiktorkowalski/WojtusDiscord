@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/* Discord-inspired dark palette, registered as Tailwind theme colors so
+   utilities like `bg-discord-bg`, `text-discord-muted`, `bg-blurple` work. */
+@theme {
+  --color-discord-bg: #313338;
+  --color-discord-bg-alt: #2b2d31;
+  --color-discord-bg-dark: #1e1f22;
+  --color-discord-bg-card: #383a40;
+  --color-discord-border: #232428;
+  --color-blurple: #5865f2;
+  --color-blurple-hover: #4752c4;
+  --color-discord-green: #23a55a;
+  --color-discord-yellow: #f0b232;
+  --color-discord-red: #f23f43;
+  --color-discord-text: #dbdee1;
+  --color-discord-muted: #b5bac1;
+  --color-discord-faint: #949ba4;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-discord-bg-dark text-discord-text;
+  font-family: "gg sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+/* Monospace for snowflake IDs / raw JSON */
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Thin dark scrollbars to match the theme */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1e1f22 transparent;
+}
