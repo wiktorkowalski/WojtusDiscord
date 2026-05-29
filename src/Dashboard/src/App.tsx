@@ -1,6 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
 import AppShell from './components/AppShell'
-import Home from './pages/Home'
+import Timeline from './pages/Timeline'
 import Tables from './pages/Tables'
 import TableExplorer from './pages/TableExplorer'
 import Placeholder from './components/Placeholder'
@@ -11,7 +11,7 @@ function App() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<Timeline />} />
         <Route path="/stats" element={<Placeholder title="Statistics" />} />
         <Route path="/entities" element={<Placeholder title="Entities" />} />
         <Route path="/tables" element={<Tables />} />
