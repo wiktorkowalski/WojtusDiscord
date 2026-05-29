@@ -404,3 +404,6 @@ infra/data/*
 # Dashboard (Vite) generated artifacts — built locally/CI, not committed
 src/Dashboard/dist/
 src/DiscordEventService/wwwroot/
+
+# Playwright MCP scratch (screenshots/snapshots from local visual testing)
+.playwright-mcp/

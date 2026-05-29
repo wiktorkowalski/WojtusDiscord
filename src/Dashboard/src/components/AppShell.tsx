@@ -1,54 +1,83 @@
 import { NavLink } from 'react-router-dom'
 import type { ReactNode } from 'react'
+import {
+  IconHome,
+  IconPulse,
+  IconChart,
+  IconUsers,
+  IconDatabase,
+  IconBraces,
+} from './icons'
 
 interface NavItem {
   to: string
   label: string
-  icon: string
+  Icon: (p: { className?: string }) => ReactNode
   end?: boolean
 }
 
-// Ordered to match the dashboard's primary views. Timeline is the landing page.
 const NAV: NavItem[] = [
-  { to: '/', label: 'Timeline', icon: '🕓', end: true },
-  { to: '/stats', label: 'Statistics', icon: '📊' },
-  { to: '/entities', label: 'Entities', icon: '👥' },
-  { to: '/tables', label: 'Tables', icon: '🗄️' },
-  { to: '/raw', label: 'Raw events', icon: '🧬' },
+  { to: '/', label: 'Overview', Icon: IconHome, end: true },
+  { to: '/timeline', label: 'Timeline', Icon: IconPulse },
+  { to: '/stats', label: 'Statistics', Icon: IconChart },
+  { to: '/entities', label: 'Entities', Icon: IconUsers },
+  { to: '/tables', label: 'Tables', Icon: IconDatabase },
+  { to: '/raw', label: 'Raw events', Icon: IconBraces },
 ]
 
 export default function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden">
-      <aside className="flex w-60 flex-shrink-0 flex-col bg-discord-bg-alt border-r border-discord-border">
-        <div className="flex h-12 items-center gap-2 border-b border-discord-border px-4">
-          <span className="text-lg">🤖</span>
-          <h1 className="text-base font-semibold text-white">Wojtuś Events</h1>
+      <aside className="flex w-64 flex-shrink-0 flex-col border-r border-discord-border bg-discord-bg-alt/60 backdrop-blur-sm">
+        <div className="flex h-16 items-center gap-3 px-5">
+          <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-blurple to-accent-2 font-display text-lg font-extrabold text-white shadow-lg shadow-blurple/20">
+            W
+          </div>
+          <div className="leading-tight">
+            <div className="font-display text-base font-bold text-white">Wojtuś</div>
+            <div className="text-[11px] uppercase tracking-[0.18em] text-discord-faint">Event Dashboard</div>
+          </div>
         </div>
-        <nav className="flex-1 space-y-0.5 overflow-y-auto p-2">
-          {NAV.map((item) => (
+
+        <nav className="flex-1 space-y-1 px-3 py-2">
+          {NAV.map(({ to, label, Icon, end }) => (
             <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
+              key={to}
+              to={to}
+              end={end}
               className={({ isActive }) =>
-                `flex items-center gap-3 rounded px-3 py-2 text-sm font-medium transition-colors ${
+                `group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${
                   isActive
-                    ? 'bg-blurple text-white'
-                    : 'text-discord-muted hover:bg-discord-bg-card hover:text-white'
+                    ? 'bg-blurple/15 text-white'
+                    : 'text-discord-muted hover:bg-white/[0.03] hover:text-white'
                 }`
               }
             >
-              <span className="text-base">{item.icon}</span>
-              {item.label}
+              {({ isActive }) => (
+                <>
+                  <span
+                    className={`absolute left-0 top-1/2 h-5 w-1 -translate-y-1/2 rounded-r-full bg-blurple transition-opacity ${
+                      isActive ? 'opacity-100' : 'opacity-0'
+                    }`}
+                  />
+                  <Icon className={`text-lg ${isActive ? 'text-blurple' : 'text-discord-faint group-hover:text-discord-muted'}`} />
+                  {label}
+                </>
+              )}
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-discord-border px-4 py-3 text-xs text-discord-faint">
+
+        <div className="flex items-center gap-2 border-t border-discord-border px-5 py-4 text-xs text-discord-faint">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-accent" />
+          </span>
           Read-only · home network
         </div>
       </aside>
-      <main className="flex-1 overflow-y-auto bg-discord-bg">{children}</main>
+
+      <main className="flex-1 overflow-y-auto">{children}</main>
     </div>
   )
 }

@@ -20,7 +20,25 @@ export interface EmojiStat {
 export interface ActivityStat { name: string; count: number }
 export interface HeatmapCell { dayOfWeek: number; hour: number; count: number }
 
+export interface WindowCounts { today: number; week: number; month: number; total: number }
+export interface DailyPoint { day: string; count: number }
+export interface Overview {
+  totalMessages: number
+  totalReactions: number
+  totalEvents: number
+  voiceMinutes: number
+  totalUsers: number
+  totalChannels: number
+  messages: WindowCounts
+  reactions: WindowCounts
+  topChatter: UserStat | null
+  topChannel: ChannelActivity | null
+  messagesDaily: DailyPoint[]
+  topEmojis: EmojiStat[]
+}
+
 export const statsApi = {
+  overview: () => fetchApi<Overview>('/stats/overview'),
   volumeDaily: () => fetchApi<VolumeDaily[]>('/stats/volume/daily'),
   volumeByType: () => fetchApi<VolumeByType[]>('/stats/volume/by-type'),
   volumeHourly: () => fetchApi<VolumeHourly[]>('/stats/volume/hourly'),

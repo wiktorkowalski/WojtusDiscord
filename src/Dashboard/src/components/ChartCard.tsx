@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 
-// Bordered panel with a title; wraps a chart or list.
+// Titled surface that wraps a chart or list.
 export default function ChartCard({
   title,
   note,
@@ -11,10 +11,10 @@ export default function ChartCard({
   children: ReactNode
 }) {
   return (
-    <div className="rounded-lg border border-discord-border bg-discord-bg-card p-4">
-      <h3 className="text-sm font-semibold text-white">{title}</h3>
-      {note && <p className="mb-2 mt-0.5 text-xs text-discord-faint">{note}</p>}
-      <div className={note ? '' : 'mt-3'}>{children}</div>
+    <div className="card p-5">
+      <h3 className="text-sm font-semibold tracking-wide text-white">{title}</h3>
+      {note && <p className="mb-3 mt-0.5 text-xs text-discord-faint">{note}</p>}
+      <div className={note ? '' : 'mt-4'}>{children}</div>
     </div>
   )
 }

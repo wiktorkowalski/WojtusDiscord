@@ -81,6 +81,24 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
+    public async Task Overview_AggregatesTotals()
+    {
+        var controller = new StatsController(_db);
+
+        var o = await controller.Overview(default);
+
+        Assert.Equal(3, o.TotalMessages);
+        Assert.Equal(3, o.Messages.Total);
+        Assert.Equal(3, o.TotalReactions);
+        Assert.Equal(10, o.VoiceMinutes);
+        Assert.Equal(2, o.TotalUsers);
+        Assert.Equal(1, o.TotalChannels);
+        Assert.Equal("alice", o.TopChatter!.Username);
+        Assert.Equal("general", o.TopChannel!.ChannelName);
+        Assert.NotEmpty(o.TopEmojis);
+    }
+
+    [Fact]
     public async Task VolumeByType_RanksEventTypes()
     {
         var controller = new StatsController(_db);

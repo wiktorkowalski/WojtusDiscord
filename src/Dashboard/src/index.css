@@ -1,21 +1,30 @@
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
 @import "tailwindcss";
 
-/* Discord-inspired dark palette, registered as Tailwind theme colors so
-   utilities like `bg-discord-bg`, `text-discord-muted`, `bg-blurple` work. */
+/* ---- Design tokens ---- */
 @theme {
-  --color-discord-bg: #313338;
-  --color-discord-bg-alt: #2b2d31;
-  --color-discord-bg-dark: #1e1f22;
-  --color-discord-bg-card: #383a40;
-  --color-discord-border: #232428;
+  --color-discord-bg: #1a1b1e;
+  --color-discord-bg-alt: #202125;
+  --color-discord-bg-dark: #131417;
+  --color-discord-bg-card: #25262b;
+  --color-discord-border: #2e2f35;
+  --color-discord-border-soft: #34353c;
+
   --color-blurple: #5865f2;
   --color-blurple-hover: #4752c4;
-  --color-discord-green: #23a55a;
-  --color-discord-yellow: #f0b232;
-  --color-discord-red: #f23f43;
-  --color-discord-text: #dbdee1;
-  --color-discord-muted: #b5bac1;
-  --color-discord-faint: #949ba4;
+  --color-accent: #2dd4bf; /* teal — secondary accent */
+  --color-accent-2: #eb459e; /* fuchsia — tertiary accent */
+  --color-discord-green: #3ba55d;
+  --color-discord-yellow: #faa61a;
+  --color-discord-red: #ed4245;
+
+  --color-discord-text: #e7e9ec;
+  --color-discord-muted: #a8adb6;
+  --color-discord-faint: #6f747d;
+
+  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 html,
@@ -24,18 +33,93 @@ body,
   height: 100%;
 }
 
+/* Atmospheric background: layered radial glows over the base dark, fixed so it
+   doesn't scroll. A faint grain overlay (::after) adds texture/depth. */
 body {
-  @apply bg-discord-bg-dark text-discord-text;
-  font-family: "gg sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  @apply bg-discord-bg-dark text-discord-text antialiased;
+  font-family: var(--font-sans);
+  background-image:
+    radial-gradient(900px 600px at 12% -8%, rgba(88, 101, 242, 0.16), transparent 60%),
+    radial-gradient(800px 600px at 100% 0%, rgba(45, 212, 191, 0.08), transparent 55%),
+    radial-gradient(700px 700px at 85% 110%, rgba(235, 69, 158, 0.07), transparent 60%);
+  background-attachment: fixed;
 }
 
-/* Monospace for snowflake IDs / raw JSON */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
 .mono {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 
-/* Thin dark scrollbars to match the theme */
+/* ---- Surfaces ---- */
+.card {
+  @apply rounded-2xl border border-discord-border;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0) 120px),
+    var(--color-discord-bg-card);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 12px 30px -18px rgba(0, 0, 0, 0.7);
+}
+
+.card-interactive {
+  @apply transition-all duration-200;
+}
+.card-interactive:hover {
+  @apply border-discord-border-soft;
+  transform: translateY(-2px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 18px 40px -20px rgba(0, 0, 0, 0.8);
+}
+
+/* Numeric headline figures */
+.stat-figure {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* ---- Motion ---- */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-rise {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise {
+    animation: none;
+  }
+}
+
+/* Thin dark scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #1e1f22 transparent;
+  scrollbar-color: #34353c transparent;
 }

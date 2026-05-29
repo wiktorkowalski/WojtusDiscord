@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
 import AppShell from './components/AppShell'
+import Overview from './pages/Overview'
 import Timeline from './pages/Timeline'
 import Stats from './pages/Stats'
 import Entities from './pages/Entities'
@@ -14,7 +15,8 @@ function App() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<Timeline />} />
+        <Route path="/" element={<Overview />} />
+        <Route path="/timeline" element={<Timeline />} />
         <Route path="/stats" element={<Stats />} />
         <Route path="/entities" element={<Entities />} />
         <Route path="/tables" element={<Tables />} />
