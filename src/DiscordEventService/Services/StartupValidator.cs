@@ -1,5 +1,4 @@
 using DiscordEventService.Data;
-using DiscordEventService.Jobs;
 using DiscordEventService.Services.Pipeline;
 using Hangfire;
 using Microsoft.Extensions.Caching.Memory;
@@ -16,21 +15,16 @@ public static class StartupValidator
 {
     // Services event handlers resolve via scopeFactory.CreateScope().
     // Constructor-injected transitive dependencies are also validated by trying
-    // to construct each entry below.
+    // to construct each entry below. The shared scoped services come from
+    // CoreServiceRegistration (single source of truth); the rest are
+    // child-container infrastructure registered inline in Program.cs.
     private static readonly Type[] RequiredChildContainerServices =
     [
+        .. CoreServiceRegistration.CoreServiceTypes,
         typeof(DiscordDbContext),
-        typeof(UserService),
-        typeof(GuildUpsertService),
-        typeof(ChannelUpsertService),
-        typeof(RawEventLogService),
-        typeof(FailedEventService),
-        typeof(DowntimeTrackerService),
-        typeof(GuildBackfillOrchestrator),
         typeof(IBackgroundJobClient),
         typeof(IHostEnvironment),
         typeof(IMemoryCache),
-        typeof(BootQuickSyncService),
         typeof(EventPipeline),
     ];
 
