@@ -12,3 +12,16 @@ public sealed record ResolvedFks(bool Success, Guid GuildId, Guid ChannelId, Gui
 
     public static readonly ResolvedFks Failed = new(false, default, default, default);
 }
+
+/// <summary>
+/// Outcome of the guild+user <see cref="FkResolver.ResolveAsync(EventContext, DSharpPlus.Entities.DiscordGuild, DSharpPlus.Entities.DiscordUser, string?)"/>
+/// overload, for required-FK handlers whose core row carries only a guild and a user FK (e.g.
+/// <c>bans</c>) and so cannot use the channel-bearing <see cref="ResolvedFks"/>. Same success/failure
+/// contract, minus the channel.
+/// </summary>
+public sealed record ResolvedUserFks(bool Success, Guid GuildId, Guid UserId)
+{
+    public static ResolvedUserFks Resolved(Guid guildId, Guid userId) => new(true, guildId, userId);
+
+    public static readonly ResolvedUserFks Failed = new(false, default, default);
+}
