@@ -5,42 +5,29 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
 
-public class EmojisBackfillJob(
-    IServiceScopeFactory scopeFactory,
+public sealed class EmojisBackfillJob(
     DiscordClient discordClient,
-    ILogger<EmojisBackfillJob> logger) : BackfillJobBase, IBackfillJob
+    BackfillJobExecutor executor) : BackfillJobBase, IBackfillJob
 {
     protected override BackfillType BackfillType => BackfillType.Emojis;
 
-    public async Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
-    {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-
-        var checkpoint = await GetOrCreateCheckpointAsync(db, guildId);
-        checkpoint.Status = BackfillStatus.InProgress;
-        await db.SaveChangesAsync(cancellationToken);
-
-        try
+    public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
+        => executor.RunAsync(BackfillType, guildId, async ctx =>
         {
             var guild = await discordClient.GetGuildAsync(guildId);
-            var guildEntity = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == guildId, cancellationToken);
+            var guildEntity = await ctx.Db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == guildId, cancellationToken);
 
             if (guildEntity is null)
-            {
-                logger.LogWarning("Guild {GuildId} not found in database, cannot backfill emojis", guildId);
-                await MarkFailedAsync(db, checkpoint, new InvalidOperationException($"Guild {guildId} not found in database"));
-                return;
-            }
+                return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
-            checkpoint.TotalCount = guild.Emojis.Count;
-            await db.SaveChangesAsync(cancellationToken);
+            ctx.Checkpoint.TotalCount = guild.Emojis.Count;
+            await ctx.Db.SaveChangesAsync(cancellationToken);
 
             foreach (var emoji in guild.Emojis.Values)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                await db.Emotes.UpsertAsync(
+                await ctx.Db.Emotes.UpsertAsync(
                     e => e.DiscordId == emoji.Id,
                     s => s
                         .SetProperty(e => e.Name, emoji.Name)
@@ -59,27 +46,12 @@ public class EmojisBackfillJob(
                     e => e.Id,
                     cancellationToken);
 
-                checkpoint.ProcessedCount++;
+                ctx.Checkpoint.ProcessedCount++;
 
-                if (checkpoint.ProcessedCount % 50 == 0)
-                {
-                    await SaveProgressAsync(db, checkpoint);
-                }
+                if (ctx.Checkpoint.ProcessedCount % 50 == 0)
+                    await SaveProgressAsync(ctx.Db, ctx.Checkpoint);
             }
 
-            await MarkCompletedAsync(db, checkpoint);
-            logger.LogInformation("Emojis backfill completed for guild {GuildId}: {Count} emojis", guildId, checkpoint.ProcessedCount);
-        }
-        catch (OperationCanceledException ex)
-        {
-            logger.LogWarning("Emojis backfill cancelled for guild {GuildId} (likely deploy restart)", guildId);
-            await MarkFailedAsync(db, checkpoint, ex);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Emojis backfill failed for guild {GuildId}", guildId);
-            await MarkFailedAsync(db, checkpoint, ex);
-            throw;
-        }
-    }
+            return BackfillOutcome.Completed;
+        }, cancellationToken);
 }

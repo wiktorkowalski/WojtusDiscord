@@ -9,9 +9,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
 
-public class MessagesBackfillJob(
-    IServiceScopeFactory scopeFactory,
+public sealed class MessagesBackfillJob(
     DiscordClient discordClient,
+    BackfillJobExecutor executor,
     ILogger<MessagesBackfillJob> logger) : BackfillJobBase, IBackfillJob
 {
     protected override BackfillType BackfillType => BackfillType.Messages;
@@ -22,40 +22,17 @@ public class MessagesBackfillJob(
     public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
         => ExecuteAsync(guildId, null, cancellationToken);
 
-    public async Task ExecuteAsync(ulong guildId, DateTime? afterTimestampUtc, CancellationToken cancellationToken)
-    {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-        var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-
-        var checkpoint = await GetOrCreateCheckpointAsync(db, guildId);
-        // Only honor CurrentChannelId / LastProcessedId as a resume cursor when
-        // the previous run was actually interrupted mid-flight (Status==InProgress).
-        // After a Completed/Failed/Cancelled run the cursor points at the last
-        // channel processed; carrying it over would Skip(channels.Length-1) and
-        // silently scan only the final channel — masking gap events in every
-        // other channel.
-        var isResume = checkpoint.Status == BackfillStatus.InProgress;
-        if (!isResume)
+    public Task ExecuteAsync(ulong guildId, DateTime? afterTimestampUtc, CancellationToken cancellationToken)
+        => executor.RunAsync(BackfillType, guildId, async ctx =>
         {
-            checkpoint.CurrentChannelId = null;
-            checkpoint.LastProcessedId = null;
-        }
-        checkpoint.Status = BackfillStatus.InProgress;
-        await db.SaveChangesAsync(cancellationToken);
+            var userService = ctx.Services.GetRequiredService<UserService>();
 
-        try
-        {
             var guild = await discordClient.GetGuildAsync(guildId);
             var channels = await guild.GetChannelsAsync();
-            var guildEntity = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == guildId, cancellationToken);
+            var guildEntity = await ctx.Db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == guildId, cancellationToken);
 
             if (guildEntity is null)
-            {
-                logger.LogWarning("Guild {GuildId} not found in database, cannot backfill messages", guildId);
-                await MarkFailedAsync(db, checkpoint, new InvalidOperationException($"Guild {guildId} not found in database"));
-                return;
-            }
+                return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
             // Filter to text-based channels
             var textChannels = channels
@@ -67,10 +44,13 @@ public class MessagesBackfillJob(
                 .OrderBy(c => c.Id)
                 .ToList();
 
-            // Resume from checkpoint channel if exists
-            if (checkpoint.CurrentChannelId.HasValue)
+            // Resume from checkpoint channel if exists. The cursor reset (clear when the prior run
+            // was not InProgress) is owned by BackfillJobExecutor, so CurrentChannelId here is either
+            // null (fresh run) or the channel a genuinely-interrupted run stopped on. Carrying a
+            // stale cursor over a completed run would Skip all-but-the-last channel and mask gaps.
+            if (ctx.Checkpoint.CurrentChannelId.HasValue)
             {
-                var checkpointChannelIndex = textChannels.FindIndex(c => c.Id == checkpoint.CurrentChannelId.Value);
+                var checkpointChannelIndex = textChannels.FindIndex(c => c.Id == ctx.Checkpoint.CurrentChannelId.Value);
                 if (checkpointChannelIndex >= 0)
                 {
                     textChannels = textChannels.Skip(checkpointChannelIndex).ToList();
@@ -78,9 +58,9 @@ public class MessagesBackfillJob(
                 else
                 {
                     logger.LogWarning("Checkpoint channel {ChannelId} not found in guild {GuildId}, restarting from beginning",
-                        checkpoint.CurrentChannelId.Value, guildId);
-                    checkpoint.CurrentChannelId = null;
-                    checkpoint.LastProcessedId = null;
+                        ctx.Checkpoint.CurrentChannelId.Value, guildId);
+                    ctx.Checkpoint.CurrentChannelId = null;
+                    ctx.Checkpoint.LastProcessedId = null;
                 }
             }
 
@@ -88,42 +68,29 @@ public class MessagesBackfillJob(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                checkpoint.CurrentChannelId = channel.Id;
-                await db.SaveChangesAsync(cancellationToken);
+                ctx.Checkpoint.CurrentChannelId = channel.Id;
+                await ctx.Db.SaveChangesAsync(cancellationToken);
 
                 logger.LogInformation("Backfilling messages for channel {ChannelName} ({ChannelId}) in guild {GuildId}",
                     channel.Name, channel.Id, guildId);
 
                 try
                 {
-                    await BackfillChannelMessagesAsync(db, userService, guildEntity, channel, checkpoint, afterTimestampUtc, cancellationToken);
+                    await BackfillChannelMessagesAsync(ctx.Db, userService, guildEntity, channel, ctx.Checkpoint, afterTimestampUtc, cancellationToken);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     logger.LogWarning(ex, "Failed to backfill messages for channel {ChannelId}, continuing with next channel", channel.Id);
-                    await RecordErrorAsync(db, checkpoint, ex);
+                    await RecordErrorAsync(ctx.Db, ctx.Checkpoint, ex);
                 }
 
                 // Reset for next channel
-                checkpoint.LastProcessedId = null;
-                await db.SaveChangesAsync(cancellationToken);
+                ctx.Checkpoint.LastProcessedId = null;
+                await ctx.Db.SaveChangesAsync(cancellationToken);
             }
 
-            await MarkCompletedAsync(db, checkpoint);
-            logger.LogInformation("Messages backfill completed for guild {GuildId}: {Count} messages", guildId, checkpoint.ProcessedCount);
-        }
-        catch (OperationCanceledException ex)
-        {
-            logger.LogWarning("Messages backfill cancelled for guild {GuildId} (likely deploy restart)", guildId);
-            await MarkFailedAsync(db, checkpoint, ex);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Messages backfill failed for guild {GuildId}", guildId);
-            await MarkFailedAsync(db, checkpoint, ex);
-            throw;
-        }
-    }
+            return BackfillOutcome.Completed;
+        }, cancellationToken);
 
     private async Task BackfillChannelMessagesAsync(
         DiscordDbContext db,

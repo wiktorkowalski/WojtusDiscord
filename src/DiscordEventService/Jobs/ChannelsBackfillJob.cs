@@ -5,43 +5,30 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
 
-public class ChannelsBackfillJob(
-    IServiceScopeFactory scopeFactory,
+public sealed class ChannelsBackfillJob(
     DiscordClient discordClient,
-    ILogger<ChannelsBackfillJob> logger) : BackfillJobBase, IBackfillJob
+    BackfillJobExecutor executor) : BackfillJobBase, IBackfillJob
 {
     protected override BackfillType BackfillType => BackfillType.Channels;
 
-    public async Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
-    {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-
-        var checkpoint = await GetOrCreateCheckpointAsync(db, guildId);
-        checkpoint.Status = BackfillStatus.InProgress;
-        await db.SaveChangesAsync(cancellationToken);
-
-        try
+    public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
+        => executor.RunAsync(BackfillType, guildId, async ctx =>
         {
             var guild = await discordClient.GetGuildAsync(guildId);
             var channels = await guild.GetChannelsAsync();
-            var guildEntity = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == guildId, cancellationToken);
+            var guildEntity = await ctx.Db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == guildId, cancellationToken);
 
             if (guildEntity is null)
-            {
-                logger.LogWarning("Guild {GuildId} not found in database, cannot backfill channels", guildId);
-                await MarkFailedAsync(db, checkpoint, new InvalidOperationException($"Guild {guildId} not found in database"));
-                return;
-            }
+                return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
-            checkpoint.TotalCount = channels.Count;
-            await db.SaveChangesAsync(cancellationToken);
+            ctx.Checkpoint.TotalCount = channels.Count;
+            await ctx.Db.SaveChangesAsync(cancellationToken);
 
             foreach (var channel in channels)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                await db.Channels.UpsertAsync(
+                await ctx.Db.Channels.UpsertAsync(
                     c => c.DiscordId == channel.Id,
                     s => s
                         .SetProperty(c => c.Name, channel.Name)
@@ -72,27 +59,12 @@ public class ChannelsBackfillJob(
                     c => c.Id,
                     cancellationToken);
 
-                checkpoint.ProcessedCount++;
+                ctx.Checkpoint.ProcessedCount++;
 
-                if (checkpoint.ProcessedCount % 50 == 0)
-                {
-                    await SaveProgressAsync(db, checkpoint);
-                }
+                if (ctx.Checkpoint.ProcessedCount % 50 == 0)
+                    await SaveProgressAsync(ctx.Db, ctx.Checkpoint);
             }
 
-            await MarkCompletedAsync(db, checkpoint);
-            logger.LogInformation("Channels backfill completed for guild {GuildId}: {Count} channels", guildId, checkpoint.ProcessedCount);
-        }
-        catch (OperationCanceledException ex)
-        {
-            logger.LogWarning("Channels backfill cancelled for guild {GuildId} (likely deploy restart)", guildId);
-            await MarkFailedAsync(db, checkpoint, ex);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Channels backfill failed for guild {GuildId}", guildId);
-            await MarkFailedAsync(db, checkpoint, ex);
-            throw;
-        }
-    }
+            return BackfillOutcome.Completed;
+        }, cancellationToken);
 }
