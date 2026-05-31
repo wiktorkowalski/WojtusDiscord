@@ -55,12 +55,22 @@ public sealed class EmojiEventHandler(EventPipeline pipeline) :
                     }
                 }
 
-                foreach (var id in removedIds)
+                // Soft-delete stale rows. EmojiEventHandler is now the single canonical writer of
+                // Emotes for GuildEmojisUpdated (GuildEventHandler no longer touches the table), so
+                // reconcile the full stored set: any of this guild's active emotes absent from
+                // EmojisAfter is stale. This is broader than the before/after diff — it also reaps
+                // rows the event's "before" snapshot omitted — and preserves the first deletion time.
+                // When the guild FK didn't resolve, fall back to the before/after diff (by DiscordId)
+                // so a transient guild-upsert miss still records the removals it can see.
+                var staleQuery = ctx.Db.Emotes.Where(em => !em.IsDeleted);
+                staleQuery = guildGuid is { } gid
+                    ? staleQuery.Where(em => em.GuildId == gid && !afterIds.Contains(em.DiscordId))
+                    : staleQuery.Where(em => removedIds.Contains(em.DiscordId));
+
+                foreach (var stale in await staleQuery.ToListAsync())
                 {
-                    await ctx.Db.Emotes.Where(em => em.DiscordId == id)
-                        .ExecuteUpdateAsync(s => s
-                            .SetProperty(em => em.IsDeleted, true)
-                            .SetProperty(em => em.DeletedAtUtc, (DateTime?)ctx.ReceivedAtUtc));
+                    stale.IsDeleted = true;
+                    stale.DeletedAtUtc ??= ctx.ReceivedAtUtc;
                 }
 
                 ctx.Db.EmojiEvents.Add(new EmojiEventEntity

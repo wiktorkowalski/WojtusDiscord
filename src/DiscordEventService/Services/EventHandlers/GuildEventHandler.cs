@@ -12,8 +12,7 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildCreatedEventArgs>,
     IEventHandler<GuildAvailableEventArgs>,
     IEventHandler<GuildUpdatedEventArgs>,
-    IEventHandler<GuildDeletedEventArgs>,
-    IEventHandler<GuildEmojisUpdatedEventArgs>
+    IEventHandler<GuildDeletedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildCreatedEventArgs e)
     {
@@ -98,59 +97,6 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
                     await ctx.Db.SaveChangesAsync();
                 }
             });
-    }
-
-    public async Task HandleEventAsync(DiscordClient sender, GuildEmojisUpdatedEventArgs e)
-    {
-        // Already raw-logged by EmojiEventHandler; skip the duplicate raw row here.
-        await pipeline.Execute(e, "GuildEmojisUpdated", nameof(GuildEventHandler),
-            e.Guild.Id, null, null, async ctx =>
-            {
-                var guild = await ctx.Db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == e.Guild.Id);
-                var guildGuid = guild?.Id;
-
-                var existingEmotes = await ctx.Db.Emotes
-                    .Where(em => em.GuildId == guildGuid)
-                    .ToDictionaryAsync(em => em.DiscordId);
-
-                var currentEmoteIds = e.EmojisAfter.Select(em => em.Key).ToHashSet();
-
-                foreach (var existingEmote in existingEmotes.Values)
-                {
-                    if (!currentEmoteIds.Contains(existingEmote.DiscordId))
-                    {
-                        existingEmote.IsDeleted = true;
-                        existingEmote.DeletedAtUtc ??= ctx.ReceivedAtUtc;
-                    }
-                }
-
-                foreach (var emoteKvp in e.EmojisAfter)
-                {
-                    var emote = emoteKvp.Value;
-                    if (!existingEmotes.TryGetValue(emote.Id, out var existingEmote))
-                    {
-                        ctx.Db.Emotes.Add(new EmoteEntity
-                        {
-                            DiscordId = emote.Id,
-                            GuildId = guildGuid,
-                            Name = emote.Name,
-                            IsAnimated = emote.IsAnimated,
-                            IsAvailable = emote.IsAvailable,
-                            IsDeleted = false
-                        });
-                    }
-                    else
-                    {
-                        existingEmote.Name = emote.Name;
-                        existingEmote.IsAnimated = emote.IsAnimated;
-                        existingEmote.IsAvailable = emote.IsAvailable;
-                        existingEmote.IsDeleted = false;
-                        existingEmote.DeletedAtUtc = null;
-                    }
-                }
-
-                await ctx.Db.SaveChangesAsync();
-            }, logRawEvent: false);
     }
 
     private static async Task UpsertChannelsAndRolesAsync(DiscordDbContext db, ILogger logger, DiscordGuild guild, Guid guildGuid)
