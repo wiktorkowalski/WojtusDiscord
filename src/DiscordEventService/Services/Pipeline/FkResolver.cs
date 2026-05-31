@@ -59,4 +59,46 @@ public sealed class FkResolver(
             $"Required FK not resolved ({logContext ?? "no context"}): guildResolved={guild.IsSuccess} channelResolved={channel.IsSuccess} userResolved={user.IsSuccess}"));
         return ResolvedFks.Failed;
     }
+
+    /// <summary>
+    /// Guild+user variant of <see cref="ResolveAsync(EventContext, DiscordGuild, DiscordChannel, DiscordUser, string?)"/>
+    /// for required-FK handlers whose core row has no channel (e.g. <c>bans</c>). Upserts the guild
+    /// and user, then validates both resolved. On any failure the resolver logs, records a
+    /// <c>FailedEvent</c> via <paramref name="ctx"/>, and returns <see cref="ResolvedUserFks.Failed"/> —
+    /// the caller skips the core-row write (and, for a faithful timeline, may still log the event row).
+    /// </summary>
+    public async Task<ResolvedUserFks> ResolveAsync(
+        EventContext ctx,
+        DiscordGuild guild,
+        DiscordUser user,
+        string? logContext = null)
+    {
+        var guildResult = await guildUpsert.UpsertGuildAsync(guild);
+        var userResult = await userService.UpsertUserAsync(user);
+
+        return await ValidateAsync(ctx, guildResult, userResult, logContext);
+    }
+
+    /// <summary>
+    /// Pure guild+user validation seam, mirroring the three-FK <see cref="ValidateAsync(EventContext, UpsertResult{Guid}, UpsertResult{Guid}, UpsertResult{Guid}, string?)"/>:
+    /// both success → <see cref="ResolvedUserFks.Resolved"/>; otherwise log + record failure +
+    /// <see cref="ResolvedUserFks.Failed"/>. Takes already-resolved results so it is unit-testable
+    /// without constructing DSharpPlus entities.
+    /// </summary>
+    internal static async Task<ResolvedUserFks> ValidateAsync(
+        EventContext ctx,
+        UpsertResult<Guid> guild,
+        UpsertResult<Guid> user,
+        string? logContext = null)
+    {
+        if (guild.IsSuccess && user.IsSuccess)
+            return ResolvedUserFks.Resolved(guild.Value, user.Value);
+
+        ctx.Logger.LogError(
+            "Could not resolve required FKs ({LogContext}): guildResolved={GuildResolved} userResolved={UserResolved}; skipping insert",
+            logContext ?? "no context", guild.IsSuccess, user.IsSuccess);
+        await ctx.RecordFailureAsync(new InvalidOperationException(
+            $"Required FK not resolved ({logContext ?? "no context"}): guildResolved={guild.IsSuccess} userResolved={user.IsSuccess}"));
+        return ResolvedUserFks.Failed;
+    }
 }
