@@ -30,6 +30,11 @@ public static class OpsEndpoints
         group.MapPost("/backfill-message-mentions", BackfillMessageMentions)
             .WithName("BackfillMessageMentions")
             .Produces<MessageMentionsBackfillService.Result>(StatusCodes.Status200OK);
+
+        group.MapPost("/failed-events/{id:guid}/resolve", ResolveFailedEvent)
+            .WithName("ResolveFailedEvent")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound);
     }
 
     private static async Task<IResult> StartDowntime(
@@ -91,6 +96,20 @@ public static class OpsEndpoints
     {
         var result = await svc.BackfillAsync(ct);
         return Results.Ok(result);
+    }
+
+    // Acknowledge/resolve a dead-letter row so the HealthCheckJob alert can clear by explicit
+    // action. A 0-row update (unknown id or already resolved) is a clean 404, not a 500.
+    private static async Task<IResult> ResolveFailedEvent(
+        Guid id,
+        string? notes,
+        FailedEventService svc,
+        CancellationToken ct)
+    {
+        var resolved = await svc.ResolveAsync(id, notes, ct);
+        return resolved
+            ? Results.Ok(new { id, resolved = true })
+            : Results.NotFound(new { error = $"No unresolved failed event with id {id}" });
     }
 }
 
