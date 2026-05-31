@@ -22,6 +22,8 @@ A row that records something that *happened* and later *ended*, where neither en
 
 _Do not_ shoehorn these into `is_deleted`/`deleted_at_utc`. The shared `bool` shape is a coincidence; the semantics differ.
 
+_DB-enforced_ (§B1 / #199): `is_active = false ⇔ end-timestamp IS NOT NULL` is a CHECK constraint on each — `ck_bans_lifecycle` (`unbanned_at_utc`), `ck_activities_lifecycle` (`ended_at_utc`) — mirroring the soft-delete constraint convention but on the domain end columns (`LifecycleFactConstraint`).
+
 ### References
 
 **Snowflake** (`*_discord_id`, `ulong`): the ID Discord uses (e.g. `user_discord_id`, `channel_discord_id`). The natural key, supplied by every gateway payload, never null on event-table rows. Canonical for **event tables**.
