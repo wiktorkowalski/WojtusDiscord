@@ -20,5 +20,9 @@ internal sealed class ActivityEntityConfiguration : IEntityTypeConfiguration<Act
             .HasForeignKey(a => a.UserId).OnDelete(DeleteBehavior.NoAction);
         builder.HasOne(a => a.Guild).WithMany(g => g.Activities)
             .HasForeignKey(a => a.GuildId).OnDelete(DeleteBehavior.NoAction);
+
+        // Lifecycle-fact invariant (CONTEXT.md): stopping an activity is its natural end, so
+        // is_active=false ⇔ ended_at_utc IS NOT NULL. DB-enforced like the soft-delete convention.
+        builder.ToTable(t => t.HasCheckConstraint("ck_activities_lifecycle", LifecycleFactConstraint.Check("ended_at_utc")));
     }
 }

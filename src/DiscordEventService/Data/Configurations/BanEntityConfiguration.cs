@@ -11,5 +11,9 @@ internal sealed class BanEntityConfiguration : IEntityTypeConfiguration<BanEntit
         builder.HasIndex(b => b.GuildId);
         builder.HasIndex(b => new { b.GuildId, b.UserId });
         builder.HasIndex(b => new { b.GuildId, b.IsActive });
+
+        // Lifecycle-fact invariant (CONTEXT.md): an unban is the natural end of the ban, so
+        // is_active=false ⇔ unbanned_at_utc IS NOT NULL. DB-enforced like the soft-delete convention.
+        builder.ToTable(t => t.HasCheckConstraint("ck_bans_lifecycle", LifecycleFactConstraint.Check("unbanned_at_utc")));
     }
 }
