@@ -23,7 +23,11 @@ public sealed class AuditLogEventHandler(EventPipeline pipeline) :
                     Reason = e.AuditLogEntry.Reason,
                     ChangesJson = null,
                     OptionsJson = null,
-                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    // The entry's snowflake encodes the server-side action time — the true Discord
+                    // event time (CONTEXT.md). Fall back to receive time only if the Id is absent.
+                    EventTimestampUtc = e.AuditLogEntry.Id != 0
+                        ? e.AuditLogEntry.CreationTimestamp.UtcDateTime
+                        : ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
                     RawEventJson = ctx.RawJson
                 });

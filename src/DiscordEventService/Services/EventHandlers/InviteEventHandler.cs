@@ -60,7 +60,11 @@ public sealed class InviteEventHandler(EventPipeline pipeline) :
                     MaxUses = invite.MaxUses,
                     IsTemporary = invite.IsTemporary,
                     Uses = invite.Uses,
-                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    // Discord supplies the invite's creation time — the true event time for a
+                    // creation (CONTEXT.md). Fall back to receive time only if it is absent.
+                    EventTimestampUtc = invite.CreatedAt != default
+                        ? invite.CreatedAt.UtcDateTime
+                        : ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
                     RawEventJson = ctx.RawJson
                 });

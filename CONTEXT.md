@@ -52,7 +52,7 @@ _Currently realised_: a single thread row already exists in `channels` (recovere
 
 **`received_at_utc`**: when *we* received the gateway event. Always trustworthy.
 
-**`event_timestamp_utc`**: when the underlying Discord event *occurred*. Equals `received_at_utc` only when Discord doesn't supply a distinct timestamp (voice, presence, reaction adds). For messages, this is `e.Message.Timestamp`.
+**`event_timestamp_utc`**: when the underlying Discord event *occurred*. Equals `received_at_utc` only when Discord doesn't supply a distinct timestamp (voice, presence, reaction adds). For messages, this is `e.Message.Timestamp`; for audit-log entries, the entry snowflake's `CreationTimestamp` (§B3); for invite creation, `invite.CreatedAt` (§B3).
 
 _Avoid_: "created at" / "updated at" as event-stream vocabulary — those mean entity lifecycle, not event timing.
 
