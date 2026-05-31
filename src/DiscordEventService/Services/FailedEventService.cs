@@ -1,6 +1,7 @@
 using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
+using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
@@ -90,5 +91,36 @@ public class FailedEventService(DiscordDbContext db, ILogger<FailedEventService>
                     eventType, handlerName);
             }
         }
+    }
+
+    /// <summary>
+    /// Acknowledges/resolves a failed event so the <c>HealthCheckJob</c> alert (which counts
+    /// <c>!IsResolved</c> rows in a window) can clear by explicit operator action rather than only
+    /// by aging out. Idempotent: filters on <c>!IsResolved</c>, so re-resolving or a missing id is a
+    /// no-op returning <c>false</c>. A single set-based update — no transaction ceremony.
+    /// </summary>
+    /// <remarks>
+    /// This is the feasible dead-letter kernel (ack/annotate). Automatic replay via
+    /// <c>EventJson</c> reconstruction is deliberately NOT implemented: that payload is lossy
+    /// (BypassRecursiveConverterResolver, MaxDepth, snowflake-dict shape) and DSharpPlus
+    /// <c>*EventArgs</c> have no deserialization path, so a handler cannot be re-driven from it
+    /// (deferred — OrphanReplayService OD#5). <see cref="FailedEventEntity.RetryCount"/> stays
+    /// reserved for a future per-event-type replayer that re-drives from current state.
+    /// Unresolved rows are the manual-review bucket; record transient-vs-permanent context in
+    /// <paramref name="notes"/>.
+    /// </remarks>
+    public async Task<bool> ResolveAsync(Guid id, string? notes, CancellationToken cancellationToken = default)
+    {
+        var resolved = await db.FailedEvents
+            .Where(f => f.Id == id && !f.IsResolved)
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(f => f.IsResolved, true)
+                .SetProperty(f => f.ResolvedAtUtc, DateTime.UtcNow)
+                .SetProperty(f => f.ResolutionNotes, notes), cancellationToken);
+
+        if (resolved > 0)
+            logger.LogInformation("Resolved failed event {FailedEventId}", id);
+
+        return resolved > 0;
     }
 }
