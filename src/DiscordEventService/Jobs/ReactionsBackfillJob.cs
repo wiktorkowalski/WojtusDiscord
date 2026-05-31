@@ -42,49 +42,16 @@ public sealed class ReactionsBackfillJob(
                 .OrderBy(c => c.Id)
                 .ToList();
 
-            // Resume from checkpoint channel if exists. The cursor reset (clear when the prior run
-            // was not InProgress) is owned by BackfillJobExecutor, so CurrentChannelId here is either
-            // null (fresh run) or the channel a genuinely-interrupted run stopped on.
-            if (ctx.Checkpoint.CurrentChannelId.HasValue)
-            {
-                var checkpointChannelIndex = textChannels.FindIndex(c => c.Id == ctx.Checkpoint.CurrentChannelId.Value);
-                if (checkpointChannelIndex >= 0)
+            // The per-channel resume-cursor loop (skip-to-resume + per-channel cursor management)
+            // lives in BackfillJobBase; only this job's inner per-channel paging body is passed in.
+            await IterateWithCheckpointAsync(ctx.Db, ctx.Checkpoint, textChannels, c => c.Id,
+                async channel =>
                 {
-                    textChannels = textChannels.Skip(checkpointChannelIndex).ToList();
-                }
-                else
-                {
-                    logger.LogWarning("Checkpoint channel {ChannelId} not found in guild {GuildId}, restarting from beginning",
-                        ctx.Checkpoint.CurrentChannelId.Value, guildId);
-                    ctx.Checkpoint.CurrentChannelId = null;
-                    ctx.Checkpoint.LastProcessedId = null;
-                }
-            }
-
-            foreach (var channel in textChannels)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                ctx.Checkpoint.CurrentChannelId = channel.Id;
-                await ctx.Db.SaveChangesAsync(cancellationToken);
-
-                logger.LogInformation("Backfilling reactions for channel {ChannelName} ({ChannelId}) in guild {GuildId}",
-                    channel.Name, channel.Id, guildId);
-
-                try
-                {
+                    logger.LogInformation("Backfilling reactions for channel {ChannelName} ({ChannelId}) in guild {GuildId}",
+                        channel.Name, channel.Id, guildId);
                     await BackfillChannelReactionsAsync(ctx.Db, userService, guildEntity, channel, ctx.Checkpoint, afterTimestampUtc, cancellationToken);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    logger.LogWarning(ex, "Failed to backfill reactions for channel {ChannelId}, continuing with next channel", channel.Id);
-                    await RecordErrorAsync(ctx.Db, ctx.Checkpoint, ex);
-                }
-
-                // Reset for next channel
-                ctx.Checkpoint.LastProcessedId = null;
-                await ctx.Db.SaveChangesAsync(cancellationToken);
-            }
+                },
+                logger, cancellationToken);
 
             return BackfillOutcome.Completed;
         }, cancellationToken);
