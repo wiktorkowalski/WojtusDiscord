@@ -49,43 +49,59 @@ public sealed class PresenceEventHandler(EventPipeline pipeline) :
         await pipeline.Execute(eventDto, "PresenceUpdated", nameof(PresenceEventHandler),
             guildId, null, args.User.Id, async ctx =>
             {
-                ctx.Db.PresenceEvents.Add(new PresenceEventEntity
+                // Presence row, the user upsert, and activity tracking are one logical event:
+                // wrap them in a single transaction so a mid-flight failure can't leave a presence
+                // record with no activity tracking. ExecutionStrategy is required because
+                // EnableRetryOnFailure is configured; the top-of-delegate ChangeTracker.Clear keeps a
+                // retry from re-staging this attempt's entities. UpsertUserAsync runs inside the
+                // ambient transaction (it never opens its own), so the user update + name history
+                // commit atomically with the presence and activity rows.
+                var strategy = ctx.Db.Database.CreateExecutionStrategy();
+                await strategy.ExecuteAsync(async () =>
                 {
-                    UserDiscordId = args.User.Id,
-                    GuildDiscordId = guildId,
+                    ctx.Db.ChangeTracker.Clear();
+                    await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                    DesktopStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Desktop),
-                    MobileStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Mobile),
-                    WebStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Web),
+                    ctx.Db.PresenceEvents.Add(new PresenceEventEntity
+                    {
+                        UserDiscordId = args.User.Id,
+                        GuildDiscordId = guildId,
 
-                    DesktopStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Desktop),
-                    MobileStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Mobile),
-                    WebStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Web),
+                        DesktopStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Desktop),
+                        MobileStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Mobile),
+                        WebStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Web),
 
-                    ActivitiesBeforeJson = SerializeActivities(args.PresenceBefore?.Activities),
-                    ActivitiesAfterJson = SerializeActivities(args.PresenceAfter?.Activities),
+                        DesktopStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Desktop),
+                        MobileStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Mobile),
+                        WebStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Web),
 
-                    EventTimestampUtc = ctx.ReceivedAtUtc,
-                    ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
-                });
+                        ActivitiesBeforeJson = SerializeActivities(args.PresenceBefore?.Activities),
+                        ActivitiesAfterJson = SerializeActivities(args.PresenceAfter?.Activities),
 
-                await ctx.Db.SaveChangesAsync();
+                        EventTimestampUtc = ctx.ReceivedAtUtc,
+                        ReceivedAtUtc = ctx.ReceivedAtUtc,
+                        RawEventJson = ctx.RawJson
+                    });
 
-                // Track activities in ActivityEntity — upsert the user first so we never silently
-                // skip activity tracking for unknown users (87k presence events historically).
-                var userService = ctx.Services.GetRequiredService<UserService>();
-                var userResult = await userService.UpsertUserAsync(args.User);
-
-                if (userResult.IsSuccess)
-                {
-                    await UpdateActivityTracking(ctx.Db, userResult.Value, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, ctx.ReceivedAtUtc);
                     await ctx.Db.SaveChangesAsync();
-                }
-                else
-                {
-                    ctx.Logger.LogWarning("Skipping activity tracking: UpsertUserAsync did not produce a User row for {UserId}", args.User.Id);
-                }
+
+                    // Track activities in ActivityEntity — upsert the user first so we never silently
+                    // skip activity tracking for unknown users (87k presence events historically).
+                    var userService = ctx.Services.GetRequiredService<UserService>();
+                    var userResult = await userService.UpsertUserAsync(args.User);
+
+                    if (userResult.IsSuccess)
+                    {
+                        await UpdateActivityTracking(ctx.Db, userResult.Value, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, ctx.ReceivedAtUtc);
+                        await ctx.Db.SaveChangesAsync();
+                    }
+                    else
+                    {
+                        ctx.Logger.LogWarning("Skipping activity tracking: UpsertUserAsync did not produce a User row for {UserId}", args.User.Id);
+                    }
+
+                    await tx.CommitAsync();
+                });
 
                 ctx.Logger.LogDebug("Recorded presence event for user {UserId}", args.User.Id);
             });

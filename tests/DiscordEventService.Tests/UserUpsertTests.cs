@@ -71,6 +71,24 @@ public sealed class UserUpsertTests(PostgresFixture fixture) : IClassFixture<Pos
         Assert.Equal(0, await verify.UserNameHistory.CountAsync());
     }
 
+    [Fact]
+    public async Task UpsertUser_WhenOnlyAvatarChanged_UpdatesUserWithoutHistory()
+    {
+        var service = new UserService(_db, NullLogger<UserService>.Instance);
+        await service.UpsertUserAsync(MakeUser(500UL, "dave", "Dave", avatarHash: "avatar_v1"));
+        _db.ChangeTracker.Clear();
+
+        // Same name, different avatar: the common set-based path must still refresh mutable fields
+        // but must NOT write a name-history row (history is for username/globalName changes only).
+        await service.UpsertUserAsync(MakeUser(500UL, "dave", "Dave", avatarHash: "avatar_v2"));
+
+        await using var verify = NewContext();
+        var row = await verify.Users.SingleAsync(u => u.DiscordId == 500UL);
+        Assert.Equal("avatar_v2", row.AvatarHash);
+        Assert.Equal("dave", row.Username);
+        Assert.Equal(0, await verify.UserNameHistory.CountAsync());
+    }
+
     private DiscordDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<DiscordDbContext>()
@@ -82,13 +100,15 @@ public sealed class UserUpsertTests(PostgresFixture fixture) : IClassFixture<Pos
 
     // DiscordUser exposes a parameterless ctor with non-public setters; reflection is the only
     // way to build a fixture instance without a live gateway connection.
-    private static DiscordUser MakeUser(ulong id, string username, string globalName)
+    private static DiscordUser MakeUser(ulong id, string username, string globalName, string? avatarHash = null)
     {
         var user = (DiscordUser)Activator.CreateInstance(typeof(DiscordUser), nonPublic: true)!;
         SetProp(user, nameof(DiscordUser.Id), id);
         SetProp(user, nameof(DiscordUser.Username), username);
         SetProp(user, nameof(DiscordUser.GlobalName), globalName);
         SetProp(user, nameof(DiscordUser.Discriminator), "0");
+        if (avatarHash is not null)
+            SetProp(user, nameof(DiscordUser.AvatarHash), avatarHash);
         return user;
     }
 
