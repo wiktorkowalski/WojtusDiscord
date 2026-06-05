@@ -22,6 +22,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
         await _db.ReactionEvents.ExecuteDeleteAsync();
         await _db.VoiceStateEvents.ExecuteDeleteAsync();
         await _db.RawEventLogs.ExecuteDeleteAsync();
+        await _db.Activities.ExecuteDeleteAsync();
         await _db.Messages.ExecuteDeleteAsync();
         await _db.Channels.ExecuteDeleteAsync();
         await _db.Users.ExecuteDeleteAsync();
@@ -78,6 +79,42 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal("general", general.ChannelName);
         Assert.Equal(3, general.MessageCount);
         Assert.Equal(3, general.ReactionCount);
+    }
+
+    [Fact]
+    public async Task TopReactionsGiven_RanksReactorsByCount()
+    {
+        var controller = new StatsController(_db);
+        var given = await controller.TopReactionsGiven(default);
+
+        var alice = Assert.Single(given);
+        Assert.Equal(Alice, alice.UserDiscordId);
+        Assert.Equal("alice", alice.Username); // resolved via the correlated user lookup
+        Assert.Equal(3, alice.Count);          // 👍x2 + megalul x1
+    }
+
+    [Fact]
+    public async Task TopReactionsReceived_RanksAuthorsByReactionsOnTheirMessages()
+    {
+        var controller = new StatsController(_db);
+        var received = await controller.TopReactionsReceived(default);
+
+        // All 3 reactions point at message 1 (alice's), so alice receives 3.
+        var alice = Assert.Single(received);
+        Assert.Equal(Alice, alice.UserDiscordId);
+        Assert.Equal(3, alice.Count);
+    }
+
+    [Fact]
+    public async Task TopActivities_CountsByNameDescending()
+    {
+        var controller = new StatsController(_db);
+        var activities = await controller.TopActivities(default);
+
+        Assert.Equal("Visual Studio Code", activities[0].Name);
+        Assert.Equal(2, activities[0].Count);
+        Assert.Equal("Spotify", activities[1].Name);
+        Assert.Equal(1, activities[1].Count);
     }
 
     [Fact]
@@ -142,6 +179,12 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
         // Raw events for volume
         _db.RawEventLogs.AddRange(
             Raw("MessageCreated", t), Raw("MessageCreated", t.AddMinutes(1)), Raw("PresenceUpdated", t.AddMinutes(2)));
+
+        // Activities: "Visual Studio Code" x2, "Spotify" x1.
+        _db.Activities.AddRange(
+            new ActivityEntity { UserId = alice.Id, Name = "Visual Studio Code", ActivityType = 0 },
+            new ActivityEntity { UserId = alice.Id, Name = "Visual Studio Code", ActivityType = 0 },
+            new ActivityEntity { UserId = bob.Id, Name = "Spotify", ActivityType = 2 });
 
         await _db.SaveChangesAsync();
         _db.ChangeTracker.Clear();
