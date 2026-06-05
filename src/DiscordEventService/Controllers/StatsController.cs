@@ -2,6 +2,7 @@ using System.Data;
 using System.Globalization;
 using System.Text.Json;
 using DiscordEventService.Data;
+using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Dtos;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -272,72 +273,93 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         var (curStart, curEnd, prevStart, prevEnd, sparkDays, label, prevLabel) =
             await ResolveWindowAsync(range, ct);
 
-        // Current/previous window SQL fragments reused across metric queries.
-        var curWindow = $"BETWEEN {Sql(curStart)} AND {Sql(curEnd)}";
-        string? prevWindow = prevStart is null || prevEnd is null
-            ? null
-            : $"BETWEEN {Sql(prevStart.Value)} AND {Sql(prevEnd.Value)}";
+        var hasPrev = prevStart is not null && prevEnd is not null;
 
-        var messages = await MetricAsync(
-            $"SELECT count(*)::bigint FROM messages WHERE created_at_utc {{0}}",
-            "messages", "created_at_utc", curStart, curEnd, prevWindow, sparkDays, ct);
+        // ---- Count metrics: value/prev via LINQ; dense daily sparks stay raw (see SparkAsync). ----
+        var messages = new CommunityMetricDto(
+            await db.Messages.AsNoTracking()
+                .LongCountAsync(m => m.CreatedAtUtc >= curStart && m.CreatedAtUtc <= curEnd, ct),
+            !hasPrev ? null : await db.Messages.AsNoTracking()
+                .LongCountAsync(m => m.CreatedAtUtc >= prevStart!.Value && m.CreatedAtUtc <= prevEnd!.Value, ct),
+            await SparkAsync("messages", "created_at_utc", null, "count(*)", sparkDays, ct));
 
-        var memes = await MetricAsync(
-            $"SELECT count(*)::bigint FROM messages WHERE (has_attachments OR has_embeds) AND created_at_utc {{0}}",
-            "messages", "created_at_utc", curStart, curEnd, prevWindow, sparkDays, ct,
-            sparkFilter: "(has_attachments OR has_embeds)");
+        var memes = new CommunityMetricDto(
+            await db.Messages.AsNoTracking()
+                .LongCountAsync(m => (m.HasAttachments || m.HasEmbeds)
+                    && m.CreatedAtUtc >= curStart && m.CreatedAtUtc <= curEnd, ct),
+            !hasPrev ? null : await db.Messages.AsNoTracking()
+                .LongCountAsync(m => (m.HasAttachments || m.HasEmbeds)
+                    && m.CreatedAtUtc >= prevStart!.Value && m.CreatedAtUtc <= prevEnd!.Value, ct),
+            await SparkAsync("messages", "created_at_utc", "(has_attachments OR has_embeds)", "count(*)", sparkDays, ct));
 
-        var reactions = await MetricAsync(
-            "SELECT count(*)::bigint FROM reaction_events WHERE event_type IN (0, 4) AND received_at_utc {0}",
-            "reaction_events", "received_at_utc", curStart, curEnd, prevWindow, sparkDays, ct,
-            sparkFilter: "event_type IN (0, 4)");
+        var reactions = new CommunityMetricDto(
+            await PresentReactions()
+                .LongCountAsync(r => r.ReceivedAtUtc >= curStart && r.ReceivedAtUtc <= curEnd, ct),
+            !hasPrev ? null : await PresentReactions()
+                .LongCountAsync(r => r.ReceivedAtUtc >= prevStart!.Value && r.ReceivedAtUtc <= prevEnd!.Value, ct),
+            await SparkAsync("reaction_events", "received_at_utc", "event_type IN (0, 4)", "count(*)", sparkDays, ct));
 
-        var activeMembers = await MetricAsync(
-            "SELECT count(DISTINCT author_id)::bigint FROM messages WHERE created_at_utc {0}",
-            "messages", "created_at_utc", curStart, curEnd, prevWindow, sparkDays, ct,
-            sparkAggregate: "count(DISTINCT author_id)");
+        var activeMembers = new CommunityMetricDto(
+            await db.Messages.AsNoTracking()
+                .Where(m => m.CreatedAtUtc >= curStart && m.CreatedAtUtc <= curEnd)
+                .Select(m => m.AuthorId).Distinct().LongCountAsync(ct),
+            !hasPrev ? null : await db.Messages.AsNoTracking()
+                .Where(m => m.CreatedAtUtc >= prevStart!.Value && m.CreatedAtUtc <= prevEnd!.Value)
+                .Select(m => m.AuthorId).Distinct().LongCountAsync(ct),
+            await SparkAsync("messages", "created_at_utc", null, "count(DISTINCT author_id)", sparkDays, ct));
 
         var voiceMinutes = await VoiceMinutesMetricAsync(curStart, curEnd, prevStart, prevEnd, sparkDays, ct);
         var onlineMinutes = await OnlineMinutesMetricAsync(curStart, curEnd, prevStart, prevEnd, sparkDays, ct);
 
-        var leaderboards = new CommunityLeaderboardsDto(
-            await LeaderAsync(
-                $"""
-                SELECT u.username, u.discord_id, u.avatar_hash, count(*)::bigint
-                FROM messages m JOIN users u ON m.author_id = u.id
-                WHERE m.created_at_utc {curWindow}
-                GROUP BY u.id, u.username, u.discord_id, u.avatar_hash ORDER BY 4 DESC LIMIT 6
-                """, ct),
-            await LeaderAsync(
-                $"""
-                SELECT u.username, u.discord_id, u.avatar_hash, count(*)::bigint
-                FROM messages m JOIN users u ON m.author_id = u.id
-                WHERE (m.has_attachments OR m.has_embeds) AND m.created_at_utc {curWindow}
-                GROUP BY u.id, u.username, u.discord_id, u.avatar_hash ORDER BY 4 DESC LIMIT 6
-                """, ct),
-            await LeaderAsync(
-                $"""
-                SELECT u.username, u.discord_id, u.avatar_hash, count(*)::bigint
-                FROM reaction_events r
-                JOIN messages m ON r.message_discord_id = m.discord_id
-                JOIN users u ON m.author_id = u.id
-                WHERE r.event_type IN (0, 4) AND r.received_at_utc {curWindow}
-                GROUP BY u.id, u.username, u.discord_id, u.avatar_hash ORDER BY 4 DESC LIMIT 6
-                """, ct),
-            await LeaderAsync(
-                $"""
-                SELECT u.username, v.user_discord_id, u.avatar_hash,
-                       round(SUM(EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc))) / 60.0)::bigint
-                FROM (
-                    SELECT user_discord_id, received_at_utc, channel_discord_id_after,
-                           LEAD(received_at_utc) OVER (PARTITION BY user_discord_id ORDER BY received_at_utc) AS next_ts
-                    FROM voice_state_events
-                ) v
-                LEFT JOIN users u ON u.discord_id = v.user_discord_id
-                WHERE v.channel_discord_id_after IS NOT NULL AND v.next_ts IS NOT NULL
-                  AND v.received_at_utc {curWindow}
-                GROUP BY u.username, v.user_discord_id, u.avatar_hash ORDER BY 4 DESC LIMIT 6
-                """, ct));
+        // ---- Leaderboards: chatters/memes/reactions via LINQ; voice stays raw (LEAD sessionization). ----
+        var topChatters = await db.Messages.AsNoTracking()
+            .Where(m => m.CreatedAtUtc >= curStart && m.CreatedAtUtc <= curEnd)
+            .GroupBy(m => new { m.Author.Username, m.Author.DiscordId, m.Author.AvatarHash })
+            .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Value = g.LongCount() })
+            .OrderByDescending(x => x.Value)
+            .Take(6)
+            .Select(x => new CommunityLeaderEntryDto(x.Username, x.DiscordId, x.AvatarHash, x.Value))
+            .ToListAsync(ct);
+
+        var memeLords = await db.Messages.AsNoTracking()
+            .Where(m => (m.HasAttachments || m.HasEmbeds) && m.CreatedAtUtc >= curStart && m.CreatedAtUtc <= curEnd)
+            .GroupBy(m => new { m.Author.Username, m.Author.DiscordId, m.Author.AvatarHash })
+            .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Value = g.LongCount() })
+            .OrderByDescending(x => x.Value)
+            .Take(6)
+            .Select(x => new CommunityLeaderEntryDto(x.Username, x.DiscordId, x.AvatarHash, x.Value))
+            .ToListAsync(ct);
+
+        var reactionsReceived = await PresentReactions()
+            .Where(r => r.ReceivedAtUtc >= curStart && r.ReceivedAtUtc <= curEnd)
+            .Join(
+                db.Messages.AsNoTracking(),
+                r => r.MessageDiscordId,
+                m => m.DiscordId,
+                (r, m) => m.Author)
+            .GroupBy(a => new { a.Username, a.DiscordId, a.AvatarHash })
+            .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Value = g.LongCount() })
+            .OrderByDescending(x => x.Value)
+            .Take(6)
+            .Select(x => new CommunityLeaderEntryDto(x.Username, x.DiscordId, x.AvatarHash, x.Value))
+            .ToListAsync(ct);
+
+        var voice = await LeaderAsync(
+            $"""
+            SELECT u.username, v.user_discord_id, u.avatar_hash,
+                   round(SUM(EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc))) / 60.0)::bigint
+            FROM (
+                SELECT user_discord_id, received_at_utc, channel_discord_id_after,
+                       LEAD(received_at_utc) OVER (PARTITION BY user_discord_id ORDER BY received_at_utc) AS next_ts
+                FROM voice_state_events
+            ) v
+            LEFT JOIN users u ON u.discord_id = v.user_discord_id
+            WHERE v.channel_discord_id_after IS NOT NULL AND v.next_ts IS NOT NULL
+              AND v.received_at_utc BETWEEN {Sql(curStart)} AND {Sql(curEnd)}
+            GROUP BY u.username, v.user_discord_id, u.avatar_hash ORDER BY 4 DESC LIMIT 6
+            """, ct);
+
+        var leaderboards = new CommunityLeaderboardsDto(topChatters, memeLords, reactionsReceived, voice);
 
         var metrics = new CommunityMetricsDto(
             messages, memes, reactions, voiceMinutes, onlineMinutes, activeMembers);
@@ -361,35 +383,53 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     [HttpGet("spotify")]
     public async Task<SpotifyDto> Spotify(CancellationToken ct)
     {
-        var nowPlaying = await QueryAsync(
-            """
-            SELECT u.discord_id, u.username, u.avatar_hash,
-                   NULLIF(a.spotify_song_title, a.name),
-                   a.spotify_artists_json, a.spotify_album_title, a.spotify_album_art_url,
-                   a.spotify_track_start_utc, a.spotify_track_end_utc
-            FROM activities a JOIN users u ON a.user_id = u.id
-            WHERE a.activity_type = 2 AND a.is_active = true
-            ORDER BY a.last_seen_at_utc DESC LIMIT 5
-            """,
-            r => new SpotifyNowPlayingDto(
-                Snowflake(r, 0), NullableString(r, 1), NullableString(r, 2), NullableString(r, 3),
-                FirstArtist(NullableString(r, 4)), NullableString(r, 5), NullableString(r, 6),
-                NullableDateTime(r, 7), NullableDateTime(r, 8)),
-            ct);
+        var nowPlayingRows = await db.Activities.AsNoTracking()
+            .Where(a => a.ActivityType == 2 && a.IsActive)
+            .OrderByDescending(a => a.LastSeenAtUtc)
+            .Take(5)
+            .Select(a => new
+            {
+                a.User!.DiscordId,
+                a.User.Username,
+                a.User.AvatarHash,
+                a.SpotifySongTitle,
+                a.Name,
+                a.SpotifyArtistsJson,
+                a.SpotifyAlbumTitle,
+                a.SpotifyAlbumArtUrl,
+                a.SpotifyTrackStartUtc,
+                a.SpotifyTrackEndUtc,
+            })
+            .ToListAsync(ct);
 
-        var topTracks = await QueryAsync(
-            """
-            SELECT spotify_song_title,
-                   (array_agg(spotify_artists_json) FILTER (WHERE spotify_artists_json IS NOT NULL))[1],
-                   (array_agg(spotify_album_art_url) FILTER (WHERE spotify_album_art_url IS NOT NULL))[1],
-                   count(*)::bigint
-            FROM activities
-            WHERE spotify_song_title IS NOT NULL AND spotify_song_title IS DISTINCT FROM name
-            GROUP BY spotify_song_title ORDER BY count(*) DESC LIMIT 5
-            """,
-            r => new SpotifyTrackDto(
-                r.GetString(0), FirstArtist(NullableString(r, 1)), NullableString(r, 2), r.GetInt64(3)),
-            ct);
+        var nowPlaying = nowPlayingRows
+            .Select(a => new SpotifyNowPlayingDto(
+                a.DiscordId, a.Username, a.AvatarHash,
+                a.SpotifySongTitle == a.Name ? null : a.SpotifySongTitle,
+                FirstArtist(a.SpotifyArtistsJson), a.SpotifyAlbumTitle, a.SpotifyAlbumArtUrl,
+                AsUtc(a.SpotifyTrackStartUtc), AsUtc(a.SpotifyTrackEndUtc)))
+            .ToList();
+
+        // Most-played tracks all-time. Excludes the placeholder where the stored "song
+        // title" is just the generic activity name. Representative artist/art = first
+        // non-null in the group (matches the prior array_agg(... FILTER ...)[1]).
+        var topTrackRows = await db.Activities.AsNoTracking()
+            .Where(a => a.SpotifySongTitle != null && a.SpotifySongTitle != a.Name)
+            .GroupBy(a => a.SpotifySongTitle)
+            .Select(g => new
+            {
+                Track = g.Key!,
+                ArtistsJson = g.Select(a => a.SpotifyArtistsJson).FirstOrDefault(a => a != null),
+                AlbumArtUrl = g.Select(a => a.SpotifyAlbumArtUrl).FirstOrDefault(a => a != null),
+                Plays = g.LongCount(),
+            })
+            .OrderByDescending(x => x.Plays)
+            .Take(5)
+            .ToListAsync(ct);
+
+        var topTracks = topTrackRows
+            .Select(x => new SpotifyTrackDto(x.Track, FirstArtist(x.ArtistsJson), x.AlbumArtUrl, x.Plays))
+            .ToList();
 
         return new SpotifyDto(nowPlaying, topTracks);
     }
@@ -437,8 +477,10 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     private static ulong? NullableSnowflake(NpgsqlDataReader r, int i) =>
         r.IsDBNull(i) ? null : unchecked((ulong)r.GetInt64(i));
 
-    private static DateTime? NullableDateTime(NpgsqlDataReader r, int i) =>
-        r.IsDBNull(i) ? null : DateTime.SpecifyKind(r.GetDateTime(i), DateTimeKind.Utc);
+    // Pin the kind to UTC so the serialized timestamp carries an explicit offset,
+    // regardless of how Npgsql materializes the column kind.
+    private static DateTime? AsUtc(DateTime? dt) =>
+        dt is null ? null : DateTime.SpecifyKind(dt.Value, DateTimeKind.Utc);
 
     // ---- Community window helpers ----
 
@@ -469,29 +511,17 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         }
     }
 
-    // Builds value/prev/dense-spark for a count-style metric. <paramref name="countSql"/>
-    // has a single {0} placeholder for the window predicate; spark is computed with a
-    // generate_series of CET day buckets LEFT JOINed to per-day counts so every day is
-    // present (zero-filled), oldest -> newest.
-    private async Task<CommunityMetricDto> MetricAsync(
-        string countSql, string table, string tsColumn, DateTime curStart, DateTime curEnd,
-        string? prevWindow, int sparkDays, CancellationToken ct,
-        string? sparkFilter = null, string sparkAggregate = "count(*)")
-    {
-        var value = await ScalarAsync(
-            string.Format(CultureInfo.InvariantCulture, countSql, $"BETWEEN {Sql(curStart)} AND {Sql(curEnd)}"), ct);
-
-        long? prev = prevWindow is null
-            ? null
-            : await ScalarAsync(string.Format(CultureInfo.InvariantCulture, countSql, prevWindow), ct);
-
-        var spark = await SparkAsync(table, tsColumn, sparkFilter, sparkAggregate, sparkDays, ct);
-        return new CommunityMetricDto(value, prev, spark);
-    }
+    // "Present" reactions: Added (0) live + Backfilled (4) historical. Removed/Cleared/
+    // EmojiCleared are excluded (filtering to event_type=0 alone under-counts ~30x).
+    private IQueryable<ReactionEventEntity> PresentReactions() =>
+        db.ReactionEvents.AsNoTracking().Where(r =>
+            r.EventType == ReactionEventType.Added || r.EventType == ReactionEventType.Backfilled);
 
     // Dense daily series: the last <paramref name="sparkDays"/> CET days ending today,
     // zero-filled, oldest -> newest. Anchored on now() AT TIME ZONE so the series and the
     // per-day counts resolve in the same wall-clock day (windows end at now()).
+    // Stays raw: dense CET-day series needs generate_series + date_trunc AT TIME ZONE,
+    // which has no clean LINQ equivalent (and zero-filling client-side would re-bucket).
     private async Task<IReadOnlyList<long>> SparkAsync(
         string table, string tsColumn, string? filter, string aggregate, int sparkDays, CancellationToken ct)
     {
@@ -518,6 +548,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
 
     // Voice minutes: sessionize via LEAD() and count a segment when its start is inside
     // the window. Spark buckets segment minutes by the CET day of the segment start.
+    // Stays raw: whole-guild LEAD() window sessionization — a LINQ version would pull all
+    // voice_state_events into memory.
     private async Task<CommunityMetricDto> VoiceMinutesMetricAsync(
         DateTime curStart, DateTime curEnd, DateTime? prevStart, DateTime? prevEnd, int sparkDays, CancellationToken ct)
     {
@@ -578,6 +610,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     /// clamped), and (c) the segment does not overlap a recorded bot-downtime interval.
     /// Segment minutes are attributed to the window/day of the segment start. Treat the
     /// result as an approximation, not a precise online-time ledger.
+    /// Stays raw: whole-guild LEAD() window sessionization (over ~100k presence rows) — a
+    /// LINQ version would pull every presence row into memory.
     /// </summary>
     private async Task<CommunityMetricDto> OnlineMinutesMetricAsync(
         DateTime curStart, DateTime curEnd, DateTime? prevStart, DateTime? prevEnd, int sparkDays, CancellationToken ct)
