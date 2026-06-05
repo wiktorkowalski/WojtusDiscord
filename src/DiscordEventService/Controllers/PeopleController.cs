@@ -1,7 +1,7 @@
 using System.Globalization;
 using DiscordEventService.Data;
-using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Dtos;
+using DiscordEventService.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -51,9 +51,8 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
         var memeCount = await db.Messages.AsNoTracking()
             .LongCountAsync(m => m.AuthorId == userId && (m.HasAttachments || m.HasEmbeds), ct);
 
-        // Reactions "present" on this user's messages: Added (0) + Backfilled (4).
-        var reactionsReceived = await db.ReactionEvents.AsNoTracking()
-            .Where(r => r.EventType == ReactionEventType.Added || r.EventType == ReactionEventType.Backfilled)
+        // Present reactions on this user's messages (see ReactionEventQueryExtensions).
+        var reactionsReceived = await db.ReactionEvents.AsNoTracking().WherePresent()
             .Join(
                 db.Messages.AsNoTracking().Where(m => m.AuthorId == userId),
                 r => r.MessageDiscordId,
@@ -65,9 +64,8 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
         var onlineMinutes = await OnlineMinutesAsync(discordSf, ct);
 
         // Top emote the user gave (present reactions only).
-        var favoriteEmote = await db.ReactionEvents.AsNoTracking()
-            .Where(r => r.UserDiscordId == discordSf
-                && (r.EventType == ReactionEventType.Added || r.EventType == ReactionEventType.Backfilled))
+        var favoriteEmote = await db.ReactionEvents.AsNoTracking().WherePresent()
+            .Where(r => r.UserDiscordId == discordSf)
             .GroupBy(r => new { r.EmoteName, r.EmoteDiscordId })
             .Select(g => new { g.Key.EmoteName, g.Key.EmoteDiscordId, Count = g.LongCount() })
             .OrderByDescending(x => x.Count)
@@ -101,8 +99,8 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
             .Select(p => new { p.DesktopStatusAfter, p.MobileStatusAfter, p.WebStatusAfter })
             .FirstOrDefaultAsync(ct);
         var status = latestPresence is null
-            ? "offline"
-            : GuildController.OverallStatus(
+            ? PresenceStatus.Offline
+            : PresenceStatus.Overall(
                 latestPresence.DesktopStatusAfter, latestPresence.MobileStatusAfter, latestPresence.WebStatusAfter);
 
         var nameHistory = await db.UserNameHistory.AsNoTracking()

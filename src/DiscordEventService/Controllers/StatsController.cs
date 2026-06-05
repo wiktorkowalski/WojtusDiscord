@@ -2,8 +2,8 @@ using System.Data;
 using System.Globalization;
 using System.Text.Json;
 using DiscordEventService.Data;
-using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Dtos;
+using DiscordEventService.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -293,9 +293,9 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             await SparkAsync("messages", "created_at_utc", "(has_attachments OR has_embeds)", "count(*)", sparkDays, ct));
 
         var reactions = new CommunityMetricDto(
-            await PresentReactions()
+            await db.ReactionEvents.AsNoTracking().WherePresent()
                 .LongCountAsync(r => r.ReceivedAtUtc >= curStart && r.ReceivedAtUtc <= curEnd, ct),
-            !hasPrev ? null : await PresentReactions()
+            !hasPrev ? null : await db.ReactionEvents.AsNoTracking().WherePresent()
                 .LongCountAsync(r => r.ReceivedAtUtc >= prevStart!.Value && r.ReceivedAtUtc <= prevEnd!.Value, ct),
             await SparkAsync("reaction_events", "received_at_utc", "event_type IN (0, 4)", "count(*)", sparkDays, ct));
 
@@ -330,7 +330,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(x => new CommunityLeaderEntryDto(x.Username, x.DiscordId, x.AvatarHash, x.Value))
             .ToListAsync(ct);
 
-        var reactionsReceived = await PresentReactions()
+        var reactionsReceived = await db.ReactionEvents.AsNoTracking().WherePresent()
             .Where(r => r.ReceivedAtUtc >= curStart && r.ReceivedAtUtc <= curEnd)
             .Join(
                 db.Messages.AsNoTracking(),
@@ -510,12 +510,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
                 return (start, now, null, null, days, "All time", string.Empty);
         }
     }
-
-    // "Present" reactions: Added (0) live + Backfilled (4) historical. Removed/Cleared/
-    // EmojiCleared are excluded (filtering to event_type=0 alone under-counts ~30x).
-    private IQueryable<ReactionEventEntity> PresentReactions() =>
-        db.ReactionEvents.AsNoTracking().Where(r =>
-            r.EventType == ReactionEventType.Added || r.EventType == ReactionEventType.Backfilled);
 
     // Dense daily series: the last <paramref name="sparkDays"/> CET days ending today,
     // zero-filled, oldest -> newest. Anchored on now() AT TIME ZONE so the series and the

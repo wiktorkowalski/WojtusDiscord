@@ -1,6 +1,6 @@
 using DiscordEventService.Data;
 using DiscordEventService.Dtos;
-using DSharpPlus.Entities;
+using DiscordEventService.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -40,11 +40,10 @@ public sealed class GuildController(DiscordDbContext db) : ControllerBase
 
         // A correlated subquery picks each non-bot user's most-recent presence row
         // (ReceivedAtUtc desc, Id as a deterministic tiebreak) and projects its three
-        // per-device statuses. We MATERIALIZE first, then derive the overall status and
-        // filter/sort/take in C#: the device-status enum is not ordered by online-ness
-        // (Offline=0, Online=1, Idle=2, DoNotDisturb=4) so the overall status is a
-        // priority pick (online > idle > dnd), not a numeric max; and filtering on a
-        // correlated subquery in SQL would evaluate it twice and could disagree on ties.
+        // per-device statuses. We MATERIALIZE first, then derive the overall status
+        // (PresenceStatus.Overall — a priority pick, not a numeric max) and
+        // filter/sort/take in C#: filtering on a correlated subquery in SQL would
+        // evaluate it twice and could disagree on ties.
         var candidates = await db.Users.AsNoTracking()
             .Where(u => !u.IsBot)
             .Select(u => new
@@ -68,10 +67,10 @@ public sealed class GuildController(DiscordDbContext db) : ControllerBase
                 x.DiscordId,
                 x.Username,
                 x.AvatarHash,
-                Status = OverallStatus(x.Latest!.DesktopStatusAfter, x.Latest.MobileStatusAfter, x.Latest.WebStatusAfter),
+                Status = PresenceStatus.Overall(x.Latest!.DesktopStatusAfter, x.Latest.MobileStatusAfter, x.Latest.WebStatusAfter),
             })
-            .Where(x => x.Status != "offline")
-            .OrderBy(x => StatusRank(x.Status))
+            .Where(x => x.Status != PresenceStatus.Offline)
+            .OrderBy(x => PresenceStatus.Rank(x.Status))
             .ThenBy(x => x.Username)
             .Take(8)
             .Select(x => new GuildOnlineDto(x.DiscordId, x.Username, x.AvatarHash, x.Status))
@@ -81,39 +80,4 @@ public sealed class GuildController(DiscordDbContext db) : ControllerBase
             guild.DiscordId, guild.Name, guild.IconHash,
             memberCount, channelCount, userCount, eventSpanStart, onlineDtos);
     }
-
-    /// <summary>
-    /// Maps a single DSharpPlus <see cref="DiscordUserStatus"/> int to its lowercase name.
-    /// The enum is NOT ordered by online-ness (Offline=0, Online=1, Idle=2, DoNotDisturb=4,
-    /// Invisible=5); Invisible reads as offline.
-    /// </summary>
-    internal static string StatusName(int status) => status switch
-    {
-        (int)DiscordUserStatus.Online => "online",
-        (int)DiscordUserStatus.Idle => "idle",
-        (int)DiscordUserStatus.DoNotDisturb => "dnd",
-        _ => "offline",
-    };
-
-    /// <summary>
-    /// Aggregates a user's three device statuses into one, using Discord's client-status
-    /// priority (online &gt; idle &gt; dnd &gt; offline) — not a numeric max, since the
-    /// enum values are not ordered by activity.
-    /// </summary>
-    internal static string OverallStatus(int desktop, int mobile, int web)
-    {
-        int[] devices = [desktop, mobile, web];
-        if (devices.Contains((int)DiscordUserStatus.Online)) return "online";
-        if (devices.Contains((int)DiscordUserStatus.Idle)) return "idle";
-        if (devices.Contains((int)DiscordUserStatus.DoNotDisturb)) return "dnd";
-        return "offline";
-    }
-
-    private static int StatusRank(string status) => status switch
-    {
-        "online" => 0,
-        "idle" => 1,
-        "dnd" => 2,
-        _ => 3,
-    };
 }
