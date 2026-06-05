@@ -17,7 +17,8 @@ jobs:
       image-name: ${{ github.repository }}/discord-event-service
       dotnet-project: src/DiscordEventService/DiscordEventService.csproj
       dockerfile: src/DiscordEventService/Dockerfile
-      context: src/DiscordEventService
+      # Repo root: the Dockerfile bundles the sibling src/Dashboard SPA.
+      context: .
       deploy-compose-path: /home/ubuntu/docker/wojtusdiscord
       deploy-runner-labels: '["self-hosted", "homelab"]'
     secrets: inherit

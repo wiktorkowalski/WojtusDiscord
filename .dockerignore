@@ -19,6 +19,9 @@
 **/node_modules
 **/npm-debug.log
 **/obj
+# Generated frontend artifacts — rebuilt inside the image (node stage -> wwwroot)
+src/Dashboard/dist
+src/DiscordEventService/wwwroot
 **/secrets.dev.yaml
 **/values.dev.yaml
 LICENSE
