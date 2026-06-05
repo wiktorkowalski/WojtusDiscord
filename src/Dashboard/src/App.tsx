@@ -1,5 +1,5 @@
 import { Routes, Route } from 'react-router-dom'
-import AppShell from './components/AppShell'
+import { ProfileProvider, TopBar } from './ui'
 import Overview from './pages/Overview'
 import Timeline from './pages/Timeline'
 import Stats from './pages/Stats'
@@ -9,11 +9,12 @@ import TableExplorer from './pages/TableExplorer'
 import RawExplorer from './pages/RawExplorer'
 import Placeholder from './components/Placeholder'
 
-// Routes are scaffolded now and filled in over slices S1–S7. AppShell wraps
-// all routed content with the persistent sidebar.
+// The redesigned shell: a sticky TopBar nav + a profile slide-over (ProfileProvider)
+// available to every page. Page bodies own their own layout/padding.
 function App() {
   return (
-    <AppShell>
+    <ProfileProvider>
+      <TopBar />
       <Routes>
         <Route path="/" element={<Overview />} />
         <Route path="/timeline" element={<Timeline />} />
@@ -24,7 +25,7 @@ function App() {
         <Route path="/raw" element={<RawExplorer />} />
         <Route path="*" element={<Placeholder title="Not found" />} />
       </Routes>
-    </AppShell>
+    </ProfileProvider>
   )
 }
 

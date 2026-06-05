@@ -118,6 +118,22 @@ body::after {
   }
 }
 
+/* Shared keyframes for the redesigned UI (live indicators, spinners). */
+@keyframes dPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+@keyframes dSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Thin dark scrollbars */
 * {
   scrollbar-width: thin;

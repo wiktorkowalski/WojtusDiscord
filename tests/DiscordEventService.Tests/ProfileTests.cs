@@ -49,7 +49,7 @@ public sealed class ProfileTests(PostgresFixture fixture) : IClassFixture<Postgr
         Assert.Equal(2, dto.ReactionsReceivedCount);  // 2 reactions on alice's msgs
         Assert.Equal(10, dto.VoiceMinutes);           // one 10-min session
         Assert.Equal(5, dto.OnlineMinutes);           // only the 5-min segment; 40-min gap dropped by 30-min cap
-        Assert.Equal("online", dto.Status);           // latest presence desktop=3
+        Assert.Equal("online", dto.Status);           // latest presence desktop=Online(1)
 
         Assert.NotNull(dto.FavoriteEmote);
         Assert.Equal("👍", dto.FavoriteEmote!.EmoteName); // alice gave 👍 x2, 🎉 x1
@@ -107,14 +107,14 @@ public sealed class ProfileTests(PostgresFixture fixture) : IClassFixture<Postgr
             Voice(Alice, null, ChannelSf, VoiceEventType.Joined, t),
             Voice(Alice, ChannelSf, null, VoiceEventType.Left, t.AddMinutes(10)));
 
-        // Presence sessionization:
+        // Presence sessionization (desktop = DiscordUserStatus int: Idle=2, Online=1):
         //   e1@t      idle, gap 5min  -> counts 5 online minutes (<= 30 cap)
         //   e2@t+5    online, gap 40min -> dropped (> 30 cap proves filter, not clamp)
         //   e3@t+45   online, no follower -> excluded; also the latest -> status "online"
         _db.PresenceEvents.AddRange(
-            Presence(Alice, desktop: 1, at: t),
-            Presence(Alice, desktop: 3, at: t.AddMinutes(5)),
-            Presence(Alice, desktop: 3, at: t.AddMinutes(45)));
+            Presence(Alice, desktop: 2, at: t),
+            Presence(Alice, desktop: 1, at: t.AddMinutes(5)),
+            Presence(Alice, desktop: 1, at: t.AddMinutes(45)));
 
         _db.UserNameHistory.Add(new UserNameHistoryEntity
         {

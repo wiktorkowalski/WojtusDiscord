@@ -10,9 +10,15 @@ export interface DeltaProps {
 
 export function Delta({ cur, prev, small = false }: DeltaProps) {
   if (prev == null) return null
-  const diff = prev === 0 ? (cur > 0 ? 100 : 0) : Math.round(((cur - prev) / prev) * 100)
+
+  // When the previous period had ~no data, a percentage is meaningless/explosive
+  // (e.g. prev=1 -> +1192000%). Show "new" instead. Otherwise cap the magnitude so a
+  // huge swing reads as ">999%" rather than a wall of digits.
+  const isNew = prev <= 0 && cur > 0
+  const diff = prev <= 0 ? (cur > 0 ? 100 : 0) : Math.round(((cur - prev) / prev) * 100)
   const up = diff >= 0
   const col = up ? C.green : C.red
+  const text = isNew ? 'new' : Math.abs(diff) > 999 ? '>999%' : `${Math.abs(diff)}%`
 
   return (
     <span
@@ -42,7 +48,7 @@ export function Delta({ cur, prev, small = false }: DeltaProps) {
       >
         <path d="M5 8V2M2 5l3-3 3 3" />
       </svg>
-      {`${Math.abs(diff)}%`}
+      {text}
     </span>
   )
 }

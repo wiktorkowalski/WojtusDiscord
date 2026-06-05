@@ -11,11 +11,14 @@ namespace DiscordEventService.Tests;
 
 public sealed class GuildControllerTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
+    // Device statuses are DSharpPlus DiscordUserStatus ints: Offline=0, Online=1, Idle=2,
+    // DoNotDisturb=4 (NOT ordered by online-ness — that's what the derivation must handle).
     private const ulong GuildSf = 742554855180206203UL;
-    private const ulong Alice = 100UL;   // online (desktop=3)
-    private const ulong Bob = 200UL;     // idle (mobile=1)
+    private const ulong Alice = 100UL;   // latest desktop=Online -> "online"
+    private const ulong Bob = 200UL;     // mobile=Idle -> "idle"
     private const ulong Carol = 300UL;   // offline -> excluded
     private const ulong BotUser = 400UL; // online but bot -> excluded
+    private const ulong Dave = 500UL;    // desktop=DnD + mobile=Online -> "online" (priority, not numeric max)
 
     private DiscordDbContext _db = null!;
 
@@ -44,15 +47,19 @@ public sealed class GuildControllerTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal(GuildSf, result.DiscordId);
         Assert.Equal(1, result.MemberCount);   // only Alice has a member row
         Assert.Equal(1, result.ChannelCount);  // one non-deleted channel
-        Assert.Equal(4, result.UserCount);
+        Assert.Equal(5, result.UserCount);
         Assert.NotNull(result.EventSpanStartUtc);
 
-        // Carol (offline) and the bot are excluded; Alice + Bob remain.
-        Assert.Equal(2, result.Online.Count);
+        // Carol (offline) and the bot are excluded; Alice, Bob, Dave remain.
+        Assert.Equal(3, result.Online.Count);
         var alice = result.Online.Single(o => o.UserDiscordId == Alice);
         Assert.Equal("online", alice.Status);
         var bob = result.Online.Single(o => o.UserDiscordId == Bob);
         Assert.Equal("idle", bob.Status);
+        // Dave is DnD on desktop but Online on mobile -> overall "online" by priority
+        // (a numeric max would wrongly pick DnD=4).
+        var dave = result.Online.Single(o => o.UserDiscordId == Dave);
+        Assert.Equal("online", dave.Status);
         Assert.DoesNotContain(result.Online, o => o.UserDiscordId == Carol);
         Assert.DoesNotContain(result.Online, o => o.UserDiscordId == BotUser);
     }
@@ -64,8 +71,9 @@ public sealed class GuildControllerTests(PostgresFixture fixture) : IClassFixtur
         var bob = new UserEntity { DiscordId = Bob, Username = "bob" };
         var carol = new UserEntity { DiscordId = Carol, Username = "carol" };
         var bot = new UserEntity { DiscordId = BotUser, Username = "bot", IsBot = true };
+        var dave = new UserEntity { DiscordId = Dave, Username = "dave" };
         _db.Guilds.Add(guild);
-        _db.Users.AddRange(alice, bob, carol, bot);
+        _db.Users.AddRange(alice, bob, carol, bot, dave);
         await _db.SaveChangesAsync();
 
         _db.Channels.AddRange(
@@ -90,13 +98,16 @@ public sealed class GuildControllerTests(PostgresFixture fixture) : IClassFixtur
         });
 
         var t = DateTime.UtcNow;
-        // Two presence rows for Alice: latest (desktop online) must win.
+        // Two presence rows for Alice: latest (desktop Online=1) must win over the earlier
+        // Idle=2 row. Bob Idle=2; Carol Offline=0 (excluded); bot Online (excluded);
+        // Dave DnD=4 on desktop but Online=1 on mobile -> "online" by priority.
         _db.PresenceEvents.AddRange(
-            Presence(Alice, desktop: 1, at: t.AddMinutes(-10)),
-            Presence(Alice, desktop: 3, at: t.AddMinutes(-1)),
-            Presence(Bob, mobile: 1, at: t.AddMinutes(-2)),
+            Presence(Alice, desktop: 2, at: t.AddMinutes(-10)),
+            Presence(Alice, desktop: 1, at: t.AddMinutes(-1)),
+            Presence(Bob, mobile: 2, at: t.AddMinutes(-2)),
             Presence(Carol, desktop: 0, at: t.AddMinutes(-2)),
-            Presence(BotUser, desktop: 3, at: t.AddMinutes(-2)));
+            Presence(BotUser, desktop: 1, at: t.AddMinutes(-2)),
+            Presence(Dave, desktop: 4, mobile: 1, at: t.AddMinutes(-2)));
 
         await _db.SaveChangesAsync();
         _db.ChangeTracker.Clear();

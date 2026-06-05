@@ -20,7 +20,7 @@ const mono: CSSProperties = { fontFamily: 'JetBrains Mono, monospace' }
 const KEYFRAMES = `@keyframes dProfileFade{from{opacity:0}to{opacity:1}}@keyframes dProfileSlide{from{transform:translateX(100%)}to{transform:translateX(0)}}`
 
 const backdropStyle: CSSProperties = {
-  position: 'absolute',
+  position: 'fixed',
   inset: 0,
   zIndex: 60,
   background: 'rgba(10,11,13,.55)',

@@ -92,13 +92,18 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
 
         var messagesDaily14 = await MessagesDaily14Async(userId, ct);
 
-        // Current overall status from the latest presence row (0 when no presence rows).
-        var statusInt = await db.PresenceEvents.AsNoTracking()
+        // Current overall status from the latest presence row, by client-status priority
+        // (online > idle > dnd > offline); "offline" when there are no presence rows.
+        var latestPresence = await db.PresenceEvents.AsNoTracking()
             .Where(p => p.UserDiscordId == discordSf)
             .OrderByDescending(p => p.ReceivedAtUtc)
-            .Select(p => (int?)Math.Max(
-                Math.Max(p.DesktopStatusAfter, p.MobileStatusAfter), p.WebStatusAfter))
-            .FirstOrDefaultAsync(ct) ?? 0;
+            .ThenByDescending(p => p.Id)
+            .Select(p => new { p.DesktopStatusAfter, p.MobileStatusAfter, p.WebStatusAfter })
+            .FirstOrDefaultAsync(ct);
+        var status = latestPresence is null
+            ? "offline"
+            : GuildController.OverallStatus(
+                latestPresence.DesktopStatusAfter, latestPresence.MobileStatusAfter, latestPresence.WebStatusAfter);
 
         var nameHistory = await db.UserNameHistory.AsNoTracking()
             .Where(h => h.UserId == userId)
@@ -109,7 +114,7 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
 
         return new ProfileDto(
             user.DiscordId, user.Username, user.GlobalName, user.AvatarHash, user.IsBot,
-            GuildController.StatusName(statusInt), user.FirstSeenUtc,
+            status, user.FirstSeenUtc,
             messageCount, memeCount, reactionsReceived, voiceMinutes, onlineMinutes,
             favoriteEmoteDto, busiestChannelDto, messagesDaily14, nameHistory);
     }
