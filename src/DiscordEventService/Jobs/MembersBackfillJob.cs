@@ -1,4 +1,3 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services;
 using DSharpPlus;
@@ -6,34 +5,23 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
 
-public class MembersBackfillJob(
-    IServiceScopeFactory scopeFactory,
+public sealed class MembersBackfillJob(
     DiscordClient discordClient,
+    BackfillJobExecutor executor,
     ILogger<MembersBackfillJob> logger) : BackfillJobBase, IBackfillJob
 {
     protected override BackfillType BackfillType => BackfillType.Members;
 
-    public async Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
-    {
-        using var scope = scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-        var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-
-        var checkpoint = await GetOrCreateCheckpointAsync(db, guildId);
-        checkpoint.Status = BackfillStatus.InProgress;
-        await db.SaveChangesAsync(cancellationToken);
-
-        try
+    public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
+        => executor.RunAsync(BackfillType, guildId, async ctx =>
         {
+            var userService = ctx.Services.GetRequiredService<UserService>();
+
             var guild = await discordClient.GetGuildAsync(guildId);
-            var guildEntity = await db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == guildId, cancellationToken);
+            var guildEntity = await ctx.Db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == guildId, cancellationToken);
 
             if (guildEntity is null)
-            {
-                logger.LogWarning("Guild {GuildId} not found in database, cannot backfill members", guildId);
-                await MarkFailedAsync(db, checkpoint, new InvalidOperationException($"Guild {guildId} not found in database"));
-                return;
-            }
+                return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
             // Get all members - requires GUILD_MEMBERS privileged intent
             // DSharpPlus v5 returns IAsyncEnumerable
@@ -43,8 +31,8 @@ public class MembersBackfillJob(
                 membersList.Add(member);
             }
 
-            checkpoint.TotalCount = membersList.Count;
-            await db.SaveChangesAsync(cancellationToken);
+            ctx.Checkpoint.TotalCount = membersList.Count;
+            await ctx.Db.SaveChangesAsync(cancellationToken);
 
             foreach (var member in membersList)
             {
@@ -53,34 +41,19 @@ public class MembersBackfillJob(
                 try
                 {
                     await userService.UpsertMemberAsync(member);
-                    checkpoint.ProcessedCount++;
+                    ctx.Checkpoint.ProcessedCount++;
                 }
                 catch (Exception ex)
                 {
                     logger.LogWarning(ex, "Failed to upsert member {MemberId} in guild {GuildId}", member.Id, guildId);
-                    await RecordErrorAsync(db, checkpoint, ex);
+                    await RecordErrorAsync(ctx.Db, ctx.Checkpoint, ex);
                 }
 
                 // Save progress periodically (every 100 members)
-                if (checkpoint.ProcessedCount % 100 == 0)
-                {
-                    await db.SaveChangesAsync(cancellationToken);
-                }
+                if (ctx.Checkpoint.ProcessedCount % 100 == 0)
+                    await ctx.Db.SaveChangesAsync(cancellationToken);
             }
 
-            await MarkCompletedAsync(db, checkpoint);
-            logger.LogInformation("Members backfill completed for guild {GuildId}: {Count} members", guildId, checkpoint.ProcessedCount);
-        }
-        catch (OperationCanceledException ex)
-        {
-            logger.LogWarning("Members backfill cancelled for guild {GuildId} (likely deploy restart)", guildId);
-            await MarkFailedAsync(db, checkpoint, ex);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Members backfill failed for guild {GuildId}", guildId);
-            await MarkFailedAsync(db, checkpoint, ex);
-            throw;
-        }
-    }
+            return BackfillOutcome.Completed;
+        }, cancellationToken);
 }

@@ -63,6 +63,56 @@ public sealed class FkResolverTests
         Assert.Contains("MessageId=42", failure.Message);
     }
 
+    [Fact]
+    public async Task ValidateAsync_GuildUser_WhenBothResolve_ReturnsResolvedIdsAndDoesNotRecordFailure()
+    {
+        var guildId = Guid.NewGuid();
+        var userId = Guid.NewGuid();
+        var logger = new RecordingLogger();
+        var recordedFailures = new List<Exception>();
+        var ctx = NewContext(logger, recordedFailures);
+
+        var result = await FkResolver.ValidateAsync(
+            ctx,
+            UpsertResult<Guid>.Success(guildId),
+            UpsertResult<Guid>.Success(userId),
+            "GuildId=1 UserId=2");
+
+        Assert.True(result.Success);
+        Assert.Equal(guildId, result.GuildId);
+        Assert.Equal(userId, result.UserId);
+        Assert.Empty(recordedFailures);
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Error);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public async Task ValidateAsync_GuildUser_WhenAnyFkFails_LogsRecordsFailureAndReturnsFailed(
+        bool guildOk, bool userOk)
+    {
+        var logger = new RecordingLogger();
+        var recordedFailures = new List<Exception>();
+        var ctx = NewContext(logger, recordedFailures);
+
+        var result = await FkResolver.ValidateAsync(
+            ctx,
+            guildOk ? UpsertResult<Guid>.Success(Guid.NewGuid()) : UpsertResult<Guid>.Failure("guild lost"),
+            userOk ? UpsertResult<Guid>.Success(Guid.NewGuid()) : UpsertResult<Guid>.Failure("user lost"),
+            "GuildId=7 UserId=8");
+
+        Assert.False(result.Success);
+        Assert.Equal(Guid.Empty, result.GuildId);
+        Assert.Equal(Guid.Empty, result.UserId);
+
+        // Logged an aggregate error and recorded exactly one FailedEvent carrying the log context.
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
+        var failure = Assert.Single(recordedFailures);
+        Assert.IsType<InvalidOperationException>(failure);
+        Assert.Contains("GuildId=7 UserId=8", failure.Message);
+    }
+
     private static EventContext NewContext(ILogger logger, List<Exception> recordedFailures) =>
         new(
             Db: null!,

@@ -22,6 +22,8 @@ A row that records something that *happened* and later *ended*, where neither en
 
 _Do not_ shoehorn these into `is_deleted`/`deleted_at_utc`. The shared `bool` shape is a coincidence; the semantics differ.
 
+_DB-enforced_ (§B1 / #199): `is_active = false ⇔ end-timestamp IS NOT NULL` is a CHECK constraint on each — `ck_bans_lifecycle` (`unbanned_at_utc`), `ck_activities_lifecycle` (`ended_at_utc`) — mirroring the soft-delete constraint convention but on the domain end columns (`LifecycleFactConstraint`).
+
 ### References
 
 **Snowflake** (`*_discord_id`, `ulong`): the ID Discord uses (e.g. `user_discord_id`, `channel_discord_id`). The natural key, supplied by every gateway payload, never null on event-table rows. Canonical for **event tables**.
@@ -50,7 +52,7 @@ _Currently realised_: a single thread row already exists in `channels` (recovere
 
 **`received_at_utc`**: when *we* received the gateway event. Always trustworthy.
 
-**`event_timestamp_utc`**: when the underlying Discord event *occurred*. Equals `received_at_utc` only when Discord doesn't supply a distinct timestamp (voice, presence, reaction adds). For messages, this is `e.Message.Timestamp`.
+**`event_timestamp_utc`**: when the underlying Discord event *occurred*. Equals `received_at_utc` only when Discord doesn't supply a distinct timestamp (voice, presence, reaction adds). For messages, this is `e.Message.Timestamp`; for audit-log entries, the entry snowflake's `CreationTimestamp` (§B3); for invite creation, `invite.CreatedAt` (§B3).
 
 _Avoid_: "created at" / "updated at" as event-stream vocabulary — those mean entity lifecycle, not event timing.
 

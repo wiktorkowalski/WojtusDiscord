@@ -198,6 +198,7 @@ builder.Services.AddHangfireServer(options =>
 });
 
 // Backfill jobs
+builder.Services.AddScoped<BackfillJobExecutor>();
 builder.Services.AddScoped<RolesBackfillJob>();
 builder.Services.AddScoped<EmojisBackfillJob>();
 builder.Services.AddScoped<StickersBackfillJob>();

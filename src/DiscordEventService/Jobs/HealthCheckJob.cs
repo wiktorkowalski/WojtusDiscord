@@ -17,6 +17,7 @@ public class HealthCheckJob(
     private static DateTime _lastIngestStallAlert = DateTime.MinValue;
     private static DateTime _lastEventRatioAlert = DateTime.MinValue;
     private static DateTime _lastCrashLoopAlert = DateTime.MinValue;
+    private static readonly Dictionary<string, int> _eventRatioDropStreaks = new Dictionary<string, int>();
     private static readonly object _lock = new();
     private static readonly TimeSpan WebhookTimeout = TimeSpan.FromSeconds(10);
 
@@ -171,13 +172,36 @@ public class HealthCheckJob(
                 baselineTotals[c.EventType] = baselineTotals.GetValueOrDefault(c.EventType) + c.Count;
         }
 
+        var excluded = new HashSet<string>(opts.EventRatioExcludedEventTypes, StringComparer.OrdinalIgnoreCase);
+
         var dropped = baselineTotals
+            .Where(b => !excluded.Contains(b.Key))
             .Select(b => new { EventType = b.Key, ExpectedInWindow = (double)b.Value / opts.EventRatioBaselineDays })
             .Where(b => b.ExpectedInWindow >= opts.EventRatioMinWindowBaseline)
             .Where(b => recent.GetValueOrDefault(b.EventType, 0) < b.ExpectedInWindow * opts.EventRatioDropThreshold)
             .ToList();
 
-        if (dropped.Count == 0)
+        // A drop must persist across EventRatioConsecutiveRuns consecutive runs before it
+        // alerts; types that recover have their streak cleared. Only "confirmed" types are
+        // eligible — debounces transient lulls on a low-traffic server.
+        var droppedTypes = dropped.Select(d => d.EventType).ToHashSet();
+        List<string> confirmedTypes;
+        lock (_lock)
+        {
+            foreach (var key in _eventRatioDropStreaks.Keys.Where(k => !droppedTypes.Contains(k)).ToList())
+                _eventRatioDropStreaks.Remove(key);
+
+            foreach (var type in droppedTypes)
+                _eventRatioDropStreaks[type] = _eventRatioDropStreaks.GetValueOrDefault(type) + 1;
+
+            confirmedTypes = _eventRatioDropStreaks
+                .Where(kvp => kvp.Value >= opts.EventRatioConsecutiveRuns)
+                .Select(kvp => kvp.Key)
+                .ToList();
+        }
+
+        var confirmed = dropped.Where(d => confirmedTypes.Contains(d.EventType)).ToList();
+        if (confirmed.Count == 0)
             return;
 
         lock (_lock)
@@ -186,20 +210,20 @@ public class HealthCheckJob(
                 return;
         }
 
-        var details = string.Join("\n", dropped.Select(d =>
+        var details = string.Join("\n", confirmed.Select(d =>
         {
             var recentCount = recent.GetValueOrDefault(d.EventType, 0);
             return $"- `{d.EventType}`: {recentCount} in last {opts.EventRatioRecentHours}h (expected ~{d.ExpectedInWindow:F1} for this time of day)";
         }));
 
         if (!await SendWebhookAsync(opts.WebhookUrl!,
-            $"**Event type ratio drop** — {dropped.Count} event type(s) below {opts.EventRatioDropThreshold:P0} of baseline:\n{details}"))
+            $"**Event type ratio drop** — {confirmed.Count} event type(s) below {opts.EventRatioDropThreshold:P0} of baseline for {opts.EventRatioConsecutiveRuns}+ runs:\n{details}"))
             return;
 
         lock (_lock) { _lastEventRatioAlert = now; }
 
         logger.LogWarning("Health check alert: event type ratio drop for {Types}",
-            string.Join(", ", dropped.Select(d => d.EventType)));
+            string.Join(", ", confirmed.Select(d => d.EventType)));
     }
 
     private async Task<bool> SendWebhookAsync(string webhookUrl, string message)
