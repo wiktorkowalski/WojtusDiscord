@@ -128,12 +128,38 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
             .Select(v => new { v.ReceivedAtUtc, v.ChannelDiscordIdAfter })
             .ToListAsync(ct);
 
+        var downtimes = await db.BotDowntimeIntervals.AsNoTracking()
+            .Select(d => new { d.StartedAtUtc, d.EndedAtUtc })
+            .ToListAsync(ct);
+
+        var now = DateTime.UtcNow;
         var totalMinutes = 0d;
         for (var i = 0; i < events.Count - 1; i++)
         {
-            if (events[i].ChannelDiscordIdAfter is not null)
+            if (events[i].ChannelDiscordIdAfter is null)
             {
-                totalMinutes += (events[i + 1].ReceivedAtUtc - events[i].ReceivedAtUtc).TotalMinutes;
+                continue;
+            }
+
+            var start = events[i].ReceivedAtUtc;
+            var end = events[i + 1].ReceivedAtUtc;
+
+            // Subtract any bot-downtime overlap: during an outage the user's "leave" can
+            // go unobserved, so the raw gap would over-credit voice time. We clamp out the
+            // blind windows rather than drop the whole segment (mirrors the SQL
+            // VoiceSegmentMinutes and the OnlineMinutesAsync downtime handling).
+            var downSeconds = downtimes.Sum(d =>
+            {
+                var overlapStart = start > d.StartedAtUtc ? start : d.StartedAtUtc;
+                var dEnd = d.EndedAtUtc ?? now;
+                var overlapEnd = end < dEnd ? end : dEnd;
+                return overlapEnd > overlapStart ? (overlapEnd - overlapStart).TotalSeconds : 0d;
+            });
+
+            var seconds = (end - start).TotalSeconds - downSeconds;
+            if (seconds > 0)
+            {
+                totalMinutes += seconds / 60.0;
             }
         }
 

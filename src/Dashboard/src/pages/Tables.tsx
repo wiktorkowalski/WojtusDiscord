@@ -136,12 +136,10 @@ function DetailPanel({ table }: { table: TableInfo }) {
   const columns = useQuery({
     queryKey: ['tables', 'columns', table.name],
     queryFn: () => tablesApi.columns(table.name),
-    enabled: table.populated,
   })
   const rows = useQuery({
     queryKey: ['tables', 'rows', table.name, page],
     queryFn: () => tablesApi.rows(table.name, { page, pageSize: PAGE_SIZE }),
-    enabled: table.populated,
     placeholderData: keepPreviousData,
   })
 
@@ -149,6 +147,13 @@ function DetailPanel({ table }: { table: TableInfo }) {
   const items = rows.data?.items ?? []
   const total = rows.data?.totalCount ?? table.rowCount
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+  // The table LIST reports APPROXIMATE row counts (pg_stat n_live_tup), which read 0
+  // for a freshly backfilled table until ANALYZE runs — so we always fetch and only
+  // treat a table as empty once the rows query has actually returned zero, never on
+  // the estimate (which previously made backfilled tables unreachable).
+  const loadedEmpty = rows.isSuccess && total === 0
+  const showEmpty = rows.isSuccess ? total === 0 : !table.populated
 
   return (
     <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
@@ -162,20 +167,20 @@ function DetailPanel({ table }: { table: TableInfo }) {
             entity <span style={{ fontFamily: mono, color: C.text }}>{table.entityName}</span> · {fmt(table.rowCount)} rows
           </div>
         </div>
-        {table.populated ? (
-          <span style={{ fontSize: 11.5, fontWeight: 600, color: C.green, background: 'rgba(59,165,93,.14)', padding: '4px 10px', borderRadius: 7, flexShrink: 0 }}>populated</span>
-        ) : (
+        {showEmpty ? (
           <span style={{ fontSize: 11.5, fontWeight: 600, color: C.faint, background: C.bg2, padding: '4px 10px', borderRadius: 7, flexShrink: 0 }}>empty</span>
+        ) : (
+          <span style={{ fontSize: 11.5, fontWeight: 600, color: C.green, background: 'rgba(59,165,93,.14)', padding: '4px 10px', borderRadius: 7, flexShrink: 0 }}>populated</span>
         )}
       </div>
 
-      {!table.populated && <EmptyState name={table.name} />}
+      {loadedEmpty && <EmptyState name={table.name} />}
 
-      {table.populated && (columns.isError || rows.isError) && (
+      {(columns.isError || rows.isError) && (
         <div style={{ padding: '40px 18px', color: C.red, fontSize: 13.5 }}>Failed to load table data.</div>
       )}
 
-      {table.populated && !columns.isError && !rows.isError && (
+      {!loadedEmpty && !columns.isError && !rows.isError && (
         <>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: cols.length > 4 ? 700 : 0 }}>

@@ -23,10 +23,13 @@ export function AreaChart({ data, w = 760, h = 240, color = C.blurple, pad = 28 
   const max = Math.max(...vals, 1)
   const iw = w - pad * 2
   const ih = h - pad * 1.4
-  const pts: Pt[] = vals.map((v, i) => [
-    pad + (i / (vals.length - 1)) * iw,
-    pad / 2 + ih - (v / max) * ih,
-  ])
+  const y = (v: number) => pad / 2 + ih - (v / max) * ih
+  // A single data point has no span to interpolate across (i/(n-1) = 0/0 = NaN,
+  // which propagates to a blank chart); render it as a flat full-width line.
+  const pts: Pt[] =
+    vals.length === 1
+      ? [[pad, y(vals[0])], [pad + iw, y(vals[0])]]
+      : vals.map((v, i) => [pad + (i / (vals.length - 1)) * iw, y(v)])
   const line = smoothPath(pts)
   const last = pts[pts.length - 1]
   const grid = [0, 0.25, 0.5, 0.75, 1]

@@ -31,7 +31,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
         }
 
         return PageAsync(
-            query.OrderByDescending(u => u.LastUpdatedUtc)
+            query.OrderByDescending(u => u.LastUpdatedUtc).ThenByDescending(u => u.Id)
                 .Select(u => new UserListDto(
                     u.Id, u.DiscordId, u.Username, u.GlobalName, u.IsBot, u.IsSystem,
                     u.FirstSeenUtc, u.LastUpdatedUtc, u.AvatarHash)),
@@ -82,7 +82,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
         [FromQuery] int page = 1, [FromQuery] int pageSize = DefaultPageSize, CancellationToken ct = default)
         => PageAsync(
             db.Channels.AsNoTracking()
-                .OrderBy(c => c.Position).ThenBy(c => c.Name)
+                .OrderBy(c => c.Position).ThenBy(c => c.Name).ThenBy(c => c.Id)
                 .Select(c => new ChannelListDto(
                     c.Id, c.DiscordId, c.Name, c.Type.ToString(), c.ParentDiscordId,
                     c.IsNsfw, c.Position, c.IsDeleted)),
@@ -123,7 +123,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
         [FromQuery] int page = 1, [FromQuery] int pageSize = DefaultPageSize, CancellationToken ct = default)
         => PageAsync(
             db.Members.AsNoTracking()
-                .OrderBy(m => m.User.Username)
+                .OrderBy(m => m.User.Username).ThenBy(m => m.Id)
                 .Select(m => new MemberListDto(
                     m.Id, m.UserId, m.User.DiscordId, m.User.Username, m.Nickname,
                     m.JoinedAtUtc, m.IsPending, m.TimeoutUntilUtc, m.User.AvatarHash, m.GuildAvatarHash)),
@@ -141,7 +141,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
         }
 
         return PageAsync(
-            query.OrderByDescending(m => m.CreatedAtUtc)
+            query.OrderByDescending(m => m.CreatedAtUtc).ThenByDescending(m => m.Id)
                 .Select(m => new MessageListDto(
                     m.Id, m.DiscordId, m.Content,
                     m.Author.DiscordId, m.Author.Username,

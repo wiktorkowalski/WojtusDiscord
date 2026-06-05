@@ -26,6 +26,40 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     private const string TodayStart =
         $"(date_trunc('day', now() AT TIME ZONE '{Tz}') AT TIME ZONE '{Tz}')";
 
+    // Shared query bodies: the home Overview tile and the dedicated Stats endpoint run
+    // the same aggregation with a different LIMIT, so each is defined once (append the
+    // limit at the call site) to keep the two in sync.
+    private const string TopChattersSql =
+        """
+        SELECT u.username, u.discord_id, count(*)::bigint, u.avatar_hash
+        FROM messages m JOIN users u ON m.author_id = u.id
+        GROUP BY u.id, u.username, u.discord_id, u.avatar_hash ORDER BY count(*) DESC LIMIT
+        """;
+
+    private const string TopEmojisSql =
+        """
+        SELECT emote_name, emote_discord_id, count(*)::bigint
+        FROM reaction_events WHERE event_type IN (0, 4)
+        GROUP BY emote_name, emote_discord_id ORDER BY count(*) DESC LIMIT
+        """;
+
+    // Per-channel message + present-reaction counts. Reactions are pre-aggregated in a
+    // single grouped subquery and LEFT JOINed (one row per channel) rather than a
+    // correlated per-row count(*), which scanned reaction_events once PER channel.
+    private const string ChannelActivitySql =
+        """
+        SELECT c.name, c.discord_id, count(m.id)::bigint AS msgs,
+               COALESCE(rc.reactions, 0)::bigint AS reactions
+        FROM channels c
+        LEFT JOIN messages m ON m.channel_id = c.id
+        LEFT JOIN (
+            SELECT channel_discord_id, count(*)::bigint AS reactions
+            FROM reaction_events WHERE event_type IN (0, 4)
+            GROUP BY channel_discord_id
+        ) rc ON rc.channel_discord_id = c.discord_id
+        GROUP BY c.id, c.name, c.discord_id, rc.reactions ORDER BY msgs DESC LIMIT
+        """;
+
     // ---- Overview (home dashboard) ----
 
     [HttpGet("overview")]
@@ -65,8 +99,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             r => (Users: r.GetInt64(0), Channels: r.GetInt64(1), Events: r.GetInt64(2)), ct);
 
         var voiceMinutes = await QuerySingleAsync(
-            """
-            SELECT COALESCE(round(SUM(EXTRACT(EPOCH FROM (next_ts - received_at_utc))) / 60.0), 0)::bigint
+            $"""
+            SELECT COALESCE(round(SUM({VoiceSegmentMinutes})), 0)::bigint
             FROM (
                 SELECT received_at_utc, channel_discord_id_after,
                        LEAD(received_at_utc) OVER (PARTITION BY user_discord_id ORDER BY received_at_utc) AS next_ts
@@ -77,37 +111,39 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             r => r.GetInt64(0), ct);
 
         var topChatter = await QuerySingleAsync(
-            """
-            SELECT u.username, u.discord_id, count(*)::bigint, u.avatar_hash
-            FROM messages m JOIN users u ON m.author_id = u.id
-            GROUP BY u.id, u.username, u.discord_id, u.avatar_hash ORDER BY count(*) DESC LIMIT 1
-            """,
+            $"{TopChattersSql} 1",
             r => new UserStatDto(NullableString(r, 0), Snowflake(r, 1), r.GetInt64(2), NullableString(r, 3)), ct);
 
         var topChannel = await QuerySingleAsync(
-            """
-            SELECT c.name, c.discord_id, count(m.id)::bigint AS msgs,
-                   (SELECT count(*) FROM reaction_events r
-                    WHERE r.channel_discord_id = c.discord_id AND r.event_type IN (0, 4))::bigint
-            FROM channels c LEFT JOIN messages m ON m.channel_id = c.id
-            GROUP BY c.id, c.name, c.discord_id ORDER BY msgs DESC LIMIT 1
-            """,
+            $"{ChannelActivitySql} 1",
             r => new ChannelActivityDto(r.GetString(0), Snowflake(r, 1), r.GetInt64(2), r.GetInt64(3)), ct);
 
+        // Dense 30-CET-day series (today + prior 29), zero-filled. The cutoff is the
+        // UTC instant of the earliest CET day's midnight (not now()-30d), so the first
+        // bucket isn't understated by the UTC/CET offset; missing days render as 0 so the
+        // index-positioned area chart isn't compressed.
         var messagesDaily = await QueryAsync(
             $"""
-            SELECT date_trunc('day', created_at_utc AT TIME ZONE '{Tz}')::date::text, count(*)::bigint
-            FROM messages WHERE created_at_utc >= now() - interval '30 days'
-            GROUP BY 1 ORDER BY 1
+            WITH days AS (
+                SELECT generate_series(
+                    date_trunc('day', now() AT TIME ZONE '{Tz}') - interval '29 days',
+                    date_trunc('day', now() AT TIME ZONE '{Tz}'),
+                    interval '1 day')::date AS d
+            ),
+            counts AS (
+                SELECT date_trunc('day', created_at_utc AT TIME ZONE '{Tz}')::date AS d, count(*)::bigint AS c
+                FROM messages
+                WHERE created_at_utc >= ((date_trunc('day', now() AT TIME ZONE '{Tz}') - interval '29 days') AT TIME ZONE '{Tz}')
+                GROUP BY 1
+            )
+            SELECT days.d::text, COALESCE(counts.c, 0)::bigint
+            FROM days LEFT JOIN counts ON counts.d = days.d
+            ORDER BY days.d
             """,
             r => new DailyPointDto(r.GetString(0), r.GetInt64(1)), ct);
 
         var topEmojis = await QueryAsync(
-            """
-            SELECT emote_name, emote_discord_id, count(*)::bigint
-            FROM reaction_events WHERE event_type IN (0, 4)
-            GROUP BY emote_name, emote_discord_id ORDER BY count(*) DESC LIMIT 5
-            """,
+            $"{TopEmojisSql} 5",
             r =>
             {
                 var emoteId = NullableSnowflake(r, 1);
@@ -152,11 +188,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
 
     [HttpGet("people/top-messages")]
     public Task<List<UserStatDto>> TopMessages(CancellationToken ct) => QueryAsync(
-        """
-        SELECT u.username, u.discord_id, count(*)::bigint, u.avatar_hash
-        FROM messages m JOIN users u ON m.author_id = u.id
-        GROUP BY u.id, u.username, u.discord_id, u.avatar_hash ORDER BY count(*) DESC LIMIT 20
-        """,
+        $"{TopChattersSql} 20",
         r => new UserStatDto(NullableString(r, 0), Snowflake(r, 1), r.GetInt64(2), NullableString(r, 3)), ct);
 
     [HttpGet("people/top-reactions-given")]
@@ -188,9 +220,9 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     /// </summary>
     [HttpGet("people/voice-leaderboard")]
     public Task<List<VoiceStatDto>> VoiceLeaderboard(CancellationToken ct) => QueryAsync(
-        """
+        $"""
         SELECT u.username, v.user_discord_id,
-               round(SUM(EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc))) / 60.0)::bigint AS minutes,
+               round(SUM({VoiceSegmentMinutes}))::bigint AS minutes,
                u.avatar_hash
         FROM (
             SELECT user_discord_id, received_at_utc, channel_discord_id_after,
@@ -207,24 +239,14 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
 
     [HttpGet("places/channel-activity")]
     public Task<List<ChannelActivityDto>> ChannelActivity(CancellationToken ct) => QueryAsync(
-        """
-        SELECT c.name, c.discord_id, count(m.id)::bigint AS msgs,
-               (SELECT count(*) FROM reaction_events r
-                WHERE r.channel_discord_id = c.discord_id AND r.event_type IN (0, 4))::bigint AS reactions
-        FROM channels c LEFT JOIN messages m ON m.channel_id = c.id
-        GROUP BY c.id, c.name, c.discord_id ORDER BY msgs DESC LIMIT 50
-        """,
+        $"{ChannelActivitySql} 50",
         r => new ChannelActivityDto(r.GetString(0), Snowflake(r, 1), r.GetInt64(2), r.GetInt64(3)), ct);
 
     // ---- Behavior ----
 
     [HttpGet("behavior/top-emojis")]
     public Task<List<EmojiStatDto>> TopEmojis(CancellationToken ct) => QueryAsync(
-        """
-        SELECT emote_name, emote_discord_id, count(*)::bigint
-        FROM reaction_events WHERE event_type IN (0, 4)
-        GROUP BY emote_name, emote_discord_id ORDER BY count(*) DESC LIMIT 25
-        """,
+        $"{TopEmojisSql} 25",
         r =>
         {
             var emoteId = NullableSnowflake(r, 1);
@@ -347,7 +369,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         var voice = await LeaderAsync(
             $"""
             SELECT u.username, v.user_discord_id, u.avatar_hash,
-                   round(SUM(EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc))) / 60.0)::bigint
+                   round(SUM({VoiceSegmentMinutes}))::bigint
             FROM (
                 SELECT user_discord_id, received_at_utc, channel_discord_id_after,
                        LEAD(received_at_utc) OVER (PARTITION BY user_discord_id ORDER BY received_at_utc) AS next_ts
@@ -506,7 +528,13 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
                     "Last 30 days", "Previous 30 days");
             default: // all
                 var start = launch ?? now;
-                var days = Math.Max(1, (int)Math.Ceiling((now - start).TotalDays) + 1);
+                // Count CET calendar days inclusive (launch-day..today). A UTC-instant
+                // Ceiling()+1 could prepend a spurious leading zero-day depending on the
+                // time-of-day, misaligning the spark from the generate_series buckets.
+                var tz = TimeZoneInfo.FindSystemTimeZoneById(Tz);
+                var launchDay = TimeZoneInfo.ConvertTimeFromUtc(start, tz).Date;
+                var nowDay = TimeZoneInfo.ConvertTimeFromUtc(now, tz).Date;
+                var days = Math.Max(1, (nowDay - launchDay).Days + 1);
                 return (start, now, null, null, days, "All time", string.Empty);
         }
     }
@@ -540,6 +568,25 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         return await QueryAsync(sql, r => r.GetInt64(0), ct);
     }
 
+    // Voice minutes credited for one session segment [v.received_at_utc, v.next_ts),
+    // MINUS any overlap with a bot_downtime_intervals window (open intervals coalesced
+    // to now()). During an outage a "leave" can go unobserved, so the raw gap to the
+    // user's next event would otherwise count the whole blind window as voice time (the
+    // 2026-05 blackout would credit ~14k phantom minutes to anyone left in a channel).
+    // We SUBTRACT the downtime overlap rather than drop the segment, so a legitimate
+    // multi-hour call spanning a brief restart is preserved. Every voice query aliases
+    // the sessionized rows as `v`. Mirrors the downtime handling in OnlineMinutesMetricAsync.
+    private const string VoiceSegmentMinutes =
+        """
+        GREATEST(0, EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc)) - COALESCE((
+            SELECT SUM(EXTRACT(EPOCH FROM (
+                LEAST(v.next_ts, COALESCE(d.ended_at_utc, now()))
+              - GREATEST(v.received_at_utc, d.started_at_utc))))
+            FROM bot_downtime_intervals d
+            WHERE v.received_at_utc < COALESCE(d.ended_at_utc, now())
+              AND v.next_ts > d.started_at_utc), 0)) / 60.0
+        """;
+
     // Voice minutes: sessionize via LEAD() and count a segment when its start is inside
     // the window. Spark buckets segment minutes by the CET day of the segment start.
     // Stays raw: whole-guild LEAD() window sessionization — a LINQ version would pull all
@@ -556,7 +603,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
 
         async Task<long> Sum(DateTime start, DateTime end) => await ScalarAsync(
             $"""
-            SELECT COALESCE(round(SUM(EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc))) / 60.0), 0)::bigint
+            SELECT COALESCE(round(SUM({VoiceSegmentMinutes})), 0)::bigint
             FROM ({sessions}) v
             WHERE v.channel_discord_id_after IS NOT NULL AND v.next_ts IS NOT NULL
               AND v.received_at_utc BETWEEN {Sql(start)} AND {Sql(end)}
@@ -582,7 +629,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             ),
             seg AS (
                 SELECT date_trunc('day', v.received_at_utc AT TIME ZONE '{Tz}')::date AS d,
-                       SUM(EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc)) / 60.0) AS m
+                       SUM({VoiceSegmentMinutes}) AS m
                 FROM ({sessions}) v
                 WHERE v.channel_discord_id_after IS NOT NULL AND v.next_ts IS NOT NULL
                 GROUP BY 1

@@ -29,10 +29,12 @@ export function Sparkline({
   const vals = data.map((d) => (typeof d === 'number' ? d : d.count))
   const max = Math.max(...vals, 1)
   const min = Math.min(...vals, 0)
-  const pts: Pt[] = vals.map((v, i) => [
-    (i / (vals.length - 1)) * w,
-    h - 2 - ((v - min) / (max - min || 1)) * (h - 4),
-  ])
+  const y = (v: number) => h - 2 - ((v - min) / (max - min || 1)) * (h - 4)
+  // Single point: i/(n-1) = 0/0 = NaN; render a flat full-width line, not a blank.
+  const pts: Pt[] =
+    vals.length === 1
+      ? [[0, y(vals[0])], [w, y(vals[0])]]
+      : vals.map((v, i) => [(i / (vals.length - 1)) * w, y(v)])
   const line = smoothPath(pts)
 
   return (

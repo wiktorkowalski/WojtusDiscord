@@ -50,8 +50,8 @@ export function HeatGrid({ data, cell = 13, gap = 3, accent = C.blurple }: HeatG
                     width: cell,
                     height: cell,
                     borderRadius: 3,
-                    background: t < 0.04 ? C.bg : accent,
-                    opacity: t < 0.04 ? 1 : 0.18 + t * 0.82,
+                    background: v === 0 ? C.bg : accent,
+                    opacity: v === 0 ? 1 : Math.max(0.22, 0.18 + t * 0.82),
                   }}
                 />
               )
