@@ -12,7 +12,8 @@ public sealed record UserListDto(
     bool IsBot,
     bool IsSystem,
     DateTime FirstSeenUtc,
-    DateTime LastUpdatedUtc);
+    DateTime LastUpdatedUtc,
+    string? AvatarHash);
 
 public sealed record NameChangeDto(
     string? UsernameBefore,
@@ -32,7 +33,8 @@ public sealed record UserDetailDto(
     DateTime FirstSeenUtc,
     DateTime LastUpdatedUtc,
     int MembershipCount,
-    IReadOnlyList<NameChangeDto> NameHistory);
+    IReadOnlyList<NameChangeDto> NameHistory,
+    string? AvatarHash);
 
 public sealed record ChannelListDto(
     Guid Id,
@@ -64,7 +66,9 @@ public sealed record MemberListDto(
     string? Nickname,
     DateTime? JoinedAtUtc,
     bool IsPending,
-    DateTime? TimeoutUntilUtc);
+    DateTime? TimeoutUntilUtc,
+    string? AvatarHash,
+    string? GuildAvatarHash);
 
 public sealed record MessageListDto(
     Guid Id,
@@ -78,7 +82,8 @@ public sealed record MessageListDto(
     bool HasEmbeds,
     bool IsDeleted,
     DateTime CreatedAtUtc,
-    DateTime? EditedAtUtc);
+    DateTime? EditedAtUtc,
+    string? AuthorAvatarHash);
 
 public sealed record MessageEditDto(
     string? ContentBefore,

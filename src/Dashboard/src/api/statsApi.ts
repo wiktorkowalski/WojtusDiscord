@@ -3,8 +3,18 @@ import { fetchApi } from './client'
 export interface VolumeDaily { day: string; count: number }
 export interface VolumeByType { eventType: string; count: number }
 export interface VolumeHourly { hour: number; count: number }
-export interface UserStat { username: string | null; userDiscordId: string; count: number }
-export interface VoiceStat { username: string | null; userDiscordId: string; minutes: number }
+export interface UserStat {
+  username: string | null
+  userDiscordId: string
+  count: number
+  avatarHash?: string | null
+}
+export interface VoiceStat {
+  username: string | null
+  userDiscordId: string
+  minutes: number
+  avatarHash?: string | null
+}
 export interface ChannelActivity {
   channelName: string
   channelDiscordId: string

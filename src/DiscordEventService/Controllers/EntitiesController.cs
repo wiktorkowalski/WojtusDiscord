@@ -34,7 +34,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
             query.OrderByDescending(u => u.LastUpdatedUtc)
                 .Select(u => new UserListDto(
                     u.Id, u.DiscordId, u.Username, u.GlobalName, u.IsBot, u.IsSystem,
-                    u.FirstSeenUtc, u.LastUpdatedUtc)),
+                    u.FirstSeenUtc, u.LastUpdatedUtc, u.AvatarHash)),
             page, pageSize, ct);
     }
 
@@ -54,6 +54,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
                 u.IsSystem,
                 u.FirstSeenUtc,
                 u.LastUpdatedUtc,
+                u.AvatarHash,
                 MembershipCount = u.Memberships.Count,
             })
             .FirstOrDefaultAsync(ct);
@@ -72,7 +73,8 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
 
         return Ok(new UserDetailDto(
             user.Id, user.DiscordId, user.Username, user.GlobalName, user.Discriminator,
-            user.IsBot, user.IsSystem, user.FirstSeenUtc, user.LastUpdatedUtc, user.MembershipCount, history));
+            user.IsBot, user.IsSystem, user.FirstSeenUtc, user.LastUpdatedUtc, user.MembershipCount, history,
+            user.AvatarHash));
     }
 
     [HttpGet("channels")]
@@ -124,7 +126,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
                 .OrderBy(m => m.User.Username)
                 .Select(m => new MemberListDto(
                     m.Id, m.UserId, m.User.DiscordId, m.User.Username, m.Nickname,
-                    m.JoinedAtUtc, m.IsPending, m.TimeoutUntilUtc)),
+                    m.JoinedAtUtc, m.IsPending, m.TimeoutUntilUtc, m.User.AvatarHash, m.GuildAvatarHash)),
             page, pageSize, ct);
 
     [HttpGet("messages")]
@@ -144,7 +146,8 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
                     m.Id, m.DiscordId, m.Content,
                     m.Author.DiscordId, m.Author.Username,
                     m.Channel.DiscordId, m.Channel.Name,
-                    m.HasAttachments, m.HasEmbeds, m.IsDeleted, m.CreatedAtUtc, m.EditedAtUtc)),
+                    m.HasAttachments, m.HasEmbeds, m.IsDeleted, m.CreatedAtUtc, m.EditedAtUtc,
+                    m.Author.AvatarHash)),
             page, pageSize, ct);
     }
 

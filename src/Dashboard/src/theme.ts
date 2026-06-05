@@ -34,3 +34,24 @@ export const chartPalette = [
 export function colorForIndex(i: number): string {
   return chartPalette[i % chartPalette.length]
 }
+
+// Full prototype palette ("C") — matches the redesign mock 1:1. Used by the
+// new presentational primitives in src/ui/* (inline styles, pixel-faithful).
+export const C = {
+  bg: '#131417',
+  bg1: '#1a1b1e',
+  bg2: '#202125',
+  card: '#25262b',
+  border: '#2e2f35',
+  borderSoft: '#34353c',
+  blurple: '#5865f2',
+  teal: '#2dd4bf',
+  fuchsia: '#eb459e',
+  green: '#3ba55d',
+  amber: '#faa61a',
+  red: '#ed4245',
+  blue: '#00a8fc',
+  text: '#e7e9ec',
+  muted: '#a8adb6',
+  faint: '#6f747d',
+} as const

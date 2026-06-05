@@ -10,6 +10,7 @@ export interface UserList {
   isSystem: boolean
   firstSeenUtc: string
   lastUpdatedUtc: string
+  avatarHash?: string | null
 }
 
 export interface NameChange {
@@ -51,6 +52,8 @@ export interface MemberList {
   joinedAtUtc: string | null
   isPending: boolean
   timeoutUntilUtc: string | null
+  avatarHash?: string | null
+  guildAvatarHash?: string | null
 }
 
 export interface MessageList {
@@ -66,6 +69,7 @@ export interface MessageList {
   isDeleted: boolean
   createdAtUtc: string
   editedAtUtc: string | null
+  authorAvatarHash?: string | null
 }
 
 export interface MessageEdit {
