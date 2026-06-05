@@ -407,3 +407,6 @@ src/DiscordEventService/wwwroot/
 
 # Playwright MCP scratch (screenshots/snapshots from local visual testing)
 .playwright-mcp/
+# Stray local screenshots saved to a working dir during visual testing
+/*.png
+src/Dashboard/*.png
