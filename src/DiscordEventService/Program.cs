@@ -223,13 +223,21 @@ builder.Services.AddScoped<MemeSampleService>();
 builder.Services.AddScoped<AttachmentUrlRefreshService>();
 builder.Services.AddScoped<MemeBenchmarkJob>();
 
-// Hangfire
+// Hangfire. InvisibilityTimeout must exceed the longest-running job: at the
+// default (~30 min) a long benchmark/indexing run gets presumed dead near the
+// end, re-queued, and the original execution cancelled — observed live on the
+// 100-image meme benchmark (#219), restarting it from scratch in a pay-per-run
+// loop. Meme indexing over the full corpus (#221) runs even longer.
 builder.Services.AddHangfire(config => config
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
     .UseSimpleAssemblyNameTypeSerializer()
     .UseRecommendedSerializerSettings()
-    .UsePostgreSqlStorage(options =>
-        options.UseNpgsqlConnection(connectionString)));
+    .UsePostgreSqlStorage(
+        options => options.UseNpgsqlConnection(connectionString),
+        new Hangfire.PostgreSql.PostgreSqlStorageOptions
+        {
+            InvisibilityTimeout = TimeSpan.FromHours(6)
+        }));
 
 builder.Services.AddHangfireServer(options =>
 {
