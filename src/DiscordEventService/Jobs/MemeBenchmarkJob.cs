@@ -29,6 +29,11 @@ public sealed class MemeBenchmarkJob(
     public static string ReportDirectory(IWebHostEnvironment environment) =>
         Path.Combine(environment.ContentRootPath, "data", "meme-benchmark");
 
+    // Links files must live here — the from-file endpoint accepts a bare file
+    // name, never a path, so clients can't point the job at arbitrary files.
+    public static string InputDirectory(IWebHostEnvironment environment) =>
+        Path.Combine(environment.ContentRootPath, "data", "meme-benchmark-inputs");
+
     public async Task RunAsync(int sampleSize, CancellationToken cancellationToken)
     {
         var sample = await sampleService.SampleAsync(sampleSize, cancellationToken);

@@ -52,20 +52,25 @@ public static class MemeBenchmarkEndpoints
 
     // Local-run variant (#219): consumes a links file exported from the prod DB
     // (JSON array of MemeSampleItem) so the benchmark needs no prod deployment.
+    // Takes a bare file name resolved under the fixed inputs directory — never
+    // a client-supplied path (file-read primitive otherwise).
     private static IResult StartBenchmarkFromFile(
-        string path,
+        string file,
         int? sampleSize,
         IOptions<OpenRouterOptions> openRouterOptions,
+        IWebHostEnvironment environment,
         IBackgroundJobClient backgroundJobClient)
     {
         if (!openRouterOptions.Value.IsConfigured)
             return Results.BadRequest(new { error = "OpenRouter:ApiKey is not configured" });
 
-        if (!File.Exists(path))
-            return Results.BadRequest(new { error = $"Links file not found: {path}" });
+        var inputRoot = Path.GetFullPath(MemeBenchmarkJob.InputDirectory(environment));
+        var resolved = Path.GetFullPath(Path.Combine(inputRoot, Path.GetFileName(file)));
+        if (!resolved.StartsWith(inputRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal) || !File.Exists(resolved))
+            return Results.BadRequest(new { error = $"Links file '{Path.GetFileName(file)}' not found in {inputRoot}" });
 
         var size = Math.Clamp(sampleSize ?? 100, 1, 500);
-        var jobId = backgroundJobClient.Enqueue<MemeBenchmarkJob>(j => j.RunFromFileAsync(path, size, CancellationToken.None));
+        var jobId = backgroundJobClient.Enqueue<MemeBenchmarkJob>(j => j.RunFromFileAsync(resolved, size, CancellationToken.None));
 
         return Results.Accepted("/api/ops/meme-benchmark/report", new BenchmarkStartResponse
         {

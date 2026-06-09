@@ -410,3 +410,5 @@ src/DiscordEventService/wwwroot/
 # Stray local screenshots saved to a working dir during visual testing
 /*.png
 src/Dashboard/*.png
+# Meme benchmark local artifacts (links-file inputs + generated reports)
+src/DiscordEventService/data/
