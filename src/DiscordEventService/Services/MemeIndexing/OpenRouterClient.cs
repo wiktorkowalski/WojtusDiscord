@@ -92,6 +92,9 @@ public sealed class OpenRouterClient(
                     }
                 }
             },
+            // No reasoning override: effort=low made gemini-2.5-flash return
+            // empty content; the raised max_tokens budget is what thinking
+            // models actually need.
             response_format = ResponseSchema,
             max_tokens = opts.MaxOutputTokens,
             temperature = 0.2,
@@ -159,6 +162,10 @@ public sealed class OpenRouterClient(
         {
             return MemeAnalysisResult.Refusal(choice.Message.Refusal ?? "content_filter");
         }
+
+        if (string.Equals(choice.FinishReason, "length", StringComparison.OrdinalIgnoreCase))
+            return MemeAnalysisResult.Failed(
+                "output truncated (finish_reason=length) — raise OpenRouter:MaxOutputTokens", isTransient: false);
 
         if (string.IsNullOrWhiteSpace(choice.Message.Content))
             return MemeAnalysisResult.Failed($"empty content (finish_reason={choice.FinishReason})", isTransient: true);

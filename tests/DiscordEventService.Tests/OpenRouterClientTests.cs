@@ -83,6 +83,19 @@ public sealed class OpenRouterClientTests
     }
 
     [Fact]
+    public async Task AnalyzeImageAsync_OnLengthTruncation_NamesTheCause()
+    {
+        var client = NewClient(_ => Json(HttpStatusCode.OK,
+            CompletionBody("{\"description_pl\":\"truncat", finishReason: "length", cost: null)));
+
+        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", CancellationToken.None);
+
+        Assert.Equal(MemeAnalysisOutcome.Error, result.Outcome);
+        Assert.False(result.IsTransient);
+        Assert.Contains("truncated", result.Error);
+    }
+
+    [Fact]
     public async Task AnalyzeImageAsync_OnSchemaViolatingContent_ReturnsNonTransientError()
     {
         var client = NewClient(_ => Json(HttpStatusCode.OK,

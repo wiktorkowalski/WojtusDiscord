@@ -49,8 +49,15 @@ builder.Services.AddOptions<HealthCheckOptions>()
 
 // Meme indexing (#218): both intentionally boot-safe when unconfigured — the
 // benchmark/indexing endpoints reject with 400 instead of failing startup.
+// OPENROUTER_API_KEY (the ecosystem-conventional name) is accepted as a
+// fallback for OpenRouter__ApiKey.
 builder.Services.AddOptions<OpenRouterOptions>()
-    .Bind(builder.Configuration.GetSection(OpenRouterOptions.SectionName));
+    .Bind(builder.Configuration.GetSection(OpenRouterOptions.SectionName))
+    .PostConfigure(options =>
+    {
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
+            options.ApiKey = builder.Configuration["OPENROUTER_API_KEY"];
+    });
 
 builder.Services.AddOptions<MemeIndexOptions>()
     .Bind(builder.Configuration.GetSection(MemeIndexOptions.SectionName));
