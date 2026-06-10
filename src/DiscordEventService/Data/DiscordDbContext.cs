@@ -86,9 +86,17 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     // Bot heartbeats (single-row liveness signal for power-loss detection)
     public DbSet<BotHeartbeatEntity> BotHeartbeats => Set<BotHeartbeatEntity>();
 
+    // Indexed memes (#218): vision metadata per meme-channel image attachment
+    public DbSet<MemeIndexEntity> MemeIndex => Set<MemeIndexEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // Meme search (#220, ADR-0005): unaccent feeds f_unaccent inside the
+        // meme_index generated columns; pg_trgm backs the trigram GIN index.
+        modelBuilder.HasPostgresExtension("unaccent");
+        modelBuilder.HasPostgresExtension("pg_trgm");
 
         // Apply snowflake converter to all ulong properties
         var snowflakeConverter = new ValueConverter<ulong, long>(
