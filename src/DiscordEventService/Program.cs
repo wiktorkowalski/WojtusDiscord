@@ -223,11 +223,14 @@ builder.Services.AddScoped<MemeSampleService>();
 builder.Services.AddScoped<AttachmentUrlRefreshService>();
 builder.Services.AddScoped<MemeBenchmarkJob>();
 
-// Hangfire. InvisibilityTimeout must exceed the longest-running job: at the
-// default (~30 min) a long benchmark/indexing run gets presumed dead near the
-// end, re-queued, and the original execution cancelled — observed live on the
-// 100-image meme benchmark (#219), restarting it from scratch in a pay-per-run
-// loop. Meme indexing over the full corpus (#221) runs even longer.
+// Hangfire. With a fixed InvisibilityTimeout a job outliving it gets presumed
+// dead, re-queued, and the original execution cancelled — observed live on the
+// 28-min meme benchmark (#219), restarting it from scratch in a pay-per-run
+// loop. Sliding mode instead heartbeats the fetched timestamp while the worker
+// is alive, so arbitrarily long jobs (full-corpus indexing, #221) are safe and
+// the timeout only governs how fast a genuinely crashed worker's job is
+// re-picked. Sliding requires the storage background processes — incompatible
+// with BackgroundJobServerOptions.IsLightweightServer.
 builder.Services.AddHangfire(config => config
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
     .UseSimpleAssemblyNameTypeSerializer()
@@ -236,7 +239,8 @@ builder.Services.AddHangfire(config => config
         options => options.UseNpgsqlConnection(connectionString),
         new Hangfire.PostgreSql.PostgreSqlStorageOptions
         {
-            InvisibilityTimeout = TimeSpan.FromHours(6)
+            UseSlidingInvisibilityTimeout = true,
+            InvisibilityTimeout = TimeSpan.FromMinutes(15)
         }));
 
 builder.Services.AddHangfireServer(options =>
