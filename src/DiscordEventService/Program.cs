@@ -5,6 +5,7 @@ using DiscordEventService.Infrastructure;
 using DiscordEventService.Jobs;
 using DiscordEventService.Services;
 using DiscordEventService.Services.EventHandlers;
+using DiscordEventService.Services.MemeIndexing;
 using DiscordEventService.Services.Pipeline;
 using DotNetEnv;
 using DSharpPlus;
@@ -45,6 +46,21 @@ builder.Services.AddOptions<DiscordOptions>()
 
 builder.Services.AddOptions<HealthCheckOptions>()
     .Bind(builder.Configuration.GetSection(HealthCheckOptions.SectionName));
+
+// Meme indexing (#218): both intentionally boot-safe when unconfigured — the
+// benchmark/indexing endpoints reject with 400 instead of failing startup.
+// OPENROUTER_API_KEY (the ecosystem-conventional name) is accepted as a
+// fallback for OpenRouter__ApiKey.
+builder.Services.AddOptions<OpenRouterOptions>()
+    .Bind(builder.Configuration.GetSection(OpenRouterOptions.SectionName))
+    .PostConfigure(options =>
+    {
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
+            options.ApiKey = builder.Configuration["OPENROUTER_API_KEY"];
+    });
+
+builder.Services.AddOptions<MemeIndexOptions>()
+    .Bind(builder.Configuration.GetSection(MemeIndexOptions.SectionName));
 
 var connectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? throw new InvalidOperationException("ConnectionStrings:Postgres is required");
@@ -183,13 +199,45 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<HealthCheckJob>();
 
-// Hangfire
+// Meme indexing (#219): OpenRouter vision calls + Discord CDN image downloads.
+builder.Services.AddHttpClient(OpenRouterClient.HttpClientName)
+    .ConfigureHttpClient((sp, client) =>
+    {
+        var openRouter = sp.GetRequiredService<IOptions<OpenRouterOptions>>().Value;
+        client.BaseAddress = new Uri(openRouter.BaseUrl.TrimEnd('/') + "/");
+        client.Timeout = TimeSpan.FromMinutes(2);
+    });
+
+builder.Services.AddHttpClient(MemeBenchmarkJob.DownloadHttpClientName)
+    .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromMinutes(1));
+
+builder.Services.AddHttpClient(AttachmentUrlRefreshService.HttpClientName)
+    .ConfigureHttpClient(client =>
+    {
+        client.BaseAddress = new Uri("https://discord.com/api/v10/");
+        client.Timeout = TimeSpan.FromSeconds(30);
+    });
+
+builder.Services.AddScoped<OpenRouterClient>();
+builder.Services.AddScoped<MemeSampleService>();
+builder.Services.AddScoped<AttachmentUrlRefreshService>();
+builder.Services.AddScoped<MemeBenchmarkJob>();
+
+// Hangfire. InvisibilityTimeout must exceed the longest-running job: at the
+// default (~30 min) a long benchmark/indexing run gets presumed dead near the
+// end, re-queued, and the original execution cancelled — observed live on the
+// 100-image meme benchmark (#219), restarting it from scratch in a pay-per-run
+// loop. Meme indexing over the full corpus (#221) runs even longer.
 builder.Services.AddHangfire(config => config
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
     .UseSimpleAssemblyNameTypeSerializer()
     .UseRecommendedSerializerSettings()
-    .UsePostgreSqlStorage(options =>
-        options.UseNpgsqlConnection(connectionString)));
+    .UsePostgreSqlStorage(
+        options => options.UseNpgsqlConnection(connectionString),
+        new Hangfire.PostgreSql.PostgreSqlStorageOptions
+        {
+            InvisibilityTimeout = TimeSpan.FromHours(6)
+        }));
 
 builder.Services.AddHangfireServer(options =>
 {
@@ -271,6 +319,9 @@ app.MapBackfillEndpoints();
 
 // Operations API
 app.MapOpsEndpoints();
+
+// Meme benchmark API (#219)
+app.MapMemeBenchmarkEndpoints();
 
 // SPA fallback — LAST so it only catches client-side routes (any non-/api,
 // non-/health, non-/hangfire GET) and serves index.html for deep links.
