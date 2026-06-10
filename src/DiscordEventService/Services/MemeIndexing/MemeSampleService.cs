@@ -8,6 +8,8 @@ namespace DiscordEventService.Services.MemeIndexing;
 
 // One image attachment in a meme channel: snowflakes for the jump link plus
 // the stored (expired) CDN URL, which AttachmentUrlRefreshService re-signs.
+// The trailing defaults keep pre-#221 benchmark links files deserializable —
+// old exports simply lack MessageId/FileSizeBytes.
 public sealed record MemeSampleItem(
     ulong GuildDiscordId,
     ulong ChannelDiscordId,
@@ -15,7 +17,9 @@ public sealed record MemeSampleItem(
     ulong AttachmentDiscordId,
     string FileName,
     DateTime CreatedAtUtc,
-    string StoredUrl);
+    string StoredUrl,
+    Guid MessageId = default,
+    long FileSizeBytes = 0);
 
 public sealed class MemeSampleService(
     DiscordDbContext db,
@@ -66,7 +70,9 @@ public sealed class MemeSampleService(
         return picked;
     }
 
-    private async Task<List<MemeSampleItem>> GetCandidatesAsync(CancellationToken cancellationToken)
+    // Also the candidate source for the indexing job (#221) — every image
+    // attachment in the configured meme channels, no sampling.
+    public async Task<List<MemeSampleItem>> GetCandidatesAsync(CancellationToken cancellationToken)
     {
         var channelIds = options.Value.ChannelIds;
 
@@ -80,6 +86,7 @@ public sealed class MemeSampleService(
                       && m.AttachmentsJson != null
                 select new
                 {
+                    m.Id,
                     m.DiscordId,
                     m.AttachmentsJson,
                     m.CreatedAtUtc,
@@ -114,7 +121,9 @@ public sealed class MemeSampleService(
                     a.Id,
                     a.FileName!,
                     row.CreatedAtUtc,
-                    a.Url!)));
+                    a.Url!,
+                    row.Id,
+                    a.FileSize)));
         }
 
         return candidates;

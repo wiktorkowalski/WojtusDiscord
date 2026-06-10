@@ -222,6 +222,7 @@ builder.Services.AddScoped<OpenRouterClient>();
 builder.Services.AddScoped<MemeSampleService>();
 builder.Services.AddScoped<AttachmentUrlRefreshService>();
 builder.Services.AddScoped<MemeBenchmarkJob>();
+builder.Services.AddScoped<MemeIndexingJob>();
 
 // Hangfire. With a fixed InvisibilityTimeout a job outliving it gets presumed
 // dead, re-queued, and the original execution cancelled — observed live on the
@@ -326,6 +327,7 @@ app.MapOpsEndpoints();
 
 // Meme benchmark API (#219)
 app.MapMemeBenchmarkEndpoints();
+app.MapMemeIndexEndpoints();
 
 // SPA fallback — LAST so it only catches client-side routes (any non-/api,
 // non-/health, non-/hangfire GET) and serves index.html for deep links.

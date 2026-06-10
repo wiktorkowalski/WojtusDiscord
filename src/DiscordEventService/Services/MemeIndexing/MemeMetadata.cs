@@ -50,8 +50,12 @@ public sealed record MemeAnalysisResult
     public string? Error { get; init; }
     public bool IsTransient { get; init; }
 
-    public static MemeAnalysisResult Success(MemeMetadata metadata, MemeAnalysisUsage usage) =>
-        new MemeAnalysisResult { Outcome = MemeAnalysisOutcome.Success, Metadata = metadata, Usage = usage };
+    // The model's verbatim structured-output JSON — provenance for
+    // meme_index.raw_response_json (#221).
+    public string? RawContent { get; init; }
+
+    public static MemeAnalysisResult Success(MemeMetadata metadata, MemeAnalysisUsage usage, string? rawContent = null) =>
+        new MemeAnalysisResult { Outcome = MemeAnalysisOutcome.Success, Metadata = metadata, Usage = usage, RawContent = rawContent };
 
     public static MemeAnalysisResult Refusal(string reason) =>
         new MemeAnalysisResult { Outcome = MemeAnalysisOutcome.Refusal, Error = reason };
