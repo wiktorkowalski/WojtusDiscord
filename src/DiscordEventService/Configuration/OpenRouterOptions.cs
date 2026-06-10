@@ -7,9 +7,11 @@ public sealed class OpenRouterOptions
     public string? ApiKey { get; set; }
     public string BaseUrl { get; set; } = "https://openrouter.ai/api/v1";
 
-    // The model used for indexing proper. Empty until the §1 benchmark decides
-    // the winner (#219); benchmark runs ignore this and use BenchmarkModels.
-    public string Model { get; set; } = "";
+    // The model used for indexing proper — the #219 benchmark winner (100/100,
+    // best template/source recognition, ~$0.16/100 images). Preview id; if
+    // renamed upstream this is config + stored per row, so the swap is cheap.
+    // Benchmark runs ignore this and use BenchmarkModels.
+    public string Model { get; set; } = "google/gemini-3-flash-preview";
 
     public string[] BenchmarkModels { get; set; } =
     [
