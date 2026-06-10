@@ -410,5 +410,8 @@ src/DiscordEventService/wwwroot/
 # Stray local screenshots saved to a working dir during visual testing
 /*.png
 src/Dashboard/*.png
-# Meme benchmark local artifacts (links-file inputs + generated reports)
-src/DiscordEventService/data/
+# Meme benchmark local artifacts (links-file inputs + generated reports).
+# Scope precisely: on macOS git matches .gitignore case-insensitively, so a
+# bare "data/" rule would silently ignore NEW source files under Data/.
+src/DiscordEventService/Data/meme-benchmark/
+src/DiscordEventService/Data/meme-benchmark-inputs/
