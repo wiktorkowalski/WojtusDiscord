@@ -143,9 +143,13 @@ public sealed class MemeIndexingJob(
             .Select(m => new { m.AttachmentDiscordId, m.Status })
             .ToDictionaryAsync(m => m.AttachmentDiscordId, m => m.Status, cancellationToken);
 
+        // Only Indexed/Skipped are terminal. Failed retries by design; Pending
+        // means a prior run was interrupted mid-attachment and the executor's
+        // failure path flushed the freshly-added row — it must be picked up
+        // again or the attachment is silently lost from the index.
         var pending = candidates
             .Where(c => !statusByAttachment.TryGetValue(c.AttachmentDiscordId, out var status)
-                        || status == MemeIndexStatus.Failed)
+                        || status is MemeIndexStatus.Failed or MemeIndexStatus.Pending)
             .ToList();
 
         // Resume cursor survives only a mid-flight interruption (the executor

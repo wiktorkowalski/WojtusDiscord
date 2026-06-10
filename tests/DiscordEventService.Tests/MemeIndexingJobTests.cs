@@ -165,6 +165,35 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
+    public async Task ExecuteAsync_StrandedPendingRow_IsReprocessed()
+    {
+        // A mid-attachment interruption leaves a committed Pending row behind
+        // (the executor's failure path flushes it). It must not be terminal.
+        AddMessage(1001UL, Attachment(11UL, "stranded.png"));
+        await _db.SaveChangesAsync();
+        _db.MemeIndex.Add(new MemeIndexEntity
+        {
+            MessageId = _db.Messages.Single(m => m.DiscordId == 1001UL).Id,
+            GuildDiscordId = GuildDiscordId,
+            ChannelDiscordId = ChannelDiscordId,
+            MessageDiscordId = 1001UL,
+            AttachmentDiscordId = 11UL,
+            FileName = "stranded.png",
+            FileSizeBytes = 123,
+            Status = MemeIndexStatus.Pending
+        });
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 11UL);
+        Assert.Equal(MemeIndexStatus.Indexed, row.Status);
+        Assert.Equal(1, _http.ModelCalls);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_InterruptedRun_ResumesFromMessageCursor()
     {
         AddMessage(1001UL, Attachment(11UL, "done-before-crash.png"));
