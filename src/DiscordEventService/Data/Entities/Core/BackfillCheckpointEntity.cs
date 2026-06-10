@@ -35,7 +35,11 @@ public enum BackfillType
     Channels = 3,
     Members = 4,
     Messages = 5,
-    Reactions = 6
+    Reactions = 6,
+
+    // Meme indexing (#221) — not part of the weekly full-backfill chain;
+    // triggered independently via /api/ops/meme-index.
+    MemeIndex = 7
 }
 
 public enum BackfillStatus

@@ -191,7 +191,7 @@ public sealed class OpenRouterClient(
             completion.Usage?.CompletionTokens ?? 0,
             completion.Usage?.Cost);
 
-        return MemeAnalysisResult.Success(metadata, usage);
+        return MemeAnalysisResult.Success(metadata, usage, choice.Message.Content);
     }
 
     private static string Truncate(string value, int max) =>
