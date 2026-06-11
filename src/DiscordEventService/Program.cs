@@ -101,6 +101,10 @@ builder.Services.AddSingleton(rootSp =>
         services.AddSingleton<IHostEnvironment>(builder.Environment);
         services.AddSingleton<EventPipeline>();
         services.AddCoreServices();
+        // #222: MessageEventHandler's live meme-index hook reads the configured
+        // meme channels; root-container option bindings aren't visible here.
+        services.AddOptions<MemeIndexOptions>()
+            .Bind(builder.Configuration.GetSection(MemeIndexOptions.SectionName));
         // IBackgroundJobClient forwards to the root container's registration.
         // Hangfire registers IBackgroundJobClient as Transient with DI-based
         // JobStorage resolution; using `new BackgroundJobClient()` directly
@@ -221,8 +225,10 @@ builder.Services.AddHttpClient(AttachmentUrlRefreshService.HttpClientName)
 builder.Services.AddScoped<OpenRouterClient>();
 builder.Services.AddScoped<MemeSampleService>();
 builder.Services.AddScoped<AttachmentUrlRefreshService>();
+builder.Services.AddScoped<MemeAttachmentIndexer>();
 builder.Services.AddScoped<MemeBenchmarkJob>();
 builder.Services.AddScoped<MemeIndexingJob>();
+builder.Services.AddScoped<MemeIndexSweepJob>();
 
 // Hangfire. With a fixed InvisibilityTimeout a job outliving it gets presumed
 // dead, re-queued, and the original execution cancelled — observed live on the
@@ -318,6 +324,15 @@ RecurringJob.AddOrUpdate<HealthCheckJob>(
     "health-check",
     j => j.ExecuteAsync(),
     "*/5 * * * *"); // Every 5 minutes
+
+// Weekly meme-index healing sweep (#222) — indexes attachments the live
+// MessageCreated path missed (downtime, enqueue failures) and retries Failed
+// rows under the attempt cap. After the 03:00 full backfill so messages it
+// recovers are already in the DB. No-op while meme indexing is unconfigured.
+RecurringJob.AddOrUpdate<MemeIndexSweepJob>(
+    "meme-index-sweep",
+    j => j.ExecuteAsync(),
+    "0 5 * * 0"); // Sundays 05:00 UTC
 
 // Backfill API
 app.MapBackfillEndpoints();

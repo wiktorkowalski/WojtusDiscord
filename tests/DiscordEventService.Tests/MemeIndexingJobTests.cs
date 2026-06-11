@@ -270,6 +270,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         services.AddScoped<MemeSampleService>();
         services.AddScoped<AttachmentUrlRefreshService>();
         services.AddScoped<OpenRouterClient>();
+        services.AddScoped<MemeAttachmentIndexer>();
         services.AddScoped<BackfillJobExecutor>();
         services.AddScoped<MemeIndexingJob>();
 

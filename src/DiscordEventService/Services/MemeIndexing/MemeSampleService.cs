@@ -72,28 +72,43 @@ public sealed class MemeSampleService(
 
     // Also the candidate source for the indexing job (#221) — every image
     // attachment in the configured meme channels, no sampling.
-    public async Task<List<MemeSampleItem>> GetCandidatesAsync(CancellationToken cancellationToken)
+    public Task<List<MemeSampleItem>> GetCandidatesAsync(CancellationToken cancellationToken)
+        => GetCandidatesCoreAsync(messageDiscordId: null, cancellationToken);
+
+    // #222 live path: the candidates of ONE message (empty when the message is
+    // not in a configured meme channel — the job-level guard behind the
+    // handler's channel filter).
+    public Task<List<MemeSampleItem>> GetCandidatesForMessageAsync(
+        ulong messageDiscordId, CancellationToken cancellationToken)
+        => GetCandidatesCoreAsync(messageDiscordId, cancellationToken);
+
+    private async Task<List<MemeSampleItem>> GetCandidatesCoreAsync(
+        ulong? messageDiscordId, CancellationToken cancellationToken)
     {
         var channelIds = options.Value.ChannelIds;
 
-        var rows = await (
-                from m in db.Messages.AsNoTracking()
-                join c in db.Channels.AsNoTracking() on m.ChannelId equals c.Id
-                join g in db.Guilds.AsNoTracking() on m.GuildId equals g.Id
-                where channelIds.Contains(c.DiscordId)
-                      && m.HasAttachments
-                      && !m.IsDeleted
-                      && m.AttachmentsJson != null
-                select new
-                {
-                    m.Id,
-                    m.DiscordId,
-                    m.AttachmentsJson,
-                    m.CreatedAtUtc,
-                    ChannelDiscordId = c.DiscordId,
-                    GuildDiscordId = g.DiscordId
-                })
-            .ToListAsync(cancellationToken);
+        var query =
+            from m in db.Messages.AsNoTracking()
+            join c in db.Channels.AsNoTracking() on m.ChannelId equals c.Id
+            join g in db.Guilds.AsNoTracking() on m.GuildId equals g.Id
+            where channelIds.Contains(c.DiscordId)
+                  && m.HasAttachments
+                  && !m.IsDeleted
+                  && m.AttachmentsJson != null
+            select new
+            {
+                m.Id,
+                m.DiscordId,
+                m.AttachmentsJson,
+                m.CreatedAtUtc,
+                ChannelDiscordId = c.DiscordId,
+                GuildDiscordId = g.DiscordId
+            };
+
+        if (messageDiscordId is { } id)
+            query = query.Where(r => r.DiscordId == id);
+
+        var rows = await query.ToListAsync(cancellationToken);
 
         var candidates = new List<MemeSampleItem>();
         foreach (var row in rows)
