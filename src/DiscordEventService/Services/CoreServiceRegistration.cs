@@ -1,4 +1,5 @@
 using DiscordEventService.Jobs;
+using DiscordEventService.Services.MemeIndexing;
 using DiscordEventService.Services.Pipeline;
 
 namespace DiscordEventService.Services;
@@ -22,6 +23,7 @@ public static class CoreServiceRegistration
         typeof(DowntimeTrackerService),
         typeof(GuildBackfillOrchestrator),
         typeof(BootQuickSyncService),
+        typeof(MemeSearchService),
     ];
 
     public static IServiceCollection AddCoreServices(this IServiceCollection services)
