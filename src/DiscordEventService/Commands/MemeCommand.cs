@@ -1,31 +1,28 @@
 using System.ComponentModel;
 using DiscordEventService.Services.MemeIndexing;
-using DSharpPlus;
 using DSharpPlus.Commands;
 using DSharpPlus.Commands.Processors.SlashCommands;
 using DSharpPlus.Entities;
-using DSharpPlus.Exceptions;
 
 namespace DiscordEventService.Commands;
 
 // #224: the bot's first user-facing command. /meme searches the Indexed meme
-// metadata (MemeSearchService) and responds publicly: top hit as an embed with
-// the image re-fetched for a fresh signed CDN URL (stored URLs expire,
-// ADR-0004), runners-up as compact jump links. Every failure path answers the
-// interaction — a swallowed exception here would leave a dangling "thinking…"
-// state, but can never touch the gateway event pipeline.
+// metadata (MemeSearchService) and responds publicly with one line per hit: a
+// bare jump link — Discord renders it as the native "#channel › 💬" pill —
+// followed by the description snippet. No embeds (user call, follow-up to
+// #230): the pill jumps straight to the original message with the image.
+// Every failure path answers the interaction — a swallowed exception here
+// would leave a dangling "thinking…" state, but can never touch the gateway
+// event pipeline.
 public sealed class MemeCommand(MemeSearchService searchService, ILogger<MemeCommand> logger)
 {
-    private const int RunnerUpCount = 4;
-
     [Command("meme")]
     [Description("Szuka mema po opisie, tekście z obrazka, tagach lub szablonie")]
     public async ValueTask ExecuteAsync(
         SlashCommandContext ctx,
         [Description("Co znaleźć — np. \"kot lodówka\" albo tekst z mema")] string query)
     {
-        // Defer immediately: the search plus the fresh-URL message fetch can
-        // exceed Discord's 3s interaction window.
+        // Defer immediately: the search can exceed Discord's 3s window.
         await ctx.DeferResponseAsync();
 
         try
@@ -54,94 +51,42 @@ public sealed class MemeCommand(MemeSearchService searchService, ILogger<MemeCom
             "/meme by {UserId} in guild {GuildId}: query {Query}, {HitCount} hits",
             ctx.User.Id, ctx.Guild.Id, query, hits.Count);
 
-        // The raw query never goes into plain message content — pinging
-        // mentions could be smuggled in it (embeds are immune, content isn't).
         if (hits.Count == 0)
         {
             await ctx.EditResponseAsync("Nic nie znalazłem dla tego zapytania.");
             return;
         }
 
-        // Top-1 needs a live message for the fresh image URL; an index row can
-        // outlive its message (just deleted, attachment edited away) — fall
-        // back to the next hit instead of rendering a dead embed.
-        MemeSearchHit? top = null;
-        string? freshUrl = null;
-        var runnersUp = new List<MemeSearchHit>();
-        foreach (var hit in hits)
-        {
-            if (top is not null)
-            {
-                runnersUp.Add(hit);
-                continue;
-            }
+        // Bare URLs render as pills (markdown links never do); message links
+        // produce pills, not unfurled preview embeds. Descriptions are
+        // model-generated text landing in plain content — meme OCR could
+        // contain @everyone — so all mentions are explicitly disarmed.
+        var lines = hits.Select(h => $"{JumpLink(ctx.Guild.Id, h)} {HitLabel(h)}");
 
-            freshUrl = await TryGetFreshUrlAsync(ctx.Client, hit);
-            if (freshUrl is null)
-            {
-                logger.LogWarning(
-                    "/meme top hit {AttachmentId} in guild {GuildId} has no live message/attachment, falling back",
-                    hit.AttachmentDiscordId, ctx.Guild.Id);
-                continue;
-            }
-            top = hit;
-        }
-
-        if (top is null)
-        {
-            await ctx.EditResponseAsync("Znalazłem trafienia, ale ich wiadomości już nie istnieją.");
-            return;
-        }
-
-        var embed = new DiscordEmbedBuilder()
-            .WithDescription($"{Snippet(top, 300)}\n[Skocz do wiadomości]({JumpLink(ctx.Guild.Id, top)})")
-            .WithImageUrl(freshUrl!)
-            .WithFooter(top.FileName)
-            .WithTimestamp(top.MessageCreatedAtUtc)
-            .WithColor(new DiscordColor(0x5865F2));
-
-        if (runnersUp.Count > 0)
-        {
-            var lines = runnersUp
-                .Take(RunnerUpCount)
-                .Select(h => $"[{Snippet(h, 80)}]({JumpLink(ctx.Guild.Id, h)})");
-            embed.AddField("Inne trafienia", string.Join("\n", lines));
-        }
-
-        await ctx.EditResponseAsync(new DiscordMessageBuilder().AddEmbed(embed));
-    }
-
-    // Fresh signed CDN URL via a live message fetch; null when the message,
-    // channel, or the specific attachment is gone (or the bot lost access).
-    private static async Task<string?> TryGetFreshUrlAsync(DiscordClient client, MemeSearchHit hit)
-    {
-        try
-        {
-            var channel = await client.GetChannelAsync(hit.ChannelDiscordId);
-            var message = await channel.GetMessageAsync(hit.MessageDiscordId);
-            return message.Attachments.FirstOrDefault(a => a.Id == hit.AttachmentDiscordId)?.Url;
-        }
-        catch (NotFoundException)
-        {
-            return null;
-        }
-        catch (UnauthorizedException)
-        {
-            return null;
-        }
+        await ctx.EditResponseAsync(new DiscordMessageBuilder()
+            .WithContent(string.Join("\n", lines))
+            .WithAllowedMentions(Mentions.None));
     }
 
     private static string JumpLink(ulong guildId, MemeSearchHit hit) =>
         $"https://discord.com/channels/{guildId}/{hit.ChannelDiscordId}/{hit.MessageDiscordId}";
 
-    // The "why it matched" line: Polish description first (the corpus is a
-    // Polish guild), English fallback, file name as a last resort. Square
-    // brackets would break the surrounding markdown link labels.
-    private static string Snippet(MemeSearchHit hit, int maxLength)
+    // The "why it matched" label: tags (short, keyword-y, and the A-weighted
+    // search field — they usually contain the matched term). Rows without tags
+    // fall back to the description's first sentence, then the file name.
+    private static string HitLabel(MemeSearchHit hit)
     {
-        var text = hit.DescriptionPl ?? hit.DescriptionEn ?? hit.FileName;
-        text = text.Replace('[', '(').Replace(']', ')');
-        return Truncate(text, maxLength);
+        if (hit.Tags.Length > 0)
+            return Truncate(string.Join(" · ", hit.Tags), 120);
+
+        var text = (hit.DescriptionPl ?? hit.DescriptionEn ?? hit.FileName).ReplaceLineEndings(" ");
+        return Truncate(FirstSentence(text), 80);
+    }
+
+    private static string FirstSentence(string text)
+    {
+        var end = text.IndexOf(". ", StringComparison.Ordinal);
+        return end < 0 ? text : text[..(end + 1)];
     }
 
     private static string Truncate(string text, int maxLength) =>

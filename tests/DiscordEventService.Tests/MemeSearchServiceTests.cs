@@ -61,6 +61,7 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
 
         var hit = Assert.Single(hits);
         Assert.Equal(11UL, hit.AttachmentDiscordId);
+        Assert.Equal(["pies", "programowanie"], hit.Tags);
     }
 
     [Fact]
