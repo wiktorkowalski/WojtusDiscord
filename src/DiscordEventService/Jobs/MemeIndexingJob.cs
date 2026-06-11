@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
@@ -14,26 +13,97 @@ namespace DiscordEventService.Jobs;
 // re-signed via attachments/refresh-urls — no channel-history pagination, no
 // gateway. Idempotent: terminal rows (Indexed/Skipped) are skipped on re-run,
 // Failed rows are retried. Not part of the weekly full-backfill chain.
+//
+// Three entry points (#222): ExecuteAsync is the operator-triggered backfill
+// (Failed retries uncapped — deliberate, see PR #228), ExecuteSweepAsync is the
+// weekly healing sweep (Failed retries capped so an autonomous recurring job
+// can't re-bill permanently-broken rows forever), and IndexMessageAsync is the
+// live single-message path enqueued by MessageEventHandler.
 public sealed class MemeIndexingJob(
     BackfillJobExecutor executor,
-    IHttpClientFactory httpClientFactory,
+    IServiceScopeFactory scopeFactory,
     ILogger<MemeIndexingJob> logger) : BackfillJobBase
 {
+    public const int SweepMaxFailedAttempts = 3;
+
     protected override BackfillType BackfillType => BackfillType.MemeIndex;
 
-    private sealed class RunCounters
+    public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
+        => RunAsync(guildId, maxFailedAttempts: null, cancellationToken);
+
+    public Task ExecuteSweepAsync(ulong guildId, CancellationToken cancellationToken)
+        => RunAsync(guildId, SweepMaxFailedAttempts, cancellationToken);
+
+    // #222 live path: index every image attachment of one freshly-posted
+    // message. No checkpoint — checkpoints are unique per (guild, type) and
+    // belong to the backfill/sweep runs; live jobs are small, frequent, and
+    // idempotent (terminal rows are skipped), so a Hangfire retry after a
+    // mid-run crash is safe and a concurrent backfill at worst costs one
+    // duplicate model call resolved by the unique attachment index.
+    public async Task IndexMessageAsync(ulong guildId, ulong messageDiscordId, CancellationToken cancellationToken)
     {
-        public int Indexed { get; set; }
-        public int Deduped { get; set; }
-        public int Skipped { get; set; }
-        public int Failed { get; set; }
-        public int ModelCalls { get; set; }
-        public long PromptTokens { get; set; }
-        public long CompletionTokens { get; set; }
-        public decimal CostUsd { get; set; }
+        using var scope = scopeFactory.CreateScope();
+        var services = scope.ServiceProvider;
+        var memeOptions = services.GetRequiredService<IOptions<MemeIndexOptions>>().Value;
+        var openRouterOptions = services.GetRequiredService<IOptions<OpenRouterOptions>>().Value;
+
+        // Config can change between enqueue and execution (deploy restart);
+        // anything dropped here is healed by the weekly sweep.
+        if (!memeOptions.IsConfigured || !openRouterOptions.IsConfigured
+            || string.IsNullOrWhiteSpace(openRouterOptions.Model))
+        {
+            logger.LogWarning(
+                "Live meme indexing for message {MessageId} in guild {GuildId} skipped: meme indexing is not fully configured",
+                messageDiscordId, guildId);
+            return;
+        }
+
+        var db = services.GetRequiredService<DiscordDbContext>();
+        var sampleService = services.GetRequiredService<MemeSampleService>();
+        var urlRefreshService = services.GetRequiredService<AttachmentUrlRefreshService>();
+        var indexer = services.GetRequiredService<MemeAttachmentIndexer>();
+
+        var candidates = (await sampleService.GetCandidatesForMessageAsync(messageDiscordId, cancellationToken))
+            .OrderBy(c => c.AttachmentDiscordId)
+            .ToList();
+
+        // Terminal rows stay untouched — relevant when Hangfire retries this
+        // job after a crash that landed between attachments.
+        var attachmentIds = candidates.Select(c => c.AttachmentDiscordId).ToList();
+        var terminal = await db.MemeIndex
+            .Where(m => attachmentIds.Contains(m.AttachmentDiscordId)
+                        && (m.Status == MemeIndexStatus.Indexed || m.Status == MemeIndexStatus.Skipped))
+            .Select(m => m.AttachmentDiscordId)
+            .ToListAsync(cancellationToken);
+        var pending = candidates.Where(c => !terminal.Contains(c.AttachmentDiscordId)).ToList();
+
+        if (pending.Count == 0)
+        {
+            logger.LogDebug("Live meme indexing for message {MessageId}: nothing to do", messageDiscordId);
+            return;
+        }
+
+        var freshUrls = await urlRefreshService.RefreshAsync(
+            pending.Select(p => p.StoredUrl).ToList(), cancellationToken);
+
+        var counters = new MemeIndexRunCounters();
+        foreach (var item in pending)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var row = await indexer.GetOrCreateRowAsync(db, item, cancellationToken);
+            await indexer.ProcessOneAsync(db, row, item, freshUrls, counters, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        logger.LogInformation(
+            "Live meme indexing for message {MessageId} in guild {GuildId}: {Indexed} indexed, {Deduped} deduped, " +
+            "{Skipped} skipped, {Failed} failed; {ModelCalls} model calls, cost {CostUsd:F4} USD",
+            messageDiscordId, guildId, counters.Indexed, counters.Deduped, counters.Skipped, counters.Failed,
+            counters.ModelCalls, counters.CostUsd);
     }
 
-    public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
+    private Task RunAsync(ulong guildId, int? maxFailedAttempts, CancellationToken cancellationToken)
         => executor.RunAsync(BackfillType, guildId, async ctx =>
         {
             var memeOptions = ctx.Services.GetRequiredService<IOptions<MemeIndexOptions>>().Value;
@@ -48,9 +118,10 @@ public sealed class MemeIndexingJob(
 
             var sampleService = ctx.Services.GetRequiredService<MemeSampleService>();
             var urlRefreshService = ctx.Services.GetRequiredService<AttachmentUrlRefreshService>();
-            var openRouterClient = ctx.Services.GetRequiredService<OpenRouterClient>();
+            var indexer = ctx.Services.GetRequiredService<MemeAttachmentIndexer>();
 
-            var pending = await CollectPendingAsync(ctx.Db, sampleService, guildId, ctx.Checkpoint, cancellationToken);
+            var pending = await CollectPendingAsync(
+                ctx.Db, sampleService, guildId, ctx.Checkpoint, maxFailedAttempts, cancellationToken);
 
             var cap = memeOptions.MaxImagesPerRun;
             var capped = pending.Count > cap;
@@ -79,7 +150,7 @@ public sealed class MemeIndexingJob(
                 "Meme indexing starting for guild {GuildId}: {Count} attachments, model {Model}",
                 guildId, pending.Count, openRouterOptions.Model);
 
-            var counters = new RunCounters();
+            var counters = new MemeIndexRunCounters();
 
             // Refresh-urls accepts ~50 per call; chunking also keeps signed URLs
             // fresh relative to when they're actually downloaded.
@@ -95,8 +166,8 @@ public sealed class MemeIndexingJob(
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    var row = await GetOrCreateRowAsync(ctx.Db, item, cancellationToken);
-                    await ProcessOneAsync(ctx.Db, row, item, freshUrls, openRouterClient, memeOptions, openRouterOptions, counters, cancellationToken);
+                    var row = await indexer.GetOrCreateRowAsync(ctx.Db, item, cancellationToken);
+                    await indexer.ProcessOneAsync(ctx.Db, row, item, freshUrls, counters, cancellationToken);
 
                     position++;
                     ctx.Checkpoint.ProcessedCount++;
@@ -122,14 +193,16 @@ public sealed class MemeIndexingJob(
         }, cancellationToken);
 
     // All image attachments in this guild's meme channels that still need work:
-    // no row yet, or a Failed row (retried). Terminal rows (Indexed/Skipped) are
-    // skipped — this is what makes re-runs idempotent. Deterministic order is
-    // what makes the message-id resume cursor valid across runs.
+    // no row yet, or a Failed row (retried, optionally attempt-capped for the
+    // sweep). Terminal rows (Indexed/Skipped) are skipped — this is what makes
+    // re-runs idempotent. Deterministic order is what makes the message-id
+    // resume cursor valid across runs.
     private static async Task<List<MemeSampleItem>> CollectPendingAsync(
         DiscordDbContext db,
         MemeSampleService sampleService,
         ulong guildId,
         BackfillCheckpointEntity checkpoint,
+        int? maxFailedAttempts,
         CancellationToken cancellationToken)
     {
         var candidates = (await sampleService.GetCandidatesAsync(cancellationToken))
@@ -140,16 +213,26 @@ public sealed class MemeIndexingJob(
 
         var statusByAttachment = await db.MemeIndex
             .Where(m => m.GuildDiscordId == guildId)
-            .Select(m => new { m.AttachmentDiscordId, m.Status })
-            .ToDictionaryAsync(m => m.AttachmentDiscordId, m => m.Status, cancellationToken);
+            .Select(m => new { m.AttachmentDiscordId, m.Status, m.AttemptCount })
+            .ToDictionaryAsync(m => m.AttachmentDiscordId, m => (m.Status, m.AttemptCount), cancellationToken);
 
         // Only Indexed/Skipped are terminal. Failed retries by design; Pending
         // means a prior run was interrupted mid-attachment and the executor's
         // failure path flushed the freshly-added row — it must be picked up
         // again or the attachment is silently lost from the index.
         var pending = candidates
-            .Where(c => !statusByAttachment.TryGetValue(c.AttachmentDiscordId, out var status)
-                        || status is MemeIndexStatus.Failed or MemeIndexStatus.Pending)
+            .Where(c =>
+            {
+                if (!statusByAttachment.TryGetValue(c.AttachmentDiscordId, out var row))
+                    return true;
+                return row.Status switch
+                {
+                    MemeIndexStatus.Pending => true,
+                    MemeIndexStatus.Failed => maxFailedAttempts is not { } capAttempts
+                        || row.AttemptCount < capAttempts,
+                    _ => false
+                };
+            })
             .ToList();
 
         // Resume cursor survives only a mid-flight interruption (the executor
@@ -158,164 +241,5 @@ public sealed class MemeIndexingJob(
             pending = pending.Where(c => c.MessageDiscordId > cursor).ToList();
 
         return pending;
-    }
-
-    private static async Task<MemeIndexEntity> GetOrCreateRowAsync(
-        DiscordDbContext db, MemeSampleItem item, CancellationToken cancellationToken)
-    {
-        var row = await db.MemeIndex
-            .FirstOrDefaultAsync(m => m.AttachmentDiscordId == item.AttachmentDiscordId, cancellationToken);
-        if (row is not null)
-            return row;
-
-        row = new MemeIndexEntity
-        {
-            MessageId = item.MessageId,
-            GuildDiscordId = item.GuildDiscordId,
-            ChannelDiscordId = item.ChannelDiscordId,
-            MessageDiscordId = item.MessageDiscordId,
-            AttachmentDiscordId = item.AttachmentDiscordId,
-            FileName = item.FileName,
-            FileSizeBytes = item.FileSizeBytes,
-            Status = MemeIndexStatus.Pending
-        };
-        db.MemeIndex.Add(row);
-        return row;
-    }
-
-    private async Task ProcessOneAsync(
-        DiscordDbContext db,
-        MemeIndexEntity row,
-        MemeSampleItem item,
-        Dictionary<string, string> freshUrls,
-        OpenRouterClient openRouterClient,
-        MemeIndexOptions memeOptions,
-        OpenRouterOptions openRouterOptions,
-        RunCounters counters,
-        CancellationToken cancellationToken)
-    {
-        row.AttemptCount++;
-
-        if (!freshUrls.TryGetValue(AttachmentUrlRefreshService.StripQuery(item.StoredUrl), out var freshUrl))
-        {
-            Skip(row, counters, "dead attachment: refresh-urls declined to re-sign");
-            return;
-        }
-
-        byte[] imageBytes;
-        try
-        {
-            var client = httpClientFactory.CreateClient(MemeBenchmarkJob.DownloadHttpClientName);
-            imageBytes = await client.GetByteArrayAsync(freshUrl, cancellationToken);
-        }
-        catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.NotFound
-            or System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Gone)
-        {
-            Skip(row, counters, $"dead attachment: download HTTP {(int)ex.StatusCode!}");
-            return;
-        }
-        catch (Exception ex) when (ex is HttpRequestException
-            || (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
-        {
-            Fail(row, counters, $"download failed: {ex.Message}");
-            return;
-        }
-
-        row.FileSizeBytes = imageBytes.Length;
-
-        if (imageBytes.Length > memeOptions.MaxImageBytes)
-        {
-            Skip(row, counters, $"unsupported: image too large ({imageBytes.Length} bytes)");
-            return;
-        }
-
-        var mimeType = ImageMagic.SniffMimeType(imageBytes);
-        if (mimeType is null)
-        {
-            Skip(row, counters, "unsupported: bytes are not a recognized image format");
-            return;
-        }
-        row.ContentType = mimeType;
-
-        var contentHash = Convert.ToHexStringLower(SHA256.HashData(imageBytes));
-        row.ContentHash = contentHash;
-
-        // Repost dedupe: same bytes already Indexed → copy its metadata, no
-        // model call. RawResponseJson stays null — provenance lives on the
-        // original row, found via the shared content_hash.
-        var original = await db.MemeIndex.AsNoTracking()
-            .Where(m => m.ContentHash == contentHash && m.Status == MemeIndexStatus.Indexed && m.Id != row.Id)
-            .Select(m => new { m.DescriptionPl, m.DescriptionEn, m.OcrText, m.Tags, m.Source, m.Template, m.ModelId })
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (original is not null)
-        {
-            row.DescriptionPl = original.DescriptionPl;
-            row.DescriptionEn = original.DescriptionEn;
-            row.OcrText = original.OcrText;
-            row.Tags = original.Tags;
-            row.Source = original.Source;
-            row.Template = original.Template;
-            row.ModelId = original.ModelId;
-            row.RawResponseJson = null;
-            row.IndexedAtUtc = DateTime.UtcNow;
-            row.Status = MemeIndexStatus.Indexed;
-            row.Error = null;
-            counters.Deduped++;
-            logger.LogDebug("Meme attachment {AttachmentId} deduped via content hash {ContentHash}",
-                row.AttachmentDiscordId, contentHash);
-            return;
-        }
-
-        var result = await openRouterClient.AnalyzeImageAsync(imageBytes, mimeType, openRouterOptions.Model, cancellationToken);
-        counters.ModelCalls++;
-        counters.PromptTokens += result.Usage?.PromptTokens ?? 0;
-        counters.CompletionTokens += result.Usage?.CompletionTokens ?? 0;
-        counters.CostUsd += result.Usage?.CostUsd ?? 0;
-
-        switch (result.Outcome)
-        {
-            case MemeAnalysisOutcome.Success:
-                row.DescriptionPl = result.Metadata!.DescriptionPl;
-                row.DescriptionEn = result.Metadata.DescriptionEn;
-                row.OcrText = result.Metadata.OcrText;
-                row.Tags = result.Metadata.Tags;
-                row.Source = result.Metadata.Source;
-                row.Template = result.Metadata.Template;
-                row.ModelId = openRouterOptions.Model;
-                row.RawResponseJson = result.RawContent;
-                row.IndexedAtUtc = DateTime.UtcNow;
-                row.Status = MemeIndexStatus.Indexed;
-                row.Error = null;
-                counters.Indexed++;
-                break;
-
-            case MemeAnalysisOutcome.Refusal:
-                Skip(row, counters, $"model refusal: {result.Error}");
-                break;
-
-            default:
-                Fail(row, counters, result.Error ?? "unknown analysis error");
-                break;
-        }
-
-        await Task.Delay(TimeSpan.FromMilliseconds(openRouterOptions.RequestDelayMs), cancellationToken);
-    }
-
-    private void Skip(MemeIndexEntity row, RunCounters counters, string reason)
-    {
-        row.Status = MemeIndexStatus.Skipped;
-        row.Error = reason;
-        counters.Skipped++;
-        logger.LogInformation("Meme attachment {AttachmentId} skipped: {Reason}", row.AttachmentDiscordId, reason);
-    }
-
-    private void Fail(MemeIndexEntity row, RunCounters counters, string error)
-    {
-        row.Status = MemeIndexStatus.Failed;
-        row.Error = error;
-        counters.Failed++;
-        logger.LogWarning("Meme attachment {AttachmentId} failed (attempt {Attempt}): {Error}",
-            row.AttachmentDiscordId, row.AttemptCount, error);
     }
 }

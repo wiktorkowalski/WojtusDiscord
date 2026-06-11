@@ -1,0 +1,193 @@
+using System.Security.Cryptography;
+using DiscordEventService.Configuration;
+using DiscordEventService.Data;
+using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Jobs;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+
+namespace DiscordEventService.Services.MemeIndexing;
+
+public sealed class MemeIndexRunCounters
+{
+    public int Indexed { get; set; }
+    public int Deduped { get; set; }
+    public int Skipped { get; set; }
+    public int Failed { get; set; }
+    public int ModelCalls { get; set; }
+    public long PromptTokens { get; set; }
+    public long CompletionTokens { get; set; }
+    public decimal CostUsd { get; set; }
+}
+
+// The per-attachment indexing pipeline (#221): download → MIME sniff → sha256
+// repost dedupe → vision model → status lifecycle. Extracted from
+// MemeIndexingJob so the live single-message path (#222) and the backfill/sweep
+// runs share one implementation. The DbContext stays a parameter — callers own
+// the unit of work and decide when to flush.
+public sealed class MemeAttachmentIndexer(
+    OpenRouterClient openRouterClient,
+    IHttpClientFactory httpClientFactory,
+    IOptions<MemeIndexOptions> memeIndexOptions,
+    IOptions<OpenRouterOptions> openRouterOptions,
+    ILogger<MemeAttachmentIndexer> logger)
+{
+    public async Task<MemeIndexEntity> GetOrCreateRowAsync(
+        DiscordDbContext db, MemeSampleItem item, CancellationToken cancellationToken)
+    {
+        var row = await db.MemeIndex
+            .FirstOrDefaultAsync(m => m.AttachmentDiscordId == item.AttachmentDiscordId, cancellationToken);
+        if (row is not null)
+            return row;
+
+        row = new MemeIndexEntity
+        {
+            MessageId = item.MessageId,
+            GuildDiscordId = item.GuildDiscordId,
+            ChannelDiscordId = item.ChannelDiscordId,
+            MessageDiscordId = item.MessageDiscordId,
+            AttachmentDiscordId = item.AttachmentDiscordId,
+            FileName = item.FileName,
+            FileSizeBytes = item.FileSizeBytes,
+            Status = MemeIndexStatus.Pending
+        };
+        db.MemeIndex.Add(row);
+        return row;
+    }
+
+    public async Task ProcessOneAsync(
+        DiscordDbContext db,
+        MemeIndexEntity row,
+        MemeSampleItem item,
+        Dictionary<string, string> freshUrls,
+        MemeIndexRunCounters counters,
+        CancellationToken cancellationToken)
+    {
+        var memeOptions = memeIndexOptions.Value;
+        var openRouter = openRouterOptions.Value;
+
+        row.AttemptCount++;
+
+        if (!freshUrls.TryGetValue(AttachmentUrlRefreshService.StripQuery(item.StoredUrl), out var freshUrl))
+        {
+            Skip(row, counters, "dead attachment: refresh-urls declined to re-sign");
+            return;
+        }
+
+        byte[] imageBytes;
+        try
+        {
+            var client = httpClientFactory.CreateClient(MemeBenchmarkJob.DownloadHttpClientName);
+            imageBytes = await client.GetByteArrayAsync(freshUrl, cancellationToken);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.NotFound
+            or System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Gone)
+        {
+            Skip(row, counters, $"dead attachment: download HTTP {(int)ex.StatusCode!}");
+            return;
+        }
+        catch (Exception ex) when (ex is HttpRequestException
+            || (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            Fail(row, counters, $"download failed: {ex.Message}");
+            return;
+        }
+
+        row.FileSizeBytes = imageBytes.Length;
+
+        if (imageBytes.Length > memeOptions.MaxImageBytes)
+        {
+            Skip(row, counters, $"unsupported: image too large ({imageBytes.Length} bytes)");
+            return;
+        }
+
+        var mimeType = ImageMagic.SniffMimeType(imageBytes);
+        if (mimeType is null)
+        {
+            Skip(row, counters, "unsupported: bytes are not a recognized image format");
+            return;
+        }
+        row.ContentType = mimeType;
+
+        var contentHash = Convert.ToHexStringLower(SHA256.HashData(imageBytes));
+        row.ContentHash = contentHash;
+
+        // Repost dedupe: same bytes already Indexed → copy its metadata, no
+        // model call. RawResponseJson stays null — provenance lives on the
+        // original row, found via the shared content_hash.
+        var original = await db.MemeIndex.AsNoTracking()
+            .Where(m => m.ContentHash == contentHash && m.Status == MemeIndexStatus.Indexed && m.Id != row.Id)
+            .Select(m => new { m.DescriptionPl, m.DescriptionEn, m.OcrText, m.Tags, m.Source, m.Template, m.ModelId })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (original is not null)
+        {
+            row.DescriptionPl = original.DescriptionPl;
+            row.DescriptionEn = original.DescriptionEn;
+            row.OcrText = original.OcrText;
+            row.Tags = original.Tags;
+            row.Source = original.Source;
+            row.Template = original.Template;
+            row.ModelId = original.ModelId;
+            row.RawResponseJson = null;
+            row.IndexedAtUtc = DateTime.UtcNow;
+            row.Status = MemeIndexStatus.Indexed;
+            row.Error = null;
+            counters.Deduped++;
+            logger.LogDebug("Meme attachment {AttachmentId} deduped via content hash {ContentHash}",
+                row.AttachmentDiscordId, contentHash);
+            return;
+        }
+
+        var result = await openRouterClient.AnalyzeImageAsync(imageBytes, mimeType, openRouter.Model, cancellationToken);
+        counters.ModelCalls++;
+        counters.PromptTokens += result.Usage?.PromptTokens ?? 0;
+        counters.CompletionTokens += result.Usage?.CompletionTokens ?? 0;
+        counters.CostUsd += result.Usage?.CostUsd ?? 0;
+
+        switch (result.Outcome)
+        {
+            case MemeAnalysisOutcome.Success:
+                row.DescriptionPl = result.Metadata!.DescriptionPl;
+                row.DescriptionEn = result.Metadata.DescriptionEn;
+                row.OcrText = result.Metadata.OcrText;
+                row.Tags = result.Metadata.Tags;
+                row.Source = result.Metadata.Source;
+                row.Template = result.Metadata.Template;
+                row.ModelId = openRouter.Model;
+                row.RawResponseJson = result.RawContent;
+                row.IndexedAtUtc = DateTime.UtcNow;
+                row.Status = MemeIndexStatus.Indexed;
+                row.Error = null;
+                counters.Indexed++;
+                break;
+
+            case MemeAnalysisOutcome.Refusal:
+                Skip(row, counters, $"model refusal: {result.Error}");
+                break;
+
+            default:
+                Fail(row, counters, result.Error ?? "unknown analysis error");
+                break;
+        }
+
+        await Task.Delay(TimeSpan.FromMilliseconds(openRouter.RequestDelayMs), cancellationToken);
+    }
+
+    private void Skip(MemeIndexEntity row, MemeIndexRunCounters counters, string reason)
+    {
+        row.Status = MemeIndexStatus.Skipped;
+        row.Error = reason;
+        counters.Skipped++;
+        logger.LogInformation("Meme attachment {AttachmentId} skipped: {Reason}", row.AttachmentDiscordId, reason);
+    }
+
+    private void Fail(MemeIndexEntity row, MemeIndexRunCounters counters, string error)
+    {
+        row.Status = MemeIndexStatus.Failed;
+        row.Error = error;
+        counters.Failed++;
+        logger.LogWarning("Meme attachment {AttachmentId} failed (attempt {Attempt}): {Error}",
+            row.AttachmentDiscordId, row.AttemptCount, error);
+    }
+}

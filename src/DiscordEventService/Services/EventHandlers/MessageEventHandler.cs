@@ -1,11 +1,16 @@
+using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Jobs;
+using DiscordEventService.Services.MemeIndexing;
 using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -101,6 +106,8 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                     await ExtractAndSaveMentionsAsync(ctx.Db, messageId, e.Message);
                     await tx.CommitAsync();
                 });
+
+                EnqueueMemeIndexing(ctx, e);
             });
     }
 
@@ -281,6 +288,35 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                 ctx.Db.MessageEvents.AddRange(events);
                 await ctx.Db.SaveChangesAsync();
             });
+    }
+
+    // #222 live path: a message with image attachments in a configured meme
+    // channel gets a single-message index job enqueued once its row has
+    // committed. Failures are swallowed (warning only) — indexing must never
+    // break message persistence, and the weekly sweep heals anything missed.
+    private static void EnqueueMemeIndexing(EventContext ctx, MessageCreatedEventArgs e)
+    {
+        try
+        {
+            if (e.Message.Attachments.Count == 0)
+                return;
+
+            var memeOptions = ctx.Services.GetRequiredService<IOptions<MemeIndexOptions>>().Value;
+            if (!memeOptions.ChannelIds.Contains(e.Channel.Id))
+                return;
+            if (!e.Message.Attachments.Any(a => a.FileName is not null && ImageMagic.IsIndexableFileName(a.FileName)))
+                return;
+
+            ctx.Services.GetRequiredService<IBackgroundJobClient>()
+                .Enqueue<MemeIndexingJob>(j => j.IndexMessageAsync(e.Guild.Id, e.Message.Id, CancellationToken.None));
+            ctx.Logger.LogDebug("Live meme indexing enqueued for message {MessageId}", e.Message.Id);
+        }
+        catch (Exception ex)
+        {
+            ctx.Logger.LogWarning(ex,
+                "Failed to enqueue live meme indexing for message {MessageId} — the weekly sweep will heal it",
+                e.Message.Id);
+        }
     }
 
     private static async Task ExtractAndSaveMentionsAsync(DiscordDbContext db, Guid messageId, DiscordMessage message)
