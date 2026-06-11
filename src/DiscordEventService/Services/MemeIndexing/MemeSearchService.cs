@@ -13,6 +13,7 @@ public sealed record MemeSearchHit(
     string FileName,
     string? DescriptionPl,
     string? DescriptionEn,
+    string[] Tags,
     DateTime MessageCreatedAtUtc,
     double Score);
 
@@ -59,6 +60,7 @@ public sealed class MemeSearchService(DiscordDbContext db)
                    m.file_name,
                    m.description_pl,
                    m.description_en,
+                   m.tags,
                    msg.created_at_utc AS message_created_at_utc,
                    (ts_rank(m.search_vector, to_tsquery('simple', public.f_unaccent({orQuery})))
                     + {TrigramWeight} * word_similarity(public.f_unaccent({query}), m.search_text))::float8 AS score
@@ -81,6 +83,7 @@ public sealed class MemeSearchService(DiscordDbContext db)
                 r.FileName,
                 r.DescriptionPl,
                 r.DescriptionEn,
+                r.Tags ?? [],
                 r.MessageCreatedAtUtc,
                 r.Score))
             .ToList();
@@ -108,6 +111,7 @@ public sealed class MemeSearchService(DiscordDbContext db)
         string FileName,
         string? DescriptionPl,
         string? DescriptionEn,
+        string[]? Tags,
         DateTime MessageCreatedAtUtc,
         double Score);
 }
