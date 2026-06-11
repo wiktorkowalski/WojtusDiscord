@@ -1,3 +1,4 @@
+using DiscordEventService.Commands;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Endpoints;
@@ -9,6 +10,8 @@ using DiscordEventService.Services.MemeIndexing;
 using DiscordEventService.Services.Pipeline;
 using DotNetEnv;
 using DSharpPlus;
+using DSharpPlus.Commands;
+using DSharpPlus.Commands.Processors.SlashCommands;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
@@ -78,6 +81,7 @@ builder.Services.AddDbContext<DiscordDbContext>(options =>
 // Discord Client with services configured for DI
 var discordToken = builder.Configuration.GetSection(DiscordOptions.SectionName).Get<DiscordOptions>()?.Token
     ?? throw new InvalidOperationException("Discord:Token is required");
+var commandGuildId = builder.Configuration.GetSection(DiscordOptions.SectionName).Get<DiscordOptions>()?.CommandGuildId;
 
 builder.Services.AddSingleton(rootSp =>
 {
@@ -157,6 +161,19 @@ builder.Services.AddSingleton(rootSp =>
         // Socket lifecycle (downtime tracking)
         .AddEventHandlers<SocketLifecycleHandler>(ServiceLifetime.Scoped)
     );
+
+    // #224: the bot's first user-facing command. Slash-only (no text-prefix
+    // processor — the bot must keep ignoring message content), guild-scoped
+    // registration so it shows up instantly. Without Discord:CommandGuildId
+    // the commands subsystem isn't wired at all (pure passive logger).
+    if (commandGuildId is { } commandGuild)
+    {
+        clientBuilder.UseCommands((_, extension) =>
+        {
+            extension.AddProcessor(new SlashCommandProcessor());
+            extension.AddCommands([typeof(MemeCommand)], commandGuild);
+        }, new CommandsConfiguration { RegisterDefaultCommandProcessors = false });
+    }
 
     return clientBuilder.Build();
 });
