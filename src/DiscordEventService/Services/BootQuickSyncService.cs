@@ -48,96 +48,7 @@ internal sealed class BootQuickSyncService(
         {
             try
             {
-                List<DiscordMessage> messages = [];
-                await foreach (var msg in channel.GetMessagesAsync(RecentMessagesPerChannel))
-                    messages.Add(msg);
-
-                if (messages.Count == 0) continue;
-
-                using var scope = scopeFactory.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
-                var userService = scope.ServiceProvider.GetRequiredService<UserService>();
-                var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
-                var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
-
-                var guildId = (await guildUpsert.UpsertGuildAsync(guild)).Value;
-                var channelId = (await channelUpsert.UpsertChannelAsync(channel, guildId)).Value;
-
-                var existingDiscordIds = await db.Messages
-                    .Where(m => messages.Select(msg => msg.Id).Contains(m.DiscordId))
-                    .Select(m => m.DiscordId)
-                    .ToListAsync();
-                var existingSet = existingDiscordIds.ToHashSet();
-
-                var newMessages = messages.Where(m => !existingSet.Contains(m.Id) && m.Author is not null).ToList();
-                if (newMessages.Count == 0) continue;
-
-                var uniqueAuthors = newMessages.Select(m => m.Author!).DistinctBy(a => a.Id).ToList();
-                foreach (var author in uniqueAuthors)
-                    await userService.UpsertUserAsync(author);
-
-                var authorDiscordIds = newMessages.Select(m => m.Author!.Id).Distinct().ToList();
-                var authorLookup = await db.Users
-                    .Where(u => authorDiscordIds.Contains(u.DiscordId))
-                    .ToDictionaryAsync(u => u.DiscordId, u => u.Id);
-
-                foreach (var message in newMessages)
-                {
-                    if (!authorLookup.TryGetValue(message.Author!.Id, out var authorId))
-                        continue;
-
-                    var attachmentsJson = message.Attachments.Count > 0
-                        ? JsonSerializer.Serialize(message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
-                        : null;
-                    var embedsJson = message.Embeds.Count > 0
-                        ? JsonSerializer.Serialize(message.Embeds)
-                        : null;
-
-                    // Insert-or-ignore per message: the existingSet pre-check filters known rows;
-                    // this guards the race where a live MessageCreated inserts the same message
-                    // during boot. On conflict we skip the backfilled event (the live path logs
-                    // its own Created event) and don't count it.
-                    var (_, inserted) = await db.Messages.GetOrInsertAsync(
-                        m => m.DiscordId == message.Id,
-                        () => new MessageEntity
-                        {
-                            DiscordId = message.Id,
-                            ChannelId = channelId,
-                            GuildId = guildId,
-                            AuthorId = authorId,
-                            Content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
-                            ReplyToDiscordId = message.ReferencedMessage?.Id,
-                            HasAttachments = message.Attachments.Count > 0,
-                            HasEmbeds = message.Embeds.Count > 0,
-                            AttachmentsJson = attachmentsJson,
-                            EmbedsJson = embedsJson,
-                            Flags = (int)(message.Flags ?? 0),
-                            CreatedAtUtc = message.Timestamp.UtcDateTime,
-                            EditedAtUtc = message.EditedTimestamp?.UtcDateTime
-                        });
-
-                    if (!inserted) continue;
-
-                    db.MessageEvents.Add(new MessageEventEntity
-                    {
-                        MessageDiscordId = message.Id,
-                        ChannelDiscordId = channel.Id,
-                        AuthorDiscordId = message.Author.Id,
-                        GuildDiscordId = guild.Id,
-                        EventType = MessageEventType.Backfilled,
-                        Content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
-                        HasAttachments = message.Attachments.Count > 0,
-                        HasEmbeds = message.Embeds.Count > 0,
-                        ReplyToMessageDiscordId = message.ReferencedMessage?.Id,
-                        AttachmentsJson = attachmentsJson,
-                        EmbedsJson = embedsJson,
-                        EventTimestampUtc = message.Timestamp.UtcDateTime,
-                        ReceivedAtUtc = DateTime.UtcNow
-                    });
-                    await db.SaveChangesAsync();
-
-                    totalInserted++;
-                }
+                totalInserted += await SyncChannelMessagesAsync(guild, channel);
             }
             catch (DSharpPlus.Exceptions.UnauthorizedException)
             {
@@ -154,6 +65,116 @@ internal sealed class BootQuickSyncService(
         }
 
         return totalInserted;
+    }
+
+    private async Task<int> SyncChannelMessagesAsync(DiscordGuild guild, DiscordChannel channel)
+    {
+        List<DiscordMessage> messages = [];
+        await foreach (var msg in channel.GetMessagesAsync(RecentMessagesPerChannel))
+            messages.Add(msg);
+
+        if (messages.Count == 0) return 0;
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+        var userService = scope.ServiceProvider.GetRequiredService<UserService>();
+        var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
+        var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
+
+        var guildId = (await guildUpsert.UpsertGuildAsync(guild)).Value;
+        var channelId = (await channelUpsert.UpsertChannelAsync(channel, guildId)).Value;
+
+        var existingDiscordIds = await db.Messages
+            .Where(m => messages.Select(msg => msg.Id).Contains(m.DiscordId))
+            .Select(m => m.DiscordId)
+            .ToListAsync();
+        var existingSet = existingDiscordIds.ToHashSet();
+
+        var newMessages = messages.Where(m => !existingSet.Contains(m.Id) && m.Author is not null).ToList();
+        if (newMessages.Count == 0) return 0;
+
+        var uniqueAuthors = newMessages.Select(m => m.Author!).DistinctBy(a => a.Id).ToList();
+        foreach (var author in uniqueAuthors)
+            await userService.UpsertUserAsync(author);
+
+        var authorDiscordIds = newMessages.Select(m => m.Author!.Id).Distinct().ToList();
+        var authorLookup = await db.Users
+            .Where(u => authorDiscordIds.Contains(u.DiscordId))
+            .ToDictionaryAsync(u => u.DiscordId, u => u.Id);
+
+        var inserted = 0;
+        foreach (var message in newMessages)
+        {
+            if (!authorLookup.TryGetValue(message.Author!.Id, out var authorId))
+                continue;
+
+            if (await InsertBackfilledMessageAsync(db, guild, channel, message, guildId, channelId, authorId))
+                inserted++;
+        }
+
+        return inserted;
+    }
+
+    // Insert-or-ignore per message: the caller's existingSet pre-check filters known rows;
+    // this guards the race where a live MessageCreated inserts the same message during boot.
+    // On conflict we skip the backfilled event (the live path logs its own Created event)
+    // and don't count it.
+    private static async Task<bool> InsertBackfilledMessageAsync(
+        DiscordDbContext db,
+        DiscordGuild guild,
+        DiscordChannel channel,
+        DiscordMessage message,
+        Guid guildId,
+        Guid channelId,
+        Guid authorId)
+    {
+        var attachmentsJson = message.Attachments.Count > 0
+            ? JsonSerializer.Serialize(message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
+            : null;
+        var embedsJson = message.Embeds.Count > 0
+            ? JsonSerializer.Serialize(message.Embeds)
+            : null;
+
+        var (_, inserted) = await db.Messages.GetOrInsertAsync(
+            m => m.DiscordId == message.Id,
+            () => new MessageEntity
+            {
+                DiscordId = message.Id,
+                ChannelId = channelId,
+                GuildId = guildId,
+                AuthorId = authorId,
+                Content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
+                ReplyToDiscordId = message.ReferencedMessage?.Id,
+                HasAttachments = message.Attachments.Count > 0,
+                HasEmbeds = message.Embeds.Count > 0,
+                AttachmentsJson = attachmentsJson,
+                EmbedsJson = embedsJson,
+                Flags = (int)(message.Flags ?? 0),
+                CreatedAtUtc = message.Timestamp.UtcDateTime,
+                EditedAtUtc = message.EditedTimestamp?.UtcDateTime
+            });
+
+        if (!inserted) return false;
+
+        db.MessageEvents.Add(new MessageEventEntity
+        {
+            MessageDiscordId = message.Id,
+            ChannelDiscordId = channel.Id,
+            AuthorDiscordId = message.Author!.Id,
+            GuildDiscordId = guild.Id,
+            EventType = MessageEventType.Backfilled,
+            Content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
+            HasAttachments = message.Attachments.Count > 0,
+            HasEmbeds = message.Embeds.Count > 0,
+            ReplyToMessageDiscordId = message.ReferencedMessage?.Id,
+            AttachmentsJson = attachmentsJson,
+            EmbedsJson = embedsJson,
+            EventTimestampUtc = message.Timestamp.UtcDateTime,
+            ReceivedAtUtc = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        return true;
     }
 
     private async Task<(int presenceSnapshots, int activitiesInserted)> SyncPresencesAsync(DiscordGuild guild)
@@ -181,59 +202,11 @@ internal sealed class BootQuickSyncService(
         {
             try
             {
-                var presence = member.Presence;
-                if (presence is null) continue;
+                var newActivities = await SnapshotMemberPresenceAsync(db, userService, guild, member, guildGuid.Value, now);
+                if (newActivities is null) continue;
 
-                var userResult = await userService.UpsertUserAsync(member);
-                if (!userResult.IsSuccess) continue;
-                var userGuid = userResult.Value;
-
-                var activitiesJson = SerializeActivities(presence.Activities);
-
-                db.PresenceEvents.Add(new PresenceEventEntity
-                {
-                    UserDiscordId = member.Id,
-                    GuildDiscordId = guild.Id,
-                    EventType = PresenceEventType.BootSnapshot,
-                    DesktopStatusBefore = (int)DiscordUserStatus.Offline,
-                    MobileStatusBefore = (int)DiscordUserStatus.Offline,
-                    WebStatusBefore = (int)DiscordUserStatus.Offline,
-                    DesktopStatusAfter = GetStatusValue(presence.ClientStatus?.Desktop),
-                    MobileStatusAfter = GetStatusValue(presence.ClientStatus?.Mobile),
-                    WebStatusAfter = GetStatusValue(presence.ClientStatus?.Web),
-                    ActivitiesAfterJson = activitiesJson,
-                    EventTimestampUtc = now,
-                    ReceivedAtUtc = now
-                });
                 presenceSnapshots++;
-
-                if (presence.Activities is { Count: > 0 })
-                {
-                    foreach (var activity in presence.Activities)
-                    {
-                        var hasActive = await db.Activities
-                            .AnyAsync(a => a.UserId == userGuid && a.IsActive
-                                && a.Name == activity.Name && a.ActivityType == (int)activity.ActivityType);
-
-                        if (!hasActive)
-                        {
-                            db.Activities.Add(new ActivityEntity
-                            {
-                                UserId = userGuid,
-                                GuildId = guildGuid.Value,
-                                ActivityType = (int)activity.ActivityType,
-                                Name = activity.Name,
-                                StreamUrl = activity.StreamUrl,
-                                IsActive = true,
-                                FirstSeenAtUtc = now,
-                                LastSeenAtUtc = now
-                            });
-                            activitiesInserted++;
-                        }
-                    }
-                }
-
-                await db.SaveChangesAsync();
+                activitiesInserted += newActivities.Value;
             }
             catch (Exception ex)
             {
@@ -242,6 +215,81 @@ internal sealed class BootQuickSyncService(
         }
 
         return (presenceSnapshots, activitiesInserted);
+    }
+
+    // Returns the number of newly-started activities, or null when the member has no
+    // presence (or their user row couldn't be upserted) and no snapshot was taken.
+    private static async Task<int?> SnapshotMemberPresenceAsync(
+        DiscordDbContext db,
+        UserService userService,
+        DiscordGuild guild,
+        DiscordMember member,
+        Guid guildGuid,
+        DateTime now)
+    {
+        var presence = member.Presence;
+        if (presence is null) return null;
+
+        var userResult = await userService.UpsertUserAsync(member);
+        if (!userResult.IsSuccess) return null;
+        var userGuid = userResult.Value;
+
+        db.PresenceEvents.Add(new PresenceEventEntity
+        {
+            UserDiscordId = member.Id,
+            GuildDiscordId = guild.Id,
+            EventType = PresenceEventType.BootSnapshot,
+            DesktopStatusBefore = (int)DiscordUserStatus.Offline,
+            MobileStatusBefore = (int)DiscordUserStatus.Offline,
+            WebStatusBefore = (int)DiscordUserStatus.Offline,
+            DesktopStatusAfter = GetStatusValue(presence.ClientStatus?.Desktop),
+            MobileStatusAfter = GetStatusValue(presence.ClientStatus?.Mobile),
+            WebStatusAfter = GetStatusValue(presence.ClientStatus?.Web),
+            ActivitiesAfterJson = SerializeActivities(presence.Activities),
+            EventTimestampUtc = now,
+            ReceivedAtUtc = now
+        });
+
+        var activitiesInserted = await StartMissingActivitiesAsync(db, presence.Activities, userGuid, guildGuid, now);
+
+        await db.SaveChangesAsync();
+        return activitiesInserted;
+    }
+
+    private static async Task<int> StartMissingActivitiesAsync(
+        DiscordDbContext db,
+        IReadOnlyList<DiscordActivity>? activities,
+        Guid userGuid,
+        Guid guildGuid,
+        DateTime now)
+    {
+        if (activities is not { Count: > 0 }) return 0;
+
+        var inserted = 0;
+        foreach (var activity in activities)
+        {
+            var hasActive = await db.Activities
+                .AnyAsync(a => a.UserId == userGuid && a.IsActive
+                    && a.Name == activity.Name && a.ActivityType == (int)activity.ActivityType);
+
+            if (!hasActive)
+            {
+                db.Activities.Add(new ActivityEntity
+                {
+                    UserId = userGuid,
+                    GuildId = guildGuid,
+                    ActivityType = (int)activity.ActivityType,
+                    Name = activity.Name,
+                    StreamUrl = activity.StreamUrl,
+                    IsActive = true,
+                    FirstSeenAtUtc = now,
+                    LastSeenAtUtc = now
+                });
+                inserted++;
+            }
+        }
+
+        return inserted;
     }
 
     private static int GetStatusValue(Optional<DiscordUserStatus>? status)

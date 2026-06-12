@@ -20,15 +20,8 @@ internal sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFa
         {
             string? rawJson = null;
 
-            // Isolated scope so a soft failure can be recorded even after the handler's scope faulted.
-            async Task RecordFailureAsync(Exception ex)
-            {
-                using var failureScope = scopeFactory.CreateScope();
-                var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
-                await failedEventService.RecordFailureAsync(
-                    eventType, handlerName, ex,
-                    guildId, channelId, userId, rawJson, correlationId: correlationId);
-            }
+            async Task RecordFailureAsync(Exception ex) => await RecordHandlerFailureAsync(
+                eventType, handlerName, guildId, channelId, userId, rawJson, correlationId, ex);
 
             try
             {
@@ -71,5 +64,23 @@ internal sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFa
                 await RecordFailureAsync(ex);
             }
         }
+    }
+
+    // Isolated scope so a soft failure can be recorded even after the handler's scope faulted.
+    private async Task RecordHandlerFailureAsync(
+        string eventType,
+        string handlerName,
+        ulong guildId,
+        ulong? channelId,
+        ulong? userId,
+        string? rawJson,
+        Guid correlationId,
+        Exception ex)
+    {
+        using var failureScope = scopeFactory.CreateScope();
+        var failedEventService = failureScope.ServiceProvider.GetRequiredService<FailedEventService>();
+        await failedEventService.RecordFailureAsync(
+            eventType, handlerName, ex,
+            guildId, channelId, userId, rawJson, correlationId: correlationId);
     }
 }

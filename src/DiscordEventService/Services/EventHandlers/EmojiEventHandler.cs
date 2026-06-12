@@ -29,68 +29,85 @@ internal sealed class EmojiEventHandler(EventPipeline pipeline) :
                     .Where(id => e.EmojisBefore[id].Name != e.EmojisAfter[id].Name)
                     .ToList();
 
-                foreach (var emoji in e.EmojisAfter.Values)
-                {
-                    var existing = await ctx.Db.Emotes
-                        .Where(em => em.DiscordId == emoji.Id)
-                        .FirstOrDefaultAsync();
-                    if (existing is null)
-                    {
-                        ctx.Db.Emotes.Add(new EmoteEntity
-                        {
-                            DiscordId = emoji.Id,
-                            GuildId = guildGuid,
-                            Name = emoji.Name,
-                            IsAnimated = emoji.IsAnimated,
-                            IsAvailable = emoji.IsAvailable,
-                        });
-                    }
-                    else
-                    {
-                        existing.Name = emoji.Name;
-                        existing.IsAnimated = emoji.IsAnimated;
-                        existing.IsAvailable = emoji.IsAvailable;
-                        existing.IsDeleted = false;
-                        existing.DeletedAtUtc = null;
-                    }
-                }
+                await UpsertEmotesAsync(ctx, e, guildGuid);
+                await SoftDeleteStaleEmotesAsync(ctx, guildGuid, afterIds, removedIds);
 
-                // Soft-delete stale rows. EmojiEventHandler is now the single canonical writer of
-                // Emotes for GuildEmojisUpdated (GuildEventHandler no longer touches the table), so
-                // reconcile the full stored set: any of this guild's active emotes absent from
-                // EmojisAfter is stale. This is broader than the before/after diff — it also reaps
-                // rows the event's "before" snapshot omitted — and preserves the first deletion time.
-                // When the guild FK didn't resolve, fall back to the before/after diff (by DiscordId)
-                // so a transient guild-upsert miss still records the removals it can see.
-                var staleQuery = ctx.Db.Emotes.Where(em => !em.IsDeleted);
-                staleQuery = guildGuid is { } gid
-                    ? staleQuery.Where(em => em.GuildId == gid && !afterIds.Contains(em.DiscordId))
-                    : staleQuery.Where(em => removedIds.Contains(em.DiscordId));
-
-                foreach (var stale in await staleQuery.ToListAsync())
-                {
-                    stale.IsDeleted = true;
-                    stale.DeletedAtUtc ??= ctx.ReceivedAtUtc;
-                }
-
-                ctx.Db.EmojiEvents.Add(new EmojiEventEntity
-                {
-                    GuildDiscordId = e.Guild.Id,
-                    EmojisAddedJson = addedIds.Count > 0
-                        ? JsonSerializer.Serialize(addedIds.Select(id => new { Id = id, e.EmojisAfter[id].Name }))
-                        : null,
-                    EmojisRemovedJson = removedIds.Count > 0
-                        ? JsonSerializer.Serialize(removedIds.Select(id => new { Id = id, e.EmojisBefore[id].Name }))
-                        : null,
-                    EmojisUpdatedJson = updatedIds.Count > 0
-                        ? JsonSerializer.Serialize(updatedIds.Select(id => new { Id = id, NameBefore = e.EmojisBefore[id].Name, NameAfter = e.EmojisAfter[id].Name }))
-                        : null,
-                    EventTimestampUtc = ctx.ReceivedAtUtc,
-                    ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson,
-                });
+                ctx.Db.EmojiEvents.Add(BuildEmojiEvent(e, ctx, addedIds, removedIds, updatedIds));
 
                 await ctx.Db.SaveChangesAsync();
             });
     }
+
+    private static async Task UpsertEmotesAsync(EventContext ctx, GuildEmojisUpdatedEventArgs e, Guid? guildGuid)
+    {
+        foreach (var emoji in e.EmojisAfter.Values)
+        {
+            var existing = await ctx.Db.Emotes
+                .Where(em => em.DiscordId == emoji.Id)
+                .FirstOrDefaultAsync();
+            if (existing is null)
+            {
+                ctx.Db.Emotes.Add(new EmoteEntity
+                {
+                    DiscordId = emoji.Id,
+                    GuildId = guildGuid,
+                    Name = emoji.Name,
+                    IsAnimated = emoji.IsAnimated,
+                    IsAvailable = emoji.IsAvailable,
+                });
+            }
+            else
+            {
+                existing.Name = emoji.Name;
+                existing.IsAnimated = emoji.IsAnimated;
+                existing.IsAvailable = emoji.IsAvailable;
+                existing.IsDeleted = false;
+                existing.DeletedAtUtc = null;
+            }
+        }
+    }
+
+    // Soft-delete stale rows. EmojiEventHandler is now the single canonical writer of
+    // Emotes for GuildEmojisUpdated (GuildEventHandler no longer touches the table), so
+    // reconcile the full stored set: any of this guild's active emotes absent from
+    // EmojisAfter is stale. This is broader than the before/after diff — it also reaps
+    // rows the event's "before" snapshot omitted — and preserves the first deletion time.
+    // When the guild FK didn't resolve, fall back to the before/after diff (by DiscordId)
+    // so a transient guild-upsert miss still records the removals it can see.
+    private static async Task SoftDeleteStaleEmotesAsync(
+        EventContext ctx, Guid? guildGuid, HashSet<ulong> afterIds, List<ulong> removedIds)
+    {
+        var staleQuery = ctx.Db.Emotes.Where(em => !em.IsDeleted);
+        staleQuery = guildGuid is { } gid
+            ? staleQuery.Where(em => em.GuildId == gid && !afterIds.Contains(em.DiscordId))
+            : staleQuery.Where(em => removedIds.Contains(em.DiscordId));
+
+        foreach (var stale in await staleQuery.ToListAsync())
+        {
+            stale.IsDeleted = true;
+            stale.DeletedAtUtc ??= ctx.ReceivedAtUtc;
+        }
+    }
+
+    private static EmojiEventEntity BuildEmojiEvent(
+        GuildEmojisUpdatedEventArgs e,
+        EventContext ctx,
+        List<ulong> addedIds,
+        List<ulong> removedIds,
+        List<ulong> updatedIds) => new EmojiEventEntity
+        {
+            GuildDiscordId = e.Guild.Id,
+            EmojisAddedJson = addedIds.Count > 0
+            ? JsonSerializer.Serialize(addedIds.Select(id => new { Id = id, e.EmojisAfter[id].Name }))
+            : null,
+            EmojisRemovedJson = removedIds.Count > 0
+            ? JsonSerializer.Serialize(removedIds.Select(id => new { Id = id, e.EmojisBefore[id].Name }))
+            : null,
+            EmojisUpdatedJson = updatedIds.Count > 0
+            ? JsonSerializer.Serialize(updatedIds.Select(id => new { Id = id, NameBefore = e.EmojisBefore[id].Name, NameAfter = e.EmojisAfter[id].Name }))
+            : null,
+            EventTimestampUtc = ctx.ReceivedAtUtc,
+            ReceivedAtUtc = ctx.ReceivedAtUtc,
+            RawEventJson = ctx.RawJson,
+        };
 }

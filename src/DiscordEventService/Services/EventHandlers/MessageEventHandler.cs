@@ -62,40 +62,10 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
                     // change-tracker clear on a conflict can't drop a pending event Add.
                     var (messageEntity, _) = await ctx.Db.Messages.GetOrInsertAsync(
                         m => m.DiscordId == e.Message.Id,
-                        () => new MessageEntity
-                        {
-                            DiscordId = e.Message.Id,
-                            ChannelId = channelId,
-                            GuildId = guildId,
-                            AuthorId = authorId,
-                            Content = NormalizeContent(e.Message.Content),
-                            ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
-                            HasAttachments = e.Message.Attachments.Count > 0,
-                            HasEmbeds = e.Message.Embeds.Count > 0,
-                            AttachmentsJson = attachmentsJson,
-                            EmbedsJson = embedsJson,
-                            Flags = (int)(e.Message.Flags ?? 0),
-                            CreatedAtUtc = e.Message.Timestamp.UtcDateTime,
-                        });
+                        () => BuildMessage(e, guildId, channelId, authorId, attachmentsJson, embedsJson));
 
                     var messageId = messageEntity!.Id;
-                    ctx.Db.MessageEvents.Add(new MessageEventEntity
-                    {
-                        MessageDiscordId = e.Message.Id,
-                        ChannelDiscordId = e.Channel.Id,
-                        AuthorDiscordId = e.Author.Id,
-                        GuildDiscordId = e.Guild.Id,
-                        EventType = MessageEventType.Created,
-                        Content = NormalizeContent(e.Message.Content),
-                        HasAttachments = e.Message.Attachments.Count > 0,
-                        HasEmbeds = e.Message.Embeds.Count > 0,
-                        ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
-                        AttachmentsJson = attachmentsJson,
-                        EmbedsJson = embedsJson,
-                        EventTimestampUtc = e.Message.Timestamp.UtcDateTime,
-                        ReceivedAtUtc = ctx.ReceivedAtUtc,
-                        RawEventJson = ctx.RawJson,
-                    });
+                    ctx.Db.MessageEvents.Add(BuildMessageCreatedEvent(e, ctx, attachmentsJson, embedsJson));
                     await ctx.Db.SaveChangesAsync();
 
                     await ExtractAndSaveMentionsAsync(ctx.Db, messageId, e.Message);
@@ -127,22 +97,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
                 var message = await ctx.Db.Messages.FirstOrDefaultAsync(m => m.DiscordId == e.Message.Id);
                 var messageGuid = message?.Id;
 
-                var contentBefore = NormalizeContent(e.MessageBefore is { } beforeForContent
-                    ? beforeForContent.Content
-                    : message?.Content);
-                var attachmentsBeforeJson = e.MessageBefore is { } beforeForAttachments
-                    ? (beforeForAttachments.Attachments.Count > 0
-                        ? JsonSerializer.Serialize(beforeForAttachments.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
-                        : null)
-                    : message?.AttachmentsJson;
-                var embedsBeforeJson = e.MessageBefore is { } beforeForEmbeds
-                    ? (beforeForEmbeds.Embeds.Count > 0
-                        ? JsonSerializer.Serialize(beforeForEmbeds.Embeds)
-                        : null)
-                    : message?.EmbedsJson;
-                var flagsBefore = e.MessageBefore is { } before
-                    ? (int)(before.Flags ?? 0)
-                    : message?.Flags;
+                var before = ResolveBeforeState(e, message);
 
                 // Wrap the ExecuteUpdate (auto-commits without a tx) and the event-log inserts
                 // in one transaction so a failure between them rolls back atomically.
@@ -164,52 +119,11 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
                             .SetProperty(m => m.Flags, flagsAfter)
                             .SetProperty(m => m.EditedAtUtc, editedAt));
 
-                    ctx.Db.MessageEvents.Add(new MessageEventEntity
-                    {
-                        MessageDiscordId = e.Message.Id,
-                        ChannelDiscordId = e.Channel.Id,
-                        AuthorDiscordId = e.Author?.Id,
-                        GuildDiscordId = e.Guild.Id,
-                        EventType = MessageEventType.Updated,
-                        Content = normalizedContent,
-                        ContentBefore = contentBefore,
-                        HasAttachments = e.Message.Attachments.Count > 0,
-                        HasEmbeds = e.Message.Embeds.Count > 0,
-                        ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
-                        AttachmentsJson = attachmentsJson,
-                        EmbedsJson = embedsJson,
-                        EventTimestampUtc = editedAt,
-                        ReceivedAtUtc = ctx.ReceivedAtUtc,
-                        RawEventJson = ctx.RawJson,
-                    });
+                    ctx.Db.MessageEvents.Add(BuildMessageUpdatedEvent(
+                        e, ctx, normalizedContent, before.ContentBefore, attachmentsJson, embedsJson, editedAt));
 
-                    var contentChanged = contentBefore != normalizedContent;
-                    // jsonb columns get PG-normalized on storage; freshly-serialized strings
-                    // (from e.Message or e.MessageBefore) won't byte-match the DB-loaded value
-                    // even when the underlying data is identical. Structural compare.
-                    var attachmentsChanged = !JsonEquals(attachmentsBeforeJson, attachmentsJson);
-                    var embedsChanged = !JsonEquals(embedsBeforeJson, embedsJson);
-                    var flagsChanged = flagsBefore != flagsAfter;
-
-                    if (messageGuid is Guid mid &&
-                        (contentChanged || attachmentsChanged || embedsChanged || flagsChanged))
-                    {
-                        ctx.Db.MessageEditHistory.Add(new MessageEditHistoryEntity
-                        {
-                            MessageId = mid,
-                            MessageDiscordId = e.Message.Id,
-                            ContentBefore = contentBefore,
-                            ContentAfter = normalizedContent,
-                            AttachmentsBeforeJson = attachmentsBeforeJson,
-                            AttachmentsAfterJson = attachmentsJson,
-                            EmbedsBeforeJson = embedsBeforeJson,
-                            EmbedsAfterJson = embedsJson,
-                            FlagsBefore = flagsBefore,
-                            FlagsAfter = flagsAfter,
-                            EditedAtUtc = editedAt,
-                            RecordedAtUtc = ctx.ReceivedAtUtc,
-                        });
-                    }
+                    AddEditHistoryIfChanged(
+                        ctx, e, messageGuid, before, normalizedContent, attachmentsJson, embedsJson, flagsAfter, editedAt);
 
                     await ctx.Db.SaveChangesAsync();
 
@@ -316,6 +230,17 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
             .Where(m => m.MessageId == messageId)
             .ExecuteDeleteAsync();
 
+        var mentions = CollectMentions(messageId, message);
+
+        if (mentions.Count > 0)
+        {
+            db.MessageMentions.AddRange(mentions);
+            await db.SaveChangesAsync();
+        }
+    }
+
+    private static List<MessageMentionEntity> CollectMentions(Guid messageId, DiscordMessage message)
+    {
         List<MessageMentionEntity> mentions = [];
 
         if (message.MentionedUsers is { Count: > 0 })
@@ -366,11 +291,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
                 mentions.Add(new MessageMentionEntity { MessageId = messageId, MentionType = MessageMentionType.Here });
         }
 
-        if (mentions.Count > 0)
-        {
-            db.MessageMentions.AddRange(mentions);
-            await db.SaveChangesAsync();
-        }
+        return mentions;
     }
 
     private static string? NormalizeContent(string? content) =>
@@ -381,5 +302,130 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
         if (a == b) return true;
         if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
         return JsonNode.DeepEquals(JsonNode.Parse(a), JsonNode.Parse(b));
+    }
+
+    // Before-state for an edit: prefer the cached e.MessageBefore; fall back to the stored row
+    // when DSharpPlus didn't deliver it (uncached message edit).
+    private sealed record MessageBeforeState(
+        string? ContentBefore, string? AttachmentsBeforeJson, string? EmbedsBeforeJson, int? FlagsBefore);
+
+    private static MessageBeforeState ResolveBeforeState(MessageUpdatedEventArgs e, MessageEntity? message)
+    {
+        var contentBefore = NormalizeContent(e.MessageBefore is { } beforeForContent
+            ? beforeForContent.Content
+            : message?.Content);
+        var attachmentsBeforeJson = e.MessageBefore is { } beforeForAttachments
+            ? (beforeForAttachments.Attachments.Count > 0
+                ? JsonSerializer.Serialize(beforeForAttachments.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
+                : null)
+            : message?.AttachmentsJson;
+        var embedsBeforeJson = e.MessageBefore is { } beforeForEmbeds
+            ? (beforeForEmbeds.Embeds.Count > 0
+                ? JsonSerializer.Serialize(beforeForEmbeds.Embeds)
+                : null)
+            : message?.EmbedsJson;
+        var flagsBefore = e.MessageBefore is { } before
+            ? (int)(before.Flags ?? 0)
+            : message?.Flags;
+
+        return new MessageBeforeState(contentBefore, attachmentsBeforeJson, embedsBeforeJson, flagsBefore);
+    }
+
+    private static MessageEntity BuildMessage(
+        MessageCreatedEventArgs e, Guid guildId, Guid channelId, Guid authorId,
+        string? attachmentsJson, string? embedsJson) => new MessageEntity
+        {
+            DiscordId = e.Message.Id,
+            ChannelId = channelId,
+            GuildId = guildId,
+            AuthorId = authorId,
+            Content = NormalizeContent(e.Message.Content),
+            ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
+            HasAttachments = e.Message.Attachments.Count > 0,
+            HasEmbeds = e.Message.Embeds.Count > 0,
+            AttachmentsJson = attachmentsJson,
+            EmbedsJson = embedsJson,
+            Flags = (int)(e.Message.Flags ?? 0),
+            CreatedAtUtc = e.Message.Timestamp.UtcDateTime,
+        };
+
+    private static MessageEventEntity BuildMessageCreatedEvent(
+        MessageCreatedEventArgs e, EventContext ctx, string? attachmentsJson, string? embedsJson) => new MessageEventEntity
+        {
+            MessageDiscordId = e.Message.Id,
+            ChannelDiscordId = e.Channel.Id,
+            AuthorDiscordId = e.Author.Id,
+            GuildDiscordId = e.Guild.Id,
+            EventType = MessageEventType.Created,
+            Content = NormalizeContent(e.Message.Content),
+            HasAttachments = e.Message.Attachments.Count > 0,
+            HasEmbeds = e.Message.Embeds.Count > 0,
+            ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
+            AttachmentsJson = attachmentsJson,
+            EmbedsJson = embedsJson,
+            EventTimestampUtc = e.Message.Timestamp.UtcDateTime,
+            ReceivedAtUtc = ctx.ReceivedAtUtc,
+            RawEventJson = ctx.RawJson,
+        };
+
+    private static MessageEventEntity BuildMessageUpdatedEvent(
+        MessageUpdatedEventArgs e, EventContext ctx, string? normalizedContent, string? contentBefore,
+        string? attachmentsJson, string? embedsJson, DateTime editedAt) => new MessageEventEntity
+        {
+            MessageDiscordId = e.Message.Id,
+            ChannelDiscordId = e.Channel.Id,
+            AuthorDiscordId = e.Author?.Id,
+            GuildDiscordId = e.Guild.Id,
+            EventType = MessageEventType.Updated,
+            Content = normalizedContent,
+            ContentBefore = contentBefore,
+            HasAttachments = e.Message.Attachments.Count > 0,
+            HasEmbeds = e.Message.Embeds.Count > 0,
+            ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
+            AttachmentsJson = attachmentsJson,
+            EmbedsJson = embedsJson,
+            EventTimestampUtc = editedAt,
+            ReceivedAtUtc = ctx.ReceivedAtUtc,
+            RawEventJson = ctx.RawJson,
+        };
+
+    private static void AddEditHistoryIfChanged(
+        EventContext ctx,
+        MessageUpdatedEventArgs e,
+        Guid? messageGuid,
+        MessageBeforeState before,
+        string? normalizedContent,
+        string? attachmentsJson,
+        string? embedsJson,
+        int flagsAfter,
+        DateTime editedAt)
+    {
+        var contentChanged = before.ContentBefore != normalizedContent;
+        // jsonb columns get PG-normalized on storage; freshly-serialized strings
+        // (from e.Message or e.MessageBefore) won't byte-match the DB-loaded value
+        // even when the underlying data is identical. Structural compare.
+        var attachmentsChanged = !JsonEquals(before.AttachmentsBeforeJson, attachmentsJson);
+        var embedsChanged = !JsonEquals(before.EmbedsBeforeJson, embedsJson);
+        var flagsChanged = before.FlagsBefore != flagsAfter;
+
+        if (messageGuid is Guid mid &&
+            (contentChanged || attachmentsChanged || embedsChanged || flagsChanged))
+        {
+            ctx.Db.MessageEditHistory.Add(new MessageEditHistoryEntity
+            {
+                MessageId = mid,
+                MessageDiscordId = e.Message.Id,
+                ContentBefore = before.ContentBefore,
+                ContentAfter = normalizedContent,
+                AttachmentsBeforeJson = before.AttachmentsBeforeJson,
+                AttachmentsAfterJson = attachmentsJson,
+                EmbedsBeforeJson = before.EmbedsBeforeJson,
+                EmbedsAfterJson = embedsJson,
+                FlagsBefore = before.FlagsBefore,
+                FlagsAfter = flagsAfter,
+                EditedAtUtc = editedAt,
+                RecordedAtUtc = ctx.ReceivedAtUtc,
+            });
+        }
     }
 }

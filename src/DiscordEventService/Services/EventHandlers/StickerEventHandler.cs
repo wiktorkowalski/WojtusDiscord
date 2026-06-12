@@ -30,59 +30,75 @@ internal sealed class StickerEventHandler(EventPipeline pipeline) :
                                  e.StickersBefore[id].Description != e.StickersAfter[id].Description)
                     .ToList();
 
-                foreach (var sticker in e.StickersAfter.Values)
-                {
-                    var existing = await ctx.Db.Stickers.FirstOrDefaultAsync(s => s.DiscordId == sticker.Id);
-                    if (existing is null)
-                    {
-                        ctx.Db.Stickers.Add(new StickerEntity
-                        {
-                            DiscordId = sticker.Id,
-                            GuildId = guildGuid,
-                            Name = sticker.Name ?? string.Empty,
-                            Description = sticker.Description,
-                            Tags = sticker.Tags is not null ? string.Join(",", sticker.Tags) : null,
-                            Type = (int)sticker.Type,
-                            FormatType = (int)sticker.FormatType,
-                            IsAvailable = true
-                        });
-                    }
-                    else
-                    {
-                        existing.Name = sticker.Name ?? string.Empty;
-                        existing.Description = sticker.Description;
-                        existing.Tags = sticker.Tags is not null ? string.Join(",", sticker.Tags) : null;
-                        existing.IsDeleted = false;
-                        existing.DeletedAtUtc = null;
-                    }
-                }
+                await UpsertStickersAsync(ctx, e, guildGuid);
+                await SoftDeleteRemovedStickersAsync(ctx, removedIds);
 
-                foreach (var id in removedIds)
-                {
-                    await ctx.Db.Stickers.Where(s => s.DiscordId == id)
-                        .ExecuteUpdateAsync(s => s
-                            .SetProperty(st => st.IsDeleted, true)
-                            .SetProperty(st => st.DeletedAtUtc, (DateTime?)ctx.ReceivedAtUtc));
-                }
-
-                ctx.Db.StickerEvents.Add(new StickerEventEntity
-                {
-                    GuildDiscordId = e.Guild.Id,
-                    StickersAddedJson = addedIds.Count > 0
-                        ? JsonSerializer.Serialize(addedIds.Select(id => new { Id = id, e.StickersAfter[id].Name }))
-                        : null,
-                    StickersRemovedJson = removedIds.Count > 0
-                        ? JsonSerializer.Serialize(removedIds.Select(id => new { Id = id, e.StickersBefore[id].Name }))
-                        : null,
-                    StickersUpdatedJson = updatedIds.Count > 0
-                        ? JsonSerializer.Serialize(updatedIds.Select(id => new { Id = id, NameBefore = e.StickersBefore[id].Name, NameAfter = e.StickersAfter[id].Name }))
-                        : null,
-                    EventTimestampUtc = ctx.ReceivedAtUtc,
-                    ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
-                });
+                ctx.Db.StickerEvents.Add(BuildStickerEvent(e, ctx, addedIds, removedIds, updatedIds));
 
                 await ctx.Db.SaveChangesAsync();
             });
     }
+
+    private static async Task UpsertStickersAsync(EventContext ctx, GuildStickersUpdatedEventArgs e, Guid? guildGuid)
+    {
+        foreach (var sticker in e.StickersAfter.Values)
+        {
+            var existing = await ctx.Db.Stickers.FirstOrDefaultAsync(s => s.DiscordId == sticker.Id);
+            if (existing is null)
+            {
+                ctx.Db.Stickers.Add(new StickerEntity
+                {
+                    DiscordId = sticker.Id,
+                    GuildId = guildGuid,
+                    Name = sticker.Name ?? string.Empty,
+                    Description = sticker.Description,
+                    Tags = sticker.Tags is not null ? string.Join(",", sticker.Tags) : null,
+                    Type = (int)sticker.Type,
+                    FormatType = (int)sticker.FormatType,
+                    IsAvailable = true
+                });
+            }
+            else
+            {
+                existing.Name = sticker.Name ?? string.Empty;
+                existing.Description = sticker.Description;
+                existing.Tags = sticker.Tags is not null ? string.Join(",", sticker.Tags) : null;
+                existing.IsDeleted = false;
+                existing.DeletedAtUtc = null;
+            }
+        }
+    }
+
+    private static async Task SoftDeleteRemovedStickersAsync(EventContext ctx, List<ulong> removedIds)
+    {
+        foreach (var id in removedIds)
+        {
+            await ctx.Db.Stickers.Where(s => s.DiscordId == id)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(st => st.IsDeleted, true)
+                    .SetProperty(st => st.DeletedAtUtc, (DateTime?)ctx.ReceivedAtUtc));
+        }
+    }
+
+    private static StickerEventEntity BuildStickerEvent(
+        GuildStickersUpdatedEventArgs e,
+        EventContext ctx,
+        List<ulong> addedIds,
+        List<ulong> removedIds,
+        List<ulong> updatedIds) => new StickerEventEntity
+        {
+            GuildDiscordId = e.Guild.Id,
+            StickersAddedJson = addedIds.Count > 0
+            ? JsonSerializer.Serialize(addedIds.Select(id => new { Id = id, e.StickersAfter[id].Name }))
+            : null,
+            StickersRemovedJson = removedIds.Count > 0
+            ? JsonSerializer.Serialize(removedIds.Select(id => new { Id = id, e.StickersBefore[id].Name }))
+            : null,
+            StickersUpdatedJson = updatedIds.Count > 0
+            ? JsonSerializer.Serialize(updatedIds.Select(id => new { Id = id, NameBefore = e.StickersBefore[id].Name, NameAfter = e.StickersAfter[id].Name }))
+            : null,
+            EventTimestampUtc = ctx.ReceivedAtUtc,
+            ReceivedAtUtc = ctx.ReceivedAtUtc,
+            RawEventJson = ctx.RawJson
+        };
 }

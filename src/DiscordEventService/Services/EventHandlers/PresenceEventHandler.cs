@@ -23,30 +23,7 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
     {
         var guildId = args.PresenceAfter?.Guild?.Id ?? args.PresenceBefore?.Guild?.Id ?? 0;
 
-        // Serialize a DTO rather than the raw event args — DSharpPlus internals don't serialize
-        // cleanly, and the full presence payload is noisy. The pipeline serializes whatever we
-        // pass as the event object, so this DTO becomes the raw_event_logs row.
-        var eventDto = new
-        {
-            UserId = args.User.Id,
-            GuildId = guildId,
-            Before = args.PresenceBefore is null ? null : new
-            {
-                Desktop = GetStatusValue(args.PresenceBefore.ClientStatus?.Desktop),
-                Mobile = GetStatusValue(args.PresenceBefore.ClientStatus?.Mobile),
-                Web = GetStatusValue(args.PresenceBefore.ClientStatus?.Web),
-                Activities = args.PresenceBefore.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
-            },
-            After = args.PresenceAfter is null ? null : new
-            {
-                Desktop = GetStatusValue(args.PresenceAfter.ClientStatus?.Desktop),
-                Mobile = GetStatusValue(args.PresenceAfter.ClientStatus?.Mobile),
-                Web = GetStatusValue(args.PresenceAfter.ClientStatus?.Web),
-                Activities = args.PresenceAfter.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
-            }
-        };
-
-        await pipeline.ExecuteAsync(eventDto, "PresenceUpdated", nameof(PresenceEventHandler),
+        await pipeline.ExecuteAsync(BuildRawEventDto(args, guildId), "PresenceUpdated", nameof(PresenceEventHandler),
             guildId, null, args.User.Id, async ctx =>
             {
                 // Presence row, the user upsert, and activity tracking are one logical event:
@@ -62,26 +39,7 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
                     ctx.Db.ChangeTracker.Clear();
                     await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                    ctx.Db.PresenceEvents.Add(new PresenceEventEntity
-                    {
-                        UserDiscordId = args.User.Id,
-                        GuildDiscordId = guildId,
-
-                        DesktopStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Desktop),
-                        MobileStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Mobile),
-                        WebStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Web),
-
-                        DesktopStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Desktop),
-                        MobileStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Mobile),
-                        WebStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Web),
-
-                        ActivitiesBeforeJson = SerializeActivities(args.PresenceBefore?.Activities),
-                        ActivitiesAfterJson = SerializeActivities(args.PresenceAfter?.Activities),
-
-                        EventTimestampUtc = ctx.ReceivedAtUtc,
-                        ReceivedAtUtc = ctx.ReceivedAtUtc,
-                        RawEventJson = ctx.RawJson
-                    });
+                    ctx.Db.PresenceEvents.Add(BuildPresenceEvent(args, guildId, ctx));
 
                     await ctx.Db.SaveChangesAsync();
 
@@ -120,10 +78,21 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
         var startedActivities = activitiesAfter?.Where(a =>
             !activitiesBefore?.Any(b => IsSameActivity(a, b)) ?? true) ?? [];
 
-        foreach (var ended in endedActivities)
+        var continuingActivities = (activitiesAfter ?? [])
+            .Where(current => activitiesBefore?.Any(b => IsSameActivity(current, b)) == true);
+
+        await EndActivitiesAsync(dbContext, userGuid, endedActivities, now);
+        await StartActivitiesAsync(dbContext, userGuid, startedActivities, now);
+        await TouchContinuingActivitiesAsync(dbContext, userGuid, continuingActivities, now);
+    }
+
+    private static async Task EndActivitiesAsync(
+        DiscordDbContext dbContext, Guid userGuid, IEnumerable<DiscordActivity> ended, DateTime now)
+    {
+        foreach (var activity in ended)
         {
             var existingActivity = await dbContext.Activities
-                .Where(a => a.UserId == userGuid && a.IsActive && a.Name == ended.Name && a.ActivityType == (int)ended.ActivityType)
+                .Where(a => a.UserId == userGuid && a.IsActive && a.Name == activity.Name && a.ActivityType == (int)activity.ActivityType)
                 .FirstOrDefaultAsync();
 
             if (existingActivity is not null)
@@ -133,33 +102,38 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
                 existingActivity.LastSeenAtUtc = now;
             }
         }
+    }
 
-        foreach (var started in startedActivities)
+    private static async Task StartActivitiesAsync(
+        DiscordDbContext dbContext, Guid userGuid, IEnumerable<DiscordActivity> started, DateTime now)
+    {
+        foreach (var startedActivity in started)
         {
             var activity = new ActivityEntity
             {
                 UserId = userGuid,
-                ActivityType = (int)started.ActivityType,
-                Name = started.Name,
-                StreamUrl = started.StreamUrl,
+                ActivityType = (int)startedActivity.ActivityType,
+                Name = startedActivity.Name,
+                StreamUrl = startedActivity.StreamUrl,
                 IsActive = true,
                 FirstSeenAtUtc = now,
                 LastSeenAtUtc = now
             };
 
             // For Spotify/Listening activities, try to get additional data
-            if (started is { ActivityType: DiscordActivityType.ListeningTo, Name: "Spotify" })
+            if (startedActivity is { ActivityType: DiscordActivityType.ListeningTo, Name: "Spotify" })
             {
-                activity.SpotifySongTitle = started.Name;
+                activity.SpotifySongTitle = startedActivity.Name;
             }
 
             await dbContext.Activities.AddAsync(activity);
         }
+    }
 
-        var continuingActivities = (activitiesAfter ?? [])
-            .Where(current => activitiesBefore?.Any(b => IsSameActivity(current, b)) == true);
-
-        foreach (var current in continuingActivities)
+    private static async Task TouchContinuingActivitiesAsync(
+        DiscordDbContext dbContext, Guid userGuid, IEnumerable<DiscordActivity> continuing, DateTime now)
+    {
+        foreach (var current in continuing)
         {
             var existingActivity = await dbContext.Activities
                 .Where(a => a.UserId == userGuid && a.IsActive && a.Name == current.Name && a.ActivityType == (int)current.ActivityType)
@@ -168,6 +142,51 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
             if (existingActivity is not null) existingActivity.LastSeenAtUtc = now;
         }
     }
+
+    // Serialize a DTO rather than the raw event args — DSharpPlus internals don't serialize
+    // cleanly, and the full presence payload is noisy. The pipeline serializes whatever we
+    // pass as the event object, so this DTO becomes the raw_event_logs row.
+    private static object BuildRawEventDto(PresenceUpdatedEventArgs args, ulong guildId) => new
+    {
+        UserId = args.User.Id,
+        GuildId = guildId,
+        Before = args.PresenceBefore is null ? null : new
+        {
+            Desktop = GetStatusValue(args.PresenceBefore.ClientStatus?.Desktop),
+            Mobile = GetStatusValue(args.PresenceBefore.ClientStatus?.Mobile),
+            Web = GetStatusValue(args.PresenceBefore.ClientStatus?.Web),
+            Activities = args.PresenceBefore.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
+        },
+        After = args.PresenceAfter is null ? null : new
+        {
+            Desktop = GetStatusValue(args.PresenceAfter.ClientStatus?.Desktop),
+            Mobile = GetStatusValue(args.PresenceAfter.ClientStatus?.Mobile),
+            Web = GetStatusValue(args.PresenceAfter.ClientStatus?.Web),
+            Activities = args.PresenceAfter.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
+        }
+    };
+
+    private static PresenceEventEntity BuildPresenceEvent(
+        PresenceUpdatedEventArgs args, ulong guildId, EventContext ctx) => new PresenceEventEntity
+        {
+            UserDiscordId = args.User.Id,
+            GuildDiscordId = guildId,
+
+            DesktopStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Desktop),
+            MobileStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Mobile),
+            WebStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Web),
+
+            DesktopStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Desktop),
+            MobileStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Mobile),
+            WebStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Web),
+
+            ActivitiesBeforeJson = SerializeActivities(args.PresenceBefore?.Activities),
+            ActivitiesAfterJson = SerializeActivities(args.PresenceAfter?.Activities),
+
+            EventTimestampUtc = ctx.ReceivedAtUtc,
+            ReceivedAtUtc = ctx.ReceivedAtUtc,
+            RawEventJson = ctx.RawJson
+        };
 
     private static bool IsSameActivity(DiscordActivity a, DiscordActivity b) =>
         a.Name == b.Name && a.ActivityType == b.ActivityType;
