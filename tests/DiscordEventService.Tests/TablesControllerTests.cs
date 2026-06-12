@@ -139,7 +139,7 @@ public sealed class TablesControllerTests(PostgresFixture fixture) : IClassFixtu
         _db.ChangeTracker.Clear();
     }
 
-    private TablesController NewController() => new(_db, _catalog);
+    private TablesController NewController() => new TablesController(_db, _catalog);
 
     private static T Ok<T>(ActionResult<T> result)
     {

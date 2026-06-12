@@ -3,11 +3,9 @@ using DiscordEventService.Data.Entities.Core;
 
 namespace DiscordEventService.Jobs;
 
-/// <summary>
-/// Per-item progress helpers shared by every backfill job. The job lifecycle (scope, checkpoint
-/// get-or-create, status transitions) lives in <see cref="BackfillJobExecutor"/>; only the
-/// mid-loop progress/error book-keeping that runs inside a job's work delegate stays here.
-/// </summary>
+// Per-item progress helpers shared by every backfill job. The job lifecycle (scope, checkpoint
+// get-or-create, status transitions) lives in BackfillJobExecutor; only the mid-loop progress/error
+// book-keeping that runs inside a job's work delegate stays here.
 public abstract class BackfillJobBase
 {
     protected abstract BackfillType BackfillType { get; }
@@ -20,26 +18,14 @@ public abstract class BackfillJobBase
         await db.SaveChangesAsync();
     }
 
-    protected async Task SaveProgressAsync(DiscordDbContext db, BackfillCheckpointEntity checkpoint)
-    {
-        await db.SaveChangesAsync();
-    }
+    protected Task SaveProgressAsync(DiscordDbContext db, BackfillCheckpointEntity checkpoint) => db.SaveChangesAsync();
 
-    /// <summary>
-    /// Drives the per-item resume-cursor loop shared by the history jobs (Messages, Reactions):
-    /// skip to the channel a genuinely-interrupted run stopped on (<c>CurrentChannelId</c>, already
-    /// reset to null by <see cref="BackfillJobExecutor"/> after a terminal run), then walk the rest,
-    /// stamping <c>CurrentChannelId</c> per item and clearing the per-channel batch cursor
-    /// (<c>LastProcessedId</c>) only AFTER an item finishes — so the resume channel still sees its
-    /// saved batch cursor on entry. A per-item failure (non-cancellation) is recorded and the loop
-    /// continues with the next item; cancellation propagates to the executor's terminal handling.
-    /// <para>
-    /// <paramref name="items"/> MUST be in a stable, deterministic order across runs (the jobs
-    /// guarantee this via <c>OrderBy(c =&gt; c.Id)</c>); otherwise resume would skip the wrong items.
-    /// The per-batch <c>LastProcessedId</c> write stays inside <paramref name="processItem"/> — the
-    /// inner paging body is job-specific and not extracted here.
-    /// </para>
-    /// </summary>
+    // Drives the per-item resume-cursor loop shared by the history jobs (Messages, Reactions): skip to the
+    // channel a genuinely-interrupted run stopped on (CurrentChannelId, reset to null by the executor after a
+    // terminal run), then walk the rest, clearing the per-channel batch cursor (LastProcessedId) only AFTER an
+    // item finishes — so the resume channel still sees its saved batch cursor on entry.
+    // items MUST be in a stable, deterministic order across runs (jobs guarantee this via OrderBy(c => c.Id));
+    // otherwise resume would skip the wrong items.
     protected async Task IterateWithCheckpointAsync<T>(
         DiscordDbContext db,
         BackfillCheckpointEntity checkpoint,

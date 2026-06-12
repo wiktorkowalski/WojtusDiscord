@@ -7,12 +7,7 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
-/// <summary>
-/// Guards the voice-minute bot-downtime adjustment (a join whose leave goes unobserved
-/// during an outage must not credit the blind gap) and the dense, zero-filled CET-day
-/// message series. Each test class owns its Postgres container (IClassFixture), so the
-/// seeded downtime interval here cannot leak into the other voice tests.
-/// </summary>
+// Per-class Postgres container (IClassFixture) so the seeded downtime interval can't leak into other voice tests.
 public sealed class VoiceDowntimeAndDailyTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private const ulong GuildSf = 742554855180206203UL;
@@ -128,7 +123,7 @@ public sealed class VoiceDowntimeAndDailyTests(PostgresFixture fixture) : IClass
         _db.ChangeTracker.Clear();
     }
 
-    private static MessageEntity Message(Guid authorId, Guid channelId, Guid guildId, ulong discordId, DateTime at) => new()
+    private static MessageEntity Message(Guid authorId, Guid channelId, Guid guildId, ulong discordId, DateTime at) => new MessageEntity
     {
         DiscordId = discordId,
         AuthorId = authorId,
@@ -139,7 +134,7 @@ public sealed class VoiceDowntimeAndDailyTests(PostgresFixture fixture) : IClass
     };
 
     private static VoiceStateEventEntity Voice(
-        ulong user, ulong? before, ulong? after, VoiceEventType type, DateTime at) => new()
+        ulong user, ulong? before, ulong? after, VoiceEventType type, DateTime at) => new VoiceStateEventEntity
         {
             UserDiscordId = user,
             GuildDiscordId = GuildSf,

@@ -1,15 +1,15 @@
+using System.Text.Json;
 using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
-using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
 public sealed class ThreadSyncHandler(EventPipeline pipeline) :
     IEventHandler<ThreadListSyncedEventArgs>
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false

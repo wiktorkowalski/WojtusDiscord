@@ -2,8 +2,7 @@ using System.Text.Json;
 
 namespace DiscordEventService.Infrastructure;
 
-/// <summary>Parses a stored jsonb payload to a <see cref="JsonElement"/>, falling back
-/// to a wrapper object for diagnostic stubs / malformed text rather than throwing.</summary>
+// Falls back to a wrapper object for diagnostic stubs / malformed jsonb rather than throwing.
 internal static class JsonPayload
 {
     public static JsonElement Parse(string json)

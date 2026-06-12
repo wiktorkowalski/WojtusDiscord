@@ -8,11 +8,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Controllers;
 
-/// <summary>
-/// Unified, time-ordered activity feed over raw_event_logs (the single append-only
-/// source of every gateway event). Keyset pagination on (received_at_utc DESC, id)
-/// — both indexed — so deep pages stay fast and never skip/duplicate rows.
-/// </summary>
+// Keyset pagination on (received_at_utc DESC, id) — both indexed — so deep pages stay
+// fast and never skip/duplicate rows.
 [ApiController]
 [Route("api/timeline")]
 public sealed class TimelineController(DiscordDbContext db) : ControllerBase
@@ -51,13 +48,9 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
             query = query.Where(r => types.Contains(r.EventType));
         }
         if (userId is not null)
-        {
             query = query.Where(r => r.UserDiscordId == userId.Value);
-        }
         if (channelId is not null)
-        {
             query = query.Where(r => r.ChannelDiscordId == channelId.Value);
-        }
 
         if (TryDecodeCursor(cursor, out var cursorTs, out var cursorId))
         {
@@ -87,9 +80,7 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
 
         var hasMore = rows.Count > pageSize;
         if (hasMore)
-        {
             rows.RemoveAt(rows.Count - 1);
-        }
 
         var events = rows.Select(r => new TimelineEventDto(
             r.Id,
@@ -120,17 +111,13 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
         receivedAtUtc = default;
         id = default;
         if (string.IsNullOrEmpty(cursor))
-        {
             return false;
-        }
 
         try
         {
             var parts = Encoding.UTF8.GetString(Convert.FromBase64String(cursor)).Split('|', 2);
             if (parts.Length != 2)
-            {
                 return false;
-            }
             receivedAtUtc = DateTime.Parse(parts[0], CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
             return Guid.TryParse(parts[1], out id);
         }

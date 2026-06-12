@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
@@ -11,8 +13,6 @@ using DSharpPlus.EventArgs;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using System.Text.Json;
-using System.Text.Json.Nodes;
 
 namespace DiscordEventService.Services.EventHandlers;
 
@@ -36,12 +36,9 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                     ? JsonSerializer.Serialize(e.Message.Embeds)
                     : null;
 
-                // Resolve FKs via upsert-if-missing. The 2026-05-03 incident left 69 messages with
-                // channel_id IS NULL because the prior FirstOrDefault path silently wrote null when
-                // the channel (a thread) wasn't yet in our DB. §P1.9 closes that hole; §P2.6 (#74)
-                // makes the FKs NOT NULL so any regression in the upsert services becomes a loud
-                // skip + FailedEvent instead of a silent NULL FK row. FkResolver concentrates that
-                // resolve + all-or-fail validation + failure recording.
+                // Resolve FKs via upsert-if-missing: a FirstOrDefault path would silently write a NULL
+                // FK when the channel (e.g. an uncached thread) isn't in our DB yet. Resolver does an
+                // all-or-fail validation so a missing FK becomes a loud skip, not a NULL-FK row.
                 var fks = await ctx.Services.GetRequiredService<FkResolver>()
                     .ResolveAsync(ctx, e.Guild, e.Channel, e.Author, $"MessageId={e.Message.Id}");
                 if (!fks.Success) return; // resolver already logged + recorded the failure
@@ -50,7 +47,7 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                 var channelId = fks.ChannelId;
                 var authorId = fks.UserId;
 
-                MessageEventEntity NewMessageEvent() => new()
+                MessageEventEntity NewMessageEvent() => new MessageEventEntity
                 {
                     MessageDiscordId = e.Message.Id,
                     ChannelDiscordId = e.Channel.Id,
@@ -65,7 +62,7 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                     EmbedsJson = embedsJson,
                     EventTimestampUtc = e.Message.Timestamp.UtcDateTime,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 };
 
                 // Wrap message + event + mentions in one transaction so they commit atomically.
@@ -96,7 +93,7 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                             AttachmentsJson = attachmentsJson,
                             EmbedsJson = embedsJson,
                             Flags = (int)(e.Message.Flags ?? 0),
-                            CreatedAtUtc = e.Message.Timestamp.UtcDateTime
+                            CreatedAtUtc = e.Message.Timestamp.UtcDateTime,
                         });
 
                     var messageId = messageEntity!.Id;
@@ -145,7 +142,7 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                         ? JsonSerializer.Serialize(beforeForEmbeds.Embeds)
                         : null)
                     : message?.EmbedsJson;
-                int? flagsBefore = e.MessageBefore is { } before
+                var flagsBefore = e.MessageBefore is { } before
                     ? (int)(before.Flags ?? 0)
                     : message?.Flags;
 
@@ -185,7 +182,7 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                         EmbedsJson = embedsJson,
                         EventTimestampUtc = editedAt,
                         ReceivedAtUtc = ctx.ReceivedAtUtc,
-                        RawEventJson = ctx.RawJson
+                        RawEventJson = ctx.RawJson,
                     });
 
                     var contentChanged = contentBefore != normalizedContent;
@@ -212,16 +209,14 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                             FlagsBefore = flagsBefore,
                             FlagsAfter = flagsAfter,
                             EditedAtUtc = editedAt,
-                            RecordedAtUtc = ctx.ReceivedAtUtc
+                            RecordedAtUtc = ctx.ReceivedAtUtc,
                         });
                     }
 
                     await ctx.Db.SaveChangesAsync();
 
                     if (messageGuid is Guid mentionMid)
-                    {
                         await ExtractAndSaveMentionsAsync(ctx.Db, mentionMid, e.Message);
-                    }
 
                     await tx.CommitAsync();
                 });
@@ -251,7 +246,7 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                     Content = NormalizeContent(e.Message.Content),
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -282,7 +277,7 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                     Content = NormalizeContent(msg.Content),
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 ctx.Db.MessageEvents.AddRange(events);
@@ -290,10 +285,8 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
             });
     }
 
-    // #222 live path: a message with image attachments in a configured meme
-    // channel gets a single-message index job enqueued once its row has
-    // committed. Failures are swallowed (warning only) — indexing must never
-    // break message persistence, and the weekly sweep heals anything missed.
+    // Failures are swallowed (warning only) — indexing must never break message persistence,
+    // and the weekly sweep heals anything missed.
     private static void EnqueueMemeIndexing(EventContext ctx, MessageCreatedEventArgs e)
     {
         try
@@ -325,7 +318,7 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
             .Where(m => m.MessageId == messageId)
             .ExecuteDeleteAsync();
 
-        var mentions = new List<MessageMentionEntity>();
+        List<MessageMentionEntity> mentions = [];
 
         if (message.MentionedUsers is { Count: > 0 })
         {
@@ -335,7 +328,7 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                 {
                     MessageId = messageId,
                     MentionedUserDiscordId = user.Id,
-                    MentionType = MessageMentionType.User
+                    MentionType = MessageMentionType.User,
                 });
             }
         }
@@ -348,7 +341,7 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                 {
                     MessageId = messageId,
                     MentionedRoleDiscordId = role.Id,
-                    MentionType = MessageMentionType.Role
+                    MentionType = MessageMentionType.Role,
                 });
             }
         }
@@ -361,7 +354,7 @@ public sealed class MessageEventHandler(EventPipeline pipeline) :
                 {
                     MessageId = messageId,
                     MentionedChannelDiscordId = channel.Id,
-                    MentionType = MessageMentionType.Channel
+                    MentionType = MessageMentionType.Channel,
                 });
             }
         }

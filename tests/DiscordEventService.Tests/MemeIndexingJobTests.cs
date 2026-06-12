@@ -12,9 +12,6 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// #221 acceptance contracts, end-to-end against real Postgres with the three
-// HTTP surfaces (refresh-urls, CDN, OpenRouter) faked at the handler level —
-// the job, executor, sampler, refresh service, and client all run for real.
 public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private const ulong GuildDiscordId = 1UL;
@@ -312,12 +309,9 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     }
 }
 
-// Routes the three HTTP surfaces the job touches. CDN bytes are keyed by
-// attachment id parsed from the URL path; refresh succeeds for everything
-// except DeadAttachments (absent from the refresh response, like Discord).
 internal sealed class FakeMemeHttpHandler : HttpMessageHandler
 {
-    private readonly Dictionary<ulong, byte[]> _imagesByAttachment = new Dictionary<ulong, byte[]>();
+    private readonly Dictionary<ulong, byte[]> _imagesByAttachment = [];
 
     public HashSet<ulong> DeadAttachments { get; } = [];
     public List<byte[]> RefusalFor { get; } = [];

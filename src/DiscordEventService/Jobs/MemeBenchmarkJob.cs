@@ -6,14 +6,6 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Jobs;
 
-// #219: runs a stratified sample of meme-channel images through each candidate
-// vision model and writes a side-by-side markdown report for the human model
-// pick. Deliberately stateless — no meme_index writes; that's §3 (#221).
-//
-// Two entry points: RunAsync samples from this instance's own DB (prod use);
-// RunFromFileAsync consumes a links file exported from the prod DB, so the
-// benchmark can run locally — stored URLs are revived via refresh-urls, no
-// guild access or gateway needed.
 public sealed class MemeBenchmarkJob(
     MemeSampleService sampleService,
     AttachmentUrlRefreshService urlRefreshService,
@@ -91,9 +83,7 @@ public sealed class MemeBenchmarkJob(
             items.Add(await BenchmarkOneAsync(sampleItem, models, freshUrls, cancellationToken));
 
             if (processed % 10 == 0)
-            {
                 logger.LogInformation("Meme benchmark progress: {Processed}/{Total} images", processed, sample.Count);
-            }
         }
 
         var run = new BenchmarkRun(startedUtc, DateTime.UtcNow, requestedSampleSize, models, items);
@@ -144,10 +134,8 @@ public sealed class MemeBenchmarkJob(
             cells.Add(new BenchmarkCell(model, result, stopwatch.Elapsed.TotalSeconds));
 
             if (result.Outcome == MemeAnalysisOutcome.Error)
-            {
                 logger.LogWarning("Benchmark cell failed: message {MessageId}, model {Model}: {Error}",
                     sampleItem.MessageDiscordId, model, result.Error);
-            }
 
             await Task.Delay(TimeSpan.FromMilliseconds(openRouterOptions.Value.RequestDelayMs), cancellationToken);
         }

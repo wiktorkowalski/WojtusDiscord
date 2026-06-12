@@ -1,6 +1,7 @@
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services;
 using DSharpPlus;
+using DSharpPlus.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
@@ -25,11 +26,9 @@ public sealed class MembersBackfillJob(
 
             // Get all members - requires GUILD_MEMBERS privileged intent
             // DSharpPlus v5 returns IAsyncEnumerable
-            var membersList = new List<DSharpPlus.Entities.DiscordMember>();
+            List<DiscordMember> membersList = [];
             await foreach (var member in guild.GetAllMembersAsync())
-            {
                 membersList.Add(member);
-            }
 
             ctx.Checkpoint.TotalCount = membersList.Count;
             await ctx.Db.SaveChangesAsync(cancellationToken);
@@ -49,7 +48,6 @@ public sealed class MembersBackfillJob(
                     await RecordErrorAsync(ctx.Db, ctx.Checkpoint, ex);
                 }
 
-                // Save progress periodically (every 100 members)
                 if (ctx.Checkpoint.ProcessedCount % 100 == 0)
                     await ctx.Db.SaveChangesAsync(cancellationToken);
             }

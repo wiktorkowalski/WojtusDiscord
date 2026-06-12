@@ -17,8 +17,8 @@ public class HealthCheckJob(
     private static DateTime _lastIngestStallAlert = DateTime.MinValue;
     private static DateTime _lastEventRatioAlert = DateTime.MinValue;
     private static DateTime _lastCrashLoopAlert = DateTime.MinValue;
-    private static readonly Dictionary<string, int> _eventRatioDropStreaks = new Dictionary<string, int>();
-    private static readonly object _lock = new();
+    private static readonly Dictionary<string, int> _eventRatioDropStreaks = [];
+    private static readonly object _lock = new object();
     private static readonly TimeSpan WebhookTimeout = TimeSpan.FromSeconds(10);
 
     public async Task ExecuteAsync()

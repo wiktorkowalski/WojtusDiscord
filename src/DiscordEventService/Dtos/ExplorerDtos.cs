@@ -2,7 +2,6 @@ using DiscordEventService.Infrastructure;
 
 namespace DiscordEventService.Dtos;
 
-/// <summary>One explorable table in the generic schema explorer.</summary>
 public sealed record TableInfoDto(
     string Name,
     string DisplayName,
@@ -10,7 +9,6 @@ public sealed record TableInfoDto(
     long RowCount,
     bool Populated);
 
-/// <summary>Column metadata that drives client-side rendering of explorer rows.</summary>
 public sealed record ColumnMetadataDto(
     string Name,
     string Kind,
@@ -18,7 +16,7 @@ public sealed record ColumnMetadataDto(
     bool IsNullable,
     IReadOnlyList<EnumValueDto>? EnumValues)
 {
-    public static ColumnMetadataDto From(ColumnMeta meta) => new(
+    public static ColumnMetadataDto From(ColumnMeta meta) => new ColumnMetadataDto(
         meta.Name,
         // camelCase the enum kind so it lands as e.g. "snowflake", "timestamp" in JSON.
         char.ToLowerInvariant(meta.Kind.ToString()[0]) + meta.Kind.ToString()[1..],

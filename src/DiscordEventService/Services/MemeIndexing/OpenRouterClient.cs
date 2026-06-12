@@ -8,11 +8,6 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-// Thin typed client over OpenRouter's /chat/completions. Structured outputs
-// (response_format: json_schema, strict) make the model return the
-// MemeMetadata contract directly — no markdown-fence scraping like the old
-// image-contents-search-poc. usage.include=true gets the real cost back from
-// OpenRouter instead of us keeping price tables.
 public sealed class OpenRouterClient(
     IHttpClientFactory httpClientFactory,
     IOptions<OpenRouterOptions> options,
@@ -22,7 +17,7 @@ public sealed class OpenRouterClient(
 
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
     private const string SystemPrompt =
@@ -37,7 +32,8 @@ public sealed class OpenRouterClient(
         - template: the canonical meme template name (e.g. "drake", "distracted boyfriend", "doge"), or null if not a recognizable template.
         """;
 
-    // strict json_schema: every property required, nullability expressed in types.
+    // strict json_schema makes the model return the MemeMetadata contract directly (no
+    // markdown-fence scraping): every property required, nullability expressed in types.
     private static readonly object ResponseSchema = new
     {
         type = "json_schema",
@@ -57,10 +53,10 @@ public sealed class OpenRouterClient(
                     ocr_text = new { type = "string" },
                     tags = new { type = "array", items = new { type = "string" } },
                     source = new { type = new[] { "string", "null" } },
-                    template = new { type = new[] { "string", "null" } }
-                }
-            }
-        }
+                    template = new { type = new[] { "string", "null" } },
+                },
+            },
+        },
     };
 
     public async Task<MemeAnalysisResult> AnalyzeImageAsync(
@@ -87,10 +83,10 @@ public sealed class OpenRouterClient(
                         new
                         {
                             type = "image_url",
-                            image_url = new { url = $"data:{mimeType};base64,{Convert.ToBase64String(imageBytes)}" }
-                        }
-                    }
-                }
+                            image_url = new { url = $"data:{mimeType};base64,{Convert.ToBase64String(imageBytes)}" },
+                        },
+                    },
+                },
             },
             // No reasoning override: effort=low made gemini-2.5-flash return
             // empty content; the raised max_tokens budget is what thinking
@@ -98,7 +94,8 @@ public sealed class OpenRouterClient(
             response_format = ResponseSchema,
             max_tokens = opts.MaxOutputTokens,
             temperature = 0.2,
-            usage = new { include = true }
+            // include=true returns the real cost from OpenRouter instead of us keeping price tables.
+            usage = new { include = true },
         };
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "chat/completions");

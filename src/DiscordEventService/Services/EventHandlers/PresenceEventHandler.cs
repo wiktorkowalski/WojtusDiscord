@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
@@ -6,14 +7,13 @@ using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
 public sealed class PresenceEventHandler(EventPipeline pipeline) :
     IEventHandler<PresenceUpdatedEventArgs>
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false
@@ -114,15 +114,12 @@ public sealed class PresenceEventHandler(EventPipeline pipeline) :
         IReadOnlyList<DiscordActivity>? activitiesAfter,
         DateTime now)
     {
-        // Find activities that ended (were in before but not in after)
         var endedActivities = activitiesBefore?.Where(b =>
-            !activitiesAfter?.Any(a => IsSameActivity(a, b)) ?? true) ?? Enumerable.Empty<DiscordActivity>();
+            !activitiesAfter?.Any(a => IsSameActivity(a, b)) ?? true) ?? [];
 
-        // Find activities that started (are in after but not in before)
         var startedActivities = activitiesAfter?.Where(a =>
-            !activitiesBefore?.Any(b => IsSameActivity(a, b)) ?? true) ?? Enumerable.Empty<DiscordActivity>();
+            !activitiesBefore?.Any(b => IsSameActivity(a, b)) ?? true) ?? [];
 
-        // Mark ended activities
         foreach (var ended in endedActivities)
         {
             var existingActivity = await dbContext.Activities
@@ -137,7 +134,6 @@ public sealed class PresenceEventHandler(EventPipeline pipeline) :
             }
         }
 
-        // Add new activities
         foreach (var started in startedActivities)
         {
             var activity = new ActivityEntity
@@ -160,8 +156,7 @@ public sealed class PresenceEventHandler(EventPipeline pipeline) :
             await dbContext.Activities.AddAsync(activity);
         }
 
-        // Update existing activities that are still active
-        var continuingActivities = (activitiesAfter ?? Enumerable.Empty<DiscordActivity>())
+        var continuingActivities = (activitiesAfter ?? [])
             .Where(current => activitiesBefore?.Any(b => IsSameActivity(current, b)) == true);
 
         foreach (var current in continuingActivities)
@@ -170,31 +165,21 @@ public sealed class PresenceEventHandler(EventPipeline pipeline) :
                 .Where(a => a.UserId == userGuid && a.IsActive && a.Name == current.Name && a.ActivityType == (int)current.ActivityType)
                 .FirstOrDefaultAsync();
 
-            if (existingActivity != null)
-            {
-                existingActivity.LastSeenAtUtc = now;
-            }
+            if (existingActivity is not null) existingActivity.LastSeenAtUtc = now;
         }
     }
 
-    private static bool IsSameActivity(DiscordActivity a, DiscordActivity b)
-    {
-        return a.Name == b.Name && a.ActivityType == b.ActivityType;
-    }
+    private static bool IsSameActivity(DiscordActivity a, DiscordActivity b) =>
+        a.Name == b.Name && a.ActivityType == b.ActivityType;
 
-    private static int GetStatusValue(Optional<DiscordUserStatus>? status)
-    {
-        if (status?.HasValue == true)
-            return (int)status.Value.Value;
-        return (int)DiscordUserStatus.Offline;
-    }
+    private static int GetStatusValue(Optional<DiscordUserStatus>? status) =>
+        status is { HasValue: true } ? (int)status.Value.Value : (int)DiscordUserStatus.Offline;
 
     private static string? SerializeActivities(IReadOnlyList<DiscordActivity>? activities)
     {
         if (activities == null || activities.Count == 0)
             return null;
 
-        // Serialize the core activity data that's definitely available
         var activityData = activities.Select(a => new
         {
             Name = a.Name,

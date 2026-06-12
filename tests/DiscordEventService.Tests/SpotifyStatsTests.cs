@@ -91,7 +91,7 @@ public sealed class SpotifyStatsTests(PostgresFixture fixture) : IClassFixture<P
 
     private static ActivityEntity Activity(
         Guid userId, Guid guildId, string track, string album, string art, string artistsJson,
-        bool isActive, DateTime lastSeen, DateTime? ended = null) => new()
+        bool isActive, DateTime lastSeen, DateTime? ended = null) => new ActivityEntity
         {
             UserId = userId,
             GuildId = guildId,

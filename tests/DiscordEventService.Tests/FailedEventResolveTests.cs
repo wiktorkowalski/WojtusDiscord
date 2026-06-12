@@ -92,7 +92,7 @@ public sealed class FailedEventResolveTests(PostgresFixture fixture)
     }
 
     private FailedEventService NewService() =>
-        new(NewContext(), NullLogger<FailedEventService>.Instance, new FakeHostEnvironment());
+        new FailedEventService(NewContext(), NullLogger<FailedEventService>.Instance, new FakeHostEnvironment());
 
     private DiscordDbContext NewContext()
     {

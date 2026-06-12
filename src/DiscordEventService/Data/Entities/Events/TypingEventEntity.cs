@@ -10,6 +10,6 @@ public class TypingEventEntity
     public DateTime StartedAt { get; set; }
     public DateTime ReceivedAtUtc { get; set; }
 
-    /// <summary>Raw serialized event args from DSharpPlus for debugging</summary>
+    // Raw serialized event args from DSharpPlus for debugging
     public string? RawEventJson { get; set; }
 }

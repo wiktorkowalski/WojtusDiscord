@@ -1,10 +1,10 @@
+using System.Text.Json;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
@@ -42,7 +42,7 @@ public sealed class EmojiEventHandler(EventPipeline pipeline) :
                             GuildId = guildGuid,
                             Name = emoji.Name,
                             IsAnimated = emoji.IsAnimated,
-                            IsAvailable = emoji.IsAvailable
+                            IsAvailable = emoji.IsAvailable,
                         });
                     }
                     else
@@ -87,7 +87,7 @@ public sealed class EmojiEventHandler(EventPipeline pipeline) :
                         : null,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();

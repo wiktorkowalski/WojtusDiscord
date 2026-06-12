@@ -23,7 +23,7 @@ public sealed class SerializeEventUnitTests
 {
     // dbContext/logger are unused by SerializeEvent, so no DB needed here.
     private static RawEventLogService NewService()
-        => new(null!, NullLogger<RawEventLogService>.Instance);
+        => new RawEventLogService(null!, NullLogger<RawEventLogService>.Instance);
 
     [Fact]
     public void SerializeEvent_WhenSuccessful_ReturnsJsonWithNoError()

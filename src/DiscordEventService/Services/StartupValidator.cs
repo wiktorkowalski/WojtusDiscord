@@ -5,12 +5,8 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace DiscordEventService.Services;
 
-/// <summary>
-/// Validates that every service event handlers depend on is registered in the
-/// DSharpPlus child DI container. Without this, missing registrations only
-/// surface at runtime when the handler actually fires — sometimes hours after
-/// deploy, often only logged at Error level inside a handler's catch block.
-/// </summary>
+// Missing child-container registrations otherwise surface only at runtime when a handler
+// fires — sometimes hours after deploy, often only logged at Error inside a catch block.
 public static class StartupValidator
 {
     // Services event handlers resolve via scopeFactory.CreateScope().
@@ -39,9 +35,7 @@ public static class StartupValidator
             {
                 var service = scope.ServiceProvider.GetService(type);
                 if (service is null)
-                {
                     failures.Add($"{type.FullName} is not registered");
-                }
             }
             catch (Exception ex)
             {

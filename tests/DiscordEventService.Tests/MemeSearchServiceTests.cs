@@ -6,11 +6,6 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// #224 acceptance contracts for the /meme search query (binding design on
-// #224, column semantics pinned by MemeIndexSchemaTests): hybrid FTS + trigram
-// gate, weighted rank blend, soft-delete exclusion, recency tiebreak. The
-// slash-command surface itself can't be integration-tested (bots can't invoke
-// other bots' commands) — that part is user-verified live on the dev guild.
 public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private const ulong GuildDiscordId = 1UL;

@@ -46,7 +46,7 @@ public static class MemeBenchmarkEndpoints
         {
             HangfireJobId = jobId,
             SampleSize = size,
-            Models = openRouterOptions.Value.BenchmarkModels
+            Models = openRouterOptions.Value.BenchmarkModels,
         });
     }
 
@@ -76,7 +76,7 @@ public static class MemeBenchmarkEndpoints
         {
             HangfireJobId = jobId,
             SampleSize = size,
-            Models = openRouterOptions.Value.BenchmarkModels
+            Models = openRouterOptions.Value.BenchmarkModels,
         });
     }
 

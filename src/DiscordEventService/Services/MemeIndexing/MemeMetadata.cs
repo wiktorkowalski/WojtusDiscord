@@ -2,8 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-// The vision-model output contract for one image (ADR-0004/0005, #219).
-// Bilingual on purpose: tags mix PL+EN so either query language lands.
 public sealed record MemeMetadata
 {
     [JsonPropertyName("description_pl")]
@@ -37,7 +35,7 @@ public enum MemeAnalysisOutcome
     Refusal,
 
     // Transport/API/parse failure. Transient flavours are retryable.
-    Error
+    Error,
 }
 
 public sealed record MemeAnalysisUsage(int PromptTokens, int CompletionTokens, decimal? CostUsd);

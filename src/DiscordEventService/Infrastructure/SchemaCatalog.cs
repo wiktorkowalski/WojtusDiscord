@@ -3,10 +3,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace DiscordEventService.Infrastructure;
 
-/// <summary>
-/// Logical type of a column, derived from EF model metadata. Drives both how the
-/// generic explorer coerces raw SQL values and how the frontend renders each cell.
-/// </summary>
+// Logical column type from EF metadata — drives both raw-SQL value coercion and frontend cell rendering.
 public enum ColumnKind
 {
     String,
@@ -46,22 +43,14 @@ public sealed class TableMeta
 
     public ColumnMeta? Column(string column) => ByName.GetValueOrDefault(column);
 
-    /// <summary>Stable default sort: the single-column PK if present, else the first column.</summary>
+    // Stable default sort: the single-column PK if present, else the first column.
     public string DefaultSortColumn =>
         Columns.FirstOrDefault(c => c.IsPrimaryKey)?.Name ?? Columns[0].Name;
 }
 
-/// <summary>
-/// Startup-cached whitelist of explorable tables and their columns, built from the
-/// EF Core model. This is the security boundary for the generic explorer: only table
-/// and column identifiers present here are ever emitted into SQL, and the emitted
-/// literal is the trusted model value — never client-supplied text.
-/// <para>
-/// Hangfire tables are not EF entities (Hangfire uses its own storage) so they never
-/// appear here; <c>__EFMigrationsHistory</c> is not an EF entity either, but is filtered
-/// defensively.
-/// </para>
-/// </summary>
+// Security boundary for the generic explorer: only table/column identifiers present here are ever emitted
+// into SQL, and the emitted literal is the trusted model value — never client-supplied text. Hangfire and
+// __EFMigrationsHistory are not EF entities so they never appear here (the latter filtered defensively).
 public sealed class SchemaCatalog
 {
     private readonly Dictionary<string, TableMeta> _tables;
@@ -80,15 +69,11 @@ public sealed class SchemaCatalog
         foreach (var entityType in model.GetEntityTypes())
         {
             if (entityType.IsOwned())
-            {
                 continue;
-            }
 
             var tableName = entityType.GetTableName();
             if (string.IsNullOrEmpty(tableName) || tableName == "__EFMigrationsHistory")
-            {
                 continue;
-            }
 
             var storeObject = StoreObjectIdentifier.Table(tableName, entityType.GetSchema());
             var pkColumns = entityType.FindPrimaryKey()?.Properties
@@ -101,9 +86,7 @@ public sealed class SchemaCatalog
             {
                 var columnName = property.GetColumnName(storeObject);
                 if (columnName is null)
-                {
                     continue;
-                }
 
                 var kind = DetermineKind(property);
                 columns.Add(new ColumnMeta(
@@ -115,9 +98,7 @@ public sealed class SchemaCatalog
             }
 
             if (columns.Count == 0)
-            {
                 continue;
-            }
 
             tables[tableName] = new TableMeta
             {
@@ -143,21 +124,15 @@ public sealed class SchemaCatalog
 
         var columnType = property.GetColumnType();
         if (columnType is not null && columnType.Contains("json", StringComparison.OrdinalIgnoreCase))
-        {
             return ColumnKind.Json;
-        }
 
         if (clrType == typeof(string)) return ColumnKind.String;
         if (clrType == typeof(int) || clrType == typeof(short) || clrType == typeof(byte)
             || clrType == typeof(sbyte) || clrType == typeof(uint) || clrType == typeof(ushort))
-        {
             return ColumnKind.Int;
-        }
         if (clrType == typeof(long)) return ColumnKind.Long;
         if (clrType == typeof(decimal) || clrType == typeof(double) || clrType == typeof(float))
-        {
             return ColumnKind.Number;
-        }
 
         return ColumnKind.Other;
     }

@@ -22,9 +22,7 @@ public class DiscordHostedService(
             var tracker = scope.ServiceProvider.GetRequiredService<DowntimeTrackerService>();
             var closed = await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow);
             if (closed == 0)
-            {
                 await tracker.InferStartupGapAsync();
-            }
         }
         catch (Exception ex)
         {

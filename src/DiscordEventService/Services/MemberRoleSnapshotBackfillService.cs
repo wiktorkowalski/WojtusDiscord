@@ -1,10 +1,10 @@
+using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using DSharpPlus;
 using DSharpPlus.Exceptions;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace DiscordEventService.Services;
 
@@ -21,7 +21,9 @@ public class MemberRoleSnapshotBackfillService(
 
     public async Task<Result> BackfillAsync(CancellationToken ct)
     {
-        int eventsProcessed = 0, created = 0, closed = 0;
+        var eventsProcessed = 0;
+        var created = 0;
+        var closed = 0;
 
         var memberLookup = await db.Members
             .Include(m => m.User)
@@ -115,7 +117,7 @@ public class MemberRoleSnapshotBackfillService(
         Dictionary<(ulong UserDiscordId, ulong GuildDiscordId), Guid> memberLookup,
         CancellationToken ct)
     {
-        int seeded = 0;
+        var seeded = 0;
         var guildIds = memberLookup.Keys.Select(k => k.GuildDiscordId).Distinct();
 
         foreach (var guildDiscordId in guildIds)
@@ -135,9 +137,7 @@ public class MemberRoleSnapshotBackfillService(
 
             var members = new List<DSharpPlus.Entities.DiscordMember>();
             await foreach (var member in guild.GetAllMembersAsync())
-            {
                 members.Add(member);
-            }
 
             logger.LogInformation("Seeding current roles for {Count} members in guild {Guild}",
                 members.Count, guildDiscordId);

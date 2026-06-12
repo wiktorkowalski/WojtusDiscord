@@ -19,7 +19,7 @@ public sealed class GuildUpdateEventHandler(EventPipeline pipeline) :
                     EventType = GuildEventType.Updated,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 };
 
                 if (e.GuildBefore.Name != e.GuildAfter.Name)

@@ -21,10 +21,9 @@ public class ReactionEventEntity
     public bool IsAnimated { get; set; }
     public bool IsBurst { get; set; }
     public ReactionEventType EventType { get; set; }
-    /// <summary>DSharpPlus does not expose a per-event timestamp for reactions; equals ReceivedAtUtc by design.</summary>
+    // DSharpPlus does not expose a per-event timestamp for reactions; equals ReceivedAtUtc by design.
     public DateTime EventTimestampUtc { get; set; }
     public DateTime ReceivedAtUtc { get; set; }
 
-    /// <summary>Raw serialized event args from DSharpPlus for debugging</summary>
     public string? RawEventJson { get; set; }
 }

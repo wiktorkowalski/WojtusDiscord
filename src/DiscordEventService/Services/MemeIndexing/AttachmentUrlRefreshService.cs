@@ -6,10 +6,6 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-// Stored attachment URLs are signed and expire ~24h after capture (ADR-0004).
-// Discord's attachments/refresh-urls endpoint re-signs them — verified to work
-// with any bot token, no guild membership required — which makes indexing
-// purely DB-driven: no gateway, no message re-fetch, ~50 URLs per call.
 public sealed class AttachmentUrlRefreshService(
     IHttpClientFactory httpClientFactory,
     IOptions<DiscordOptions> discordOptions,
@@ -20,8 +16,6 @@ public sealed class AttachmentUrlRefreshService(
     private const int BatchSize = 50;
     private static readonly TimeSpan DelayBetweenBatches = TimeSpan.FromMilliseconds(300);
 
-    // Returns a map keyed by StripQuery(stored url) → freshly signed URL.
-    // URLs Discord declined to refresh are simply absent from the map.
     public async Task<Dictionary<string, string>> RefreshAsync(
         IReadOnlyCollection<string> storedUrls,
         CancellationToken cancellationToken)

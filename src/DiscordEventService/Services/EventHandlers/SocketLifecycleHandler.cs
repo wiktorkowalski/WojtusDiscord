@@ -113,9 +113,7 @@ public sealed class SocketLifecycleHandler(
                         "GuildDownloadCompleted: gap {Gap:c} below threshold, running quick-sync only",
                         gap);
                     foreach (var guildId in e.Guilds.Keys)
-                    {
                         await quickSyncService.SyncAsync(guildId);
-                    }
                     return;
                 }
 

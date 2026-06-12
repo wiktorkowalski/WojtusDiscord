@@ -27,7 +27,7 @@ public sealed class AutoModEventHandler(EventPipeline pipeline) :
                     TriggerType = (int)e.Rule.TriggerType,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -50,7 +50,7 @@ public sealed class AutoModEventHandler(EventPipeline pipeline) :
                     TriggerType = (int)e.Rule.TriggerType,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -73,7 +73,7 @@ public sealed class AutoModEventHandler(EventPipeline pipeline) :
                     TriggerType = (int)e.Rule.TriggerType,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -101,7 +101,7 @@ public sealed class AutoModEventHandler(EventPipeline pipeline) :
                     MatchedContent = e.Rule.MatchedContent,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();

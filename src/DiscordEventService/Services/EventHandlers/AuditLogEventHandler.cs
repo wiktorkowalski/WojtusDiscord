@@ -29,7 +29,7 @@ public sealed class AuditLogEventHandler(EventPipeline pipeline) :
                         ? e.AuditLogEntry.CreationTimestamp.UtcDateTime
                         : ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();

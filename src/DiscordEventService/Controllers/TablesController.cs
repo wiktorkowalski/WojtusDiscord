@@ -8,16 +8,10 @@ using Npgsql;
 
 namespace DiscordEventService.Controllers;
 
-/// <summary>
-/// Generic, schema-driven explorer over every EF-mapped table. Lists tables with
-/// row counts, exposes per-table column metadata, and returns paginated rows.
-/// <para>
-/// SECURITY: table, sort, and filter-column identifiers are validated against the
-/// <see cref="SchemaCatalog"/> whitelist and only the catalog's trusted literal is
-/// ever emitted into SQL. Filter VALUES and paging are bound as parameters. Client
-/// text is never interpolated as an identifier.
-/// </para>
-/// </summary>
+// SECURITY: table, sort, and filter-column identifiers are validated against the
+// SchemaCatalog whitelist and only the catalog's trusted literal is ever emitted into
+// SQL. Filter VALUES and paging are bound as parameters. Client text is never
+// interpolated as an identifier.
 [ApiController]
 [Route("api/tables")]
 public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog) : ControllerBase
@@ -25,7 +19,6 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
     private const int DefaultPageSize = 50;
     private const int MaxPageSize = 200;
 
-    /// <summary>Lists explorable tables with approximate row counts (from pg_stat).</summary>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<TableInfoDto>>> GetTables(CancellationToken ct)
     {
@@ -44,19 +37,15 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
         return Ok(tables);
     }
 
-    /// <summary>Column metadata for a single table (drives client-side cell rendering).</summary>
     [HttpGet("{table}/columns")]
     public ActionResult<IReadOnlyList<ColumnMetadataDto>> GetColumns(string table)
     {
         if (!catalog.TryGetTable(table, out var meta))
-        {
             return BadRequest(new { error = $"Unknown table '{table}'." });
-        }
 
         return Ok(meta.Columns.Select(ColumnMetadataDto.From).ToList());
     }
 
-    /// <summary>Paginated rows for a table. Each row is a snake_case-keyed property bag.</summary>
     [HttpGet("{table}")]
     public async Task<ActionResult<PagedResult<Dictionary<string, object?>>>> GetRows(
         string table,
@@ -69,19 +58,13 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
         CancellationToken ct = default)
     {
         if (!catalog.TryGetTable(table, out var meta))
-        {
             return BadRequest(new { error = $"Unknown table '{table}'." });
-        }
 
         if (sort is not null && !meta.HasColumn(sort))
-        {
             return BadRequest(new { error = $"Unknown sort column '{sort}'." });
-        }
 
         if (filterColumn is not null && !meta.HasColumn(filterColumn))
-        {
             return BadRequest(new { error = $"Unknown filter column '{filterColumn}'." });
-        }
 
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
@@ -103,9 +86,7 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
 
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         if (connection.State != ConnectionState.Open)
-        {
             await connection.OpenAsync(ct);
-        }
 
         var total = await CountAsync(connection, quotedTable, where, filter, ct);
 
@@ -116,9 +97,7 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
                 $"SELECT * FROM {quotedTable}{where} " +
                 $"ORDER BY {Quote(sortColumn)} {direction} LIMIT @limit OFFSET @offset";
             if (hasFilter)
-            {
                 cmd.Parameters.AddWithValue("filter", $"%{filter}%");
-            }
             cmd.Parameters.AddWithValue("limit", pageSize);
             cmd.Parameters.AddWithValue("offset", offset);
 
@@ -129,14 +108,12 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
                 for (var i = 0; i < reader.FieldCount; i++)
                 {
                     var name = reader.GetName(i);
-                    object? value = await reader.IsDBNullAsync(i, ct) ? null : reader.GetValue(i);
+                    var value = await reader.IsDBNullAsync(i, ct) ? null : reader.GetValue(i);
 
                     // Snowflakes are stored as bigint; box back to ulong so the global
                     // JSON converter emits them as strings (JS number precision).
                     if (value is long l && meta.Column(name)?.Kind == ColumnKind.Snowflake)
-                    {
                         value = unchecked((ulong)l);
-                    }
 
                     row[name] = value;
                 }
@@ -153,9 +130,7 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = $"SELECT COUNT(*) FROM {quotedTable}{where}";
         if (where.Length > 0)
-        {
             cmd.Parameters.AddWithValue("filter", $"%{filter}%");
-        }
         var result = await cmd.ExecuteScalarAsync(ct);
         return result is long l ? l : Convert.ToInt64(result);
     }
@@ -165,9 +140,7 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
         var counts = new Dictionary<string, long>(StringComparer.Ordinal);
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         if (connection.State != ConnectionState.Open)
-        {
             await connection.OpenAsync(ct);
-        }
 
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = "SELECT relname, n_live_tup FROM pg_stat_user_tables";

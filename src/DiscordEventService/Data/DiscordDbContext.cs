@@ -7,7 +7,6 @@ namespace DiscordEventService.Data;
 
 public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbContext(options)
 {
-    // Core entities
     public DbSet<GuildEntity> Guilds => Set<GuildEntity>();
     public DbSet<ChannelEntity> Channels => Set<ChannelEntity>();
     public DbSet<UserEntity> Users => Set<UserEntity>();
@@ -30,33 +29,27 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     // Member role snapshots (SCD for historical role membership)
     public DbSet<MemberRoleSnapshotEntity> MemberRoleSnapshots => Set<MemberRoleSnapshotEntity>();
 
-    // User name history
     public DbSet<UserNameHistoryEntity> UserNameHistory => Set<UserNameHistoryEntity>();
 
-    // Event entities - Messages & Reactions
     public DbSet<MessageEventEntity> MessageEvents => Set<MessageEventEntity>();
     public DbSet<ReactionEventEntity> ReactionEvents => Set<ReactionEventEntity>();
     public DbSet<PollEventEntity> PollEvents => Set<PollEventEntity>();
     public DbSet<PinEventEntity> PinEvents => Set<PinEventEntity>();
 
-    // Event entities - Voice & Presence
     public DbSet<VoiceStateEventEntity> VoiceStateEvents => Set<VoiceStateEventEntity>();
     public DbSet<VoiceServerEventEntity> VoiceServerEvents => Set<VoiceServerEventEntity>();
     public DbSet<PresenceEventEntity> PresenceEvents => Set<PresenceEventEntity>();
 
-    // Event entities - Members
     public DbSet<MemberEventEntity> MemberEvents => Set<MemberEventEntity>();
     public DbSet<BanEventEntity> BanEvents => Set<BanEventEntity>();
     public DbSet<GuildMembersChunkEventEntity> GuildMembersChunkEvents => Set<GuildMembersChunkEventEntity>();
 
-    // Event entities - Channels & Threads
     public DbSet<ChannelEventEntity> ChannelEvents => Set<ChannelEventEntity>();
     public DbSet<RoleEventEntity> RoleEvents => Set<RoleEventEntity>();
     public DbSet<ThreadEventEntity> ThreadEvents => Set<ThreadEventEntity>();
     public DbSet<ThreadSyncEventEntity> ThreadSyncEvents => Set<ThreadSyncEventEntity>();
     public DbSet<StageInstanceEventEntity> StageInstanceEvents => Set<StageInstanceEventEntity>();
 
-    // Event entities - Guild
     public DbSet<GuildEventEntity> GuildEvents => Set<GuildEventEntity>();
     public DbSet<EmojiEventEntity> EmojiEvents => Set<EmojiEventEntity>();
     public DbSet<StickerEventEntity> StickerEvents => Set<StickerEventEntity>();
@@ -64,20 +57,16 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     public DbSet<IntegrationEventEntity> IntegrationEvents => Set<IntegrationEventEntity>();
     public DbSet<AuditLogEventEntity> AuditLogEvents => Set<AuditLogEventEntity>();
 
-    // Event entities - Scheduled & AutoMod
     public DbSet<ScheduledEventEntity> ScheduledEvents => Set<ScheduledEventEntity>();
     public DbSet<AutoModEventEntity> AutoModEvents => Set<AutoModEventEntity>();
     public DbSet<AutoModRuleEventEntity> AutoModRuleEvents => Set<AutoModRuleEventEntity>();
     public DbSet<InviteEventEntity> InviteEvents => Set<InviteEventEntity>();
     public DbSet<TypingEventEntity> TypingEvents => Set<TypingEventEntity>();
 
-    // Raw event logging for debugging
     public DbSet<RawEventLogEntity> RawEventLogs => Set<RawEventLogEntity>();
 
-    // Dead-letter queue for failed events
     public DbSet<FailedEventEntity> FailedEvents => Set<FailedEventEntity>();
 
-    // Backfill checkpoints
     public DbSet<BackfillCheckpointEntity> BackfillCheckpoints => Set<BackfillCheckpointEntity>();
 
     // Bot downtime intervals
@@ -98,7 +87,6 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
         modelBuilder.HasPostgresExtension("unaccent");
         modelBuilder.HasPostgresExtension("pg_trgm");
 
-        // Apply snowflake converter to all ulong properties
         var snowflakeConverter = new ValueConverter<ulong, long>(
             v => unchecked((long)v),
             v => unchecked((ulong)v));
@@ -108,9 +96,7 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
             foreach (var property in entityType.GetProperties())
             {
                 if (property.ClrType == typeof(ulong))
-                {
                     property.SetValueConverter(snowflakeConverter);
-                }
                 else if (property.ClrType == typeof(ulong?))
                 {
                     property.SetValueConverter(new ValueConverter<ulong?, long?>(
@@ -164,14 +150,11 @@ public static class UuidV7Extensions
 {
     public static void ConfigureUuidGeneration(this ModelBuilder modelBuilder)
     {
-        // Configure all Guid Id properties to use PostgreSQL's uuidv7() for generation
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
             var idProperty = entityType.FindProperty("Id");
             if (idProperty != null && idProperty.ClrType == typeof(Guid))
-            {
                 idProperty.SetDefaultValueSql("uuidv7()");
-            }
         }
     }
 }

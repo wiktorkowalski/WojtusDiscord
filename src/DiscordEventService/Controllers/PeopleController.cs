@@ -7,11 +7,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Controllers;
 
-/// <summary>
-/// Per-person profile: all-time activity totals, a favourite emote, busiest channel,
-/// a 14-day message sparkline, current presence status and the name-change history.
-/// Keyed by Discord snowflake (route param), 404 when the snowflake is unknown.
-/// </summary>
 [ApiController]
 [Route("api/people")]
 public sealed class PeopleController(DiscordDbContext db) : ControllerBase
@@ -39,9 +34,7 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
             .FirstOrDefaultAsync(ct);
 
         if (user is null)
-        {
             return NotFound();
-        }
 
         var userId = user.Id;
 
@@ -137,9 +130,7 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
         for (var i = 0; i < events.Count - 1; i++)
         {
             if (events[i].ChannelDiscordIdAfter is null)
-            {
                 continue;
-            }
 
             var start = events[i].ReceivedAtUtc;
             var end = events[i + 1].ReceivedAtUtc;
@@ -158,25 +149,16 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
 
             var seconds = (end - start).TotalSeconds - downSeconds;
             if (seconds > 0)
-            {
                 totalMinutes += seconds / 60.0;
-            }
         }
 
         return (long)Math.Round(totalMinutes, MidpointRounding.AwayFromZero);
     }
 
-    /// <summary>
-    /// Online minutes (best-effort approximation). Discord does not expose presence
-    /// durations, so we sessionize presence_events: each event's contribution is the gap
-    /// until the next event, counted only when (a) the event's overall device status is
-    /// non-offline (max device after-status &gt; 0), (b) the gap is at most 30 minutes — a
-    /// cap that keeps stale/offline tails and bot-downtime windows from inflating the
-    /// figure (longer-gap segments are dropped entirely, not clamped), and (c) the
-    /// [start, next) segment does not overlap a recorded bot-downtime interval (open
-    /// intervals coalesced to now()). Treat the result as an approximation, not a precise
-    /// online-time ledger.
-    /// </summary>
+    // Best-effort approximation: Discord exposes no presence durations, so we sessionize
+    // presence_events — each event contributes the gap to the next, counted only when the device
+    // status is non-offline, the gap is at most 30 min (longer gaps are dropped, not clamped, to
+    // keep stale/offline tails out), and the segment does not overlap a recorded bot-downtime.
     private async Task<long> OnlineMinutesAsync(ulong discordSf, CancellationToken ct)
     {
         var events = await db.PresenceEvents.AsNoTracking()
@@ -200,22 +182,16 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
             var current = events[i];
             var next = events[i + 1];
             if (current.Overall <= 0)
-            {
                 continue;
-            }
 
             var gap = next.ReceivedAtUtc - current.ReceivedAtUtc;
             if (gap > TimeSpan.FromMinutes(30))
-            {
                 continue;
-            }
 
             var overlapsDowntime = downtimes.Any(d =>
                 current.ReceivedAtUtc < (d.EndedAtUtc ?? now) && next.ReceivedAtUtc > d.StartedAtUtc);
             if (overlapsDowntime)
-            {
                 continue;
-            }
 
             totalMinutes += gap.TotalMinutes;
         }

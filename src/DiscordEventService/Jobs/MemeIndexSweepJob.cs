@@ -7,15 +7,10 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Jobs;
 
-/// <summary>
-/// Weekly meme-index healing sweep (#222). The live MessageCreated hook indexes
-/// new memes within seconds; this catches what it misses — attachments posted
-/// during downtime, live-path enqueue failures, and Failed rows still under the
-/// attempt cap. Mirrors <see cref="PeriodicFullBackfillJob"/>: a parameterless
-/// coordinator that enqueues one per-guild job, skipping guilds whose meme
-/// indexing is already running. A clean week is a cheap no-op (one candidate
-/// query, zero model calls).
-/// </summary>
+// Weekly healing sweep: the live MessageCreated hook indexes new memes within
+// seconds; this catches what it misses — attachments posted during downtime,
+// live-path enqueue failures, and Failed rows still under the attempt cap.
+// Skips guilds whose meme indexing is already running.
 public sealed class MemeIndexSweepJob(
     IServiceScopeFactory scopeFactory,
     IBackgroundJobClient backgroundJobClient,

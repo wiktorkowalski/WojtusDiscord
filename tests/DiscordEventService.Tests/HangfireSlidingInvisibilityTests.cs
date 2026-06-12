@@ -7,12 +7,8 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// Regression contract for the #219 benchmark incident: a job outliving the
-// fixed InvisibilityTimeout was presumed dead, re-fetched by another worker,
-// and a pay-per-run job restarted in a loop. UseSlidingInvisibilityTimeout
-// heartbeats fetchedat (every InvisibilityTimeout/5) while the worker is
-// alive, so a long job runs exactly once and the timeout only governs how
-// fast a genuinely dead worker's job is re-picked.
+// UseSlidingInvisibilityTimeout heartbeats fetchedat while the worker is alive, so a job
+// outliving InvisibilityTimeout runs exactly once instead of being re-fetched as dead.
 public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>
 {
     private static readonly TimeSpan InvisibilityTimeout = TimeSpan.FromSeconds(5);
@@ -86,9 +82,7 @@ public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : 
     }
 }
 
-// Public so Hangfire's activator can resolve and invoke it from the persisted
-// job payload. Sleeps in slices so a test can release still-running
-// executions instead of stalling server shutdown.
+// Public so Hangfire's activator can invoke it from the persisted job payload.
 public static class SlowJobProbe
 {
     private static readonly ConcurrentDictionary<string, int> _executions = new();

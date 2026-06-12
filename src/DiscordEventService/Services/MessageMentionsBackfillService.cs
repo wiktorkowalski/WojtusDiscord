@@ -39,10 +39,10 @@ public partial class MessageMentionsBackfillService(
         logger.LogInformation("Mention backfill: {Total} messages with content, {Skipped} already have mentions",
             messages.Count, alreadyProcessed.Count);
 
-        int scanned = messages.Count;
-        int skipped = 0;
-        int processed = 0;
-        int mentionsCreated = 0;
+        var scanned = messages.Count;
+        var skipped = 0;
+        var processed = 0;
+        var mentionsCreated = 0;
 
         foreach (var msg in messages)
         {

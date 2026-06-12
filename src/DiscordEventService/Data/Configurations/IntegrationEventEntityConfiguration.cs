@@ -6,8 +6,6 @@ namespace DiscordEventService.Data.Configurations;
 
 internal sealed class IntegrationEventEntityConfiguration : IEntityTypeConfiguration<IntegrationEventEntity>
 {
-    public void Configure(EntityTypeBuilder<IntegrationEventEntity> builder)
-    {
+    public void Configure(EntityTypeBuilder<IntegrationEventEntity> builder) =>
         builder.HasIndex(i => new { i.GuildDiscordId, i.EventTimestampUtc });
-    }
 }

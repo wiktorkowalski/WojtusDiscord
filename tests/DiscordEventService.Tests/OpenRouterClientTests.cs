@@ -40,7 +40,7 @@ public sealed class OpenRouterClientTests
         Assert.Equal(MemeAnalysisOutcome.Success, result.Outcome);
         Assert.NotNull(result.Metadata);
         Assert.Equal("Opis po polsku", result.Metadata!.DescriptionPl);
-        Assert.Equal(new[] { "kot", "cat" }, result.Metadata.Tags);
+        Assert.Equal(["kot", "cat"], result.Metadata.Tags);
         Assert.Equal("reddit", result.Metadata.Source);
         Assert.Null(result.Metadata.Template);
         Assert.Equal(10, result.Usage!.PromptTokens);
@@ -120,9 +120,8 @@ public sealed class OpenRouterClientTests
         Assert.False(called);
     }
 
-    private static string CompletionBody(string? content, string finishReason, decimal? cost, string? refusal = null)
-    {
-        return JsonSerializer.Serialize(new
+    private static string CompletionBody(string? content, string finishReason, decimal? cost, string? refusal = null) =>
+        JsonSerializer.Serialize(new
         {
             choices = new[]
             {
@@ -134,7 +133,6 @@ public sealed class OpenRouterClientTests
             },
             usage = new { prompt_tokens = 10, completion_tokens = 20, cost }
         });
-    }
 
     private static OpenRouterClient NewClient(Func<HttpRequestMessage, HttpResponseMessage> respond, string apiKey = "test-key")
     {

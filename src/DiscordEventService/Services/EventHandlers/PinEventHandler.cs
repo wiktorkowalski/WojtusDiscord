@@ -22,7 +22,7 @@ public sealed class PinEventHandler(EventPipeline pipeline) :
                     LastPinTimestampUtc = e.LastPinTimestamp?.UtcDateTime,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();

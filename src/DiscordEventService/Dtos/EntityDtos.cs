@@ -1,9 +1,5 @@
 namespace DiscordEventService.Dtos;
 
-// Typed, hand-crafted projections for the rich entity browser. Snowflakes are
-// ulong and serialize as strings via the global converter; enums are pre-decoded
-// to their names. Joins are core-to-core by Guid FK.
-
 public sealed record UserListDto(
     Guid Id,
     ulong DiscordId,

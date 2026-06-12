@@ -31,10 +31,10 @@ public class MemberEventEntity
     public bool? IsDeafenedBefore { get; set; }
     public bool? IsDeafenedAfter { get; set; }
     public string? BanReason { get; set; }
-    /// <summary>For Joined events, populated from Member.JoinedAt. For Left/Updated/Banned/Unbanned, DSharpPlus does not expose a per-event timestamp; equals ReceivedAtUtc by design.</summary>
+    // For Joined, from Member.JoinedAt. For Left/Updated/Banned/Unbanned, DSharpPlus exposes no per-event
+    // timestamp; equals ReceivedAtUtc by design.
     public DateTime EventTimestampUtc { get; set; }
     public DateTime ReceivedAtUtc { get; set; }
 
-    /// <summary>Raw serialized event args from DSharpPlus for debugging</summary>
     public string? RawEventJson { get; set; }
 }

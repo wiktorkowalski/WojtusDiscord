@@ -129,7 +129,7 @@ public sealed class ProfileTests(PostgresFixture fixture) : IClassFixture<Postgr
     }
 
     private static MessageEntity Message(
-        Guid authorId, Guid channelId, Guid guildId, ulong discordId, DateTime at, bool attach = false) => new()
+        Guid authorId, Guid channelId, Guid guildId, ulong discordId, DateTime at, bool attach = false) => new MessageEntity
         {
             DiscordId = discordId,
             AuthorId = authorId,
@@ -140,7 +140,7 @@ public sealed class ProfileTests(PostgresFixture fixture) : IClassFixture<Postgr
             CreatedAtUtc = at,
         };
 
-    private static ReactionEventEntity Reaction(ulong user, string emote, ulong messageId, DateTime at) => new()
+    private static ReactionEventEntity Reaction(ulong user, string emote, ulong messageId, DateTime at) => new ReactionEventEntity
     {
         UserDiscordId = user,
         GuildDiscordId = GuildSf,
@@ -153,7 +153,7 @@ public sealed class ProfileTests(PostgresFixture fixture) : IClassFixture<Postgr
     };
 
     private static VoiceStateEventEntity Voice(
-        ulong user, ulong? before, ulong? after, VoiceEventType type, DateTime at) => new()
+        ulong user, ulong? before, ulong? after, VoiceEventType type, DateTime at) => new VoiceStateEventEntity
         {
             UserDiscordId = user,
             GuildDiscordId = GuildSf,
@@ -164,7 +164,7 @@ public sealed class ProfileTests(PostgresFixture fixture) : IClassFixture<Postgr
             EventTimestampUtc = at,
         };
 
-    private static PresenceEventEntity Presence(ulong user, DateTime at, int desktop = 0) => new()
+    private static PresenceEventEntity Presence(ulong user, DateTime at, int desktop = 0) => new PresenceEventEntity
     {
         UserDiscordId = user,
         GuildDiscordId = GuildSf,

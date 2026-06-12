@@ -4,13 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace DiscordEventService.Infrastructure;
 
-/// <summary>
-/// Serializes Discord snowflakes (<see cref="ulong"/>) as JSON strings. Snowflakes
-/// exceed 2^53 and would lose precision if a browser parsed them as JS numbers, so
-/// the entire dashboard API emits them as quoted strings. Registered globally in
-/// <c>AddControllers().AddJsonOptions(...)</c>; also fires for boxed <c>ulong</c>
-/// values inside the generic explorer's <c>Dictionary&lt;string, object?&gt;</c> rows.
-/// </summary>
+// Snowflakes exceed 2^53 and would lose precision if a browser parsed them as JS numbers, so they're emitted as quoted strings.
 internal sealed class SnowflakeJsonConverter : JsonConverter<ulong>
 {
     public override ulong Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
@@ -25,7 +19,7 @@ internal sealed class SnowflakeJsonConverter : JsonConverter<ulong>
         => writer.WriteStringValue(value.ToString(CultureInfo.InvariantCulture));
 }
 
-/// <summary>Nullable counterpart to <see cref="SnowflakeJsonConverter"/>.</summary>
+// Nullable counterpart to SnowflakeJsonConverter — same 2^53 JS-precision rationale.
 internal sealed class NullableSnowflakeJsonConverter : JsonConverter<ulong?>
 {
     public override ulong? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
@@ -39,21 +33,12 @@ internal sealed class NullableSnowflakeJsonConverter : JsonConverter<ulong?>
 
     public override void Write(Utf8JsonWriter writer, ulong? value, JsonSerializerOptions options)
     {
-        if (value.HasValue)
-        {
-            writer.WriteStringValue(value.Value.ToString(CultureInfo.InvariantCulture));
-        }
-        else
-        {
-            writer.WriteNullValue();
-        }
+        if (value.HasValue) writer.WriteStringValue(value.Value.ToString(CultureInfo.InvariantCulture));
+        else writer.WriteNullValue();
     }
 }
 
-/// <summary>
-/// Builds the <see cref="JsonSerializerOptions"/> the dashboard API uses, so tests can
-/// assert serialization (e.g. snowflake-as-string) through the exact same pipeline.
-/// </summary>
+// Builds the dashboard API's JsonSerializerOptions so tests can assert serialization through the exact same pipeline.
 internal static class DashboardJson
 {
     public static void Configure(JsonSerializerOptions options)

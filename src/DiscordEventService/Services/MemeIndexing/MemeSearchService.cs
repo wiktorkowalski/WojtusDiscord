@@ -4,8 +4,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-// One ranked /meme hit. Snowflakes for the jump link + fresh-URL re-fetch,
-// descriptions for the "why it matched" snippet.
 public sealed record MemeSearchHit(
     ulong ChannelDiscordId,
     ulong MessageDiscordId,
@@ -17,12 +15,6 @@ public sealed record MemeSearchHit(
     DateTime MessageCreatedAtUtc,
     double Score);
 
-// #224 ranked hybrid search over Indexed memes (binding design on #224, column
-// semantics pinned by MemeIndexSchemaTests): an OR'd to_tsquery gate — NOT
-// websearch AND-semantics, the 'simple' config keeps stopwords so AND would
-// zero out natural-language queries — plus a word_similarity trigram rescue
-// for Polish inflections and typos (no Polish stemmer exists). Relevance comes
-// from the rank blend, not the gate; recency breaks ties.
 public sealed class MemeSearchService(DiscordDbContext db)
 {
     public const int DefaultLimit = 5;
@@ -44,8 +36,9 @@ public sealed class MemeSearchService(DiscordDbContext db)
         if (tokens.Count == 0)
             return [];
 
-        // Tokens are alphanumeric-only, so joining with the OR operator cannot
-        // inject other tsquery syntax (&, !, parentheses, prefix stars).
+        // OR not AND: the 'simple' config keeps stopwords, so AND-semantics would
+        // zero out natural-language queries. Tokens are alphanumeric-only, so the
+        // OR operator cannot inject other tsquery syntax (&, !, parens, prefix stars).
         var orQuery = string.Join(" | ", tokens);
         var guild = (long)guildId;
         var indexed = (int)MemeIndexStatus.Indexed;

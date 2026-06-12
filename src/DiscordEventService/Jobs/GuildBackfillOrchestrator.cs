@@ -9,12 +9,8 @@ public class GuildBackfillOrchestrator(
     public string StartBackfill(ulong guildId, BackfillOptions? options = null)
         => EnqueueChain(guildId, options ?? BackfillOptions.Default, afterTimestampUtc: null);
 
-    /// <summary>
-    /// Enqueues the full backfill chain (Roles → Emojis → Stickers → Channels →
-    /// Members → optional Messages → optional Reactions), passing afterTimestampUtc
-    /// to Messages/Reactions so they stop scrolling once they're older than the
-    /// window. Used by reconnect-driven and historical-gap-driven backfills.
-    /// </summary>
+    // afterTimestampUtc stops Messages/Reactions scrolling once older than the window;
+    // used by reconnect-driven and historical-gap-driven backfills.
     public string EnqueueBackfillFrom(ulong guildId, DateTime afterTimestampUtc, BackfillOptions? options = null)
         => EnqueueChain(guildId, options ?? BackfillOptions.Default, afterTimestampUtc);
 
@@ -39,7 +35,7 @@ public class GuildBackfillOrchestrator(
         var membersJobId = backgroundJobClient.ContinueJobWith<MembersBackfillJob>(
             channelsJobId, j => j.ExecuteAsync(guildId, CancellationToken.None));
 
-        string finalJobId = membersJobId;
+        var finalJobId = membersJobId;
 
         if (options.IncludeMessages)
         {
@@ -67,5 +63,5 @@ public record BackfillOptions
     public bool IncludeMessages { get; init; } = true;
     public bool IncludeReactions { get; init; } = true;
 
-    public static BackfillOptions Default => new();
+    public static BackfillOptions Default => new BackfillOptions();
 }

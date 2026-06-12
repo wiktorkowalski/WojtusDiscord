@@ -6,14 +6,6 @@ using DSharpPlus.Entities;
 
 namespace DiscordEventService.Commands;
 
-// #224: the bot's first user-facing command. /meme searches the Indexed meme
-// metadata (MemeSearchService) and responds publicly with one line per hit: a
-// bare jump link — Discord renders it as the native "#channel › 💬" pill —
-// followed by the description snippet. No embeds (user call, follow-up to
-// #230): the pill jumps straight to the original message with the image.
-// Every failure path answers the interaction — a swallowed exception here
-// would leave a dangling "thinking…" state, but can never touch the gateway
-// event pipeline.
 public sealed class MemeCommand(MemeSearchService searchService, ILogger<MemeCommand> logger)
 {
     [Command("meme")]

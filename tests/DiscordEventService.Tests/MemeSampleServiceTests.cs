@@ -65,12 +65,11 @@ public sealed class MemeSampleServiceTests(PostgresFixture fixture) : IClassFixt
     {
         var nextDiscordId = 200UL;
         var nextAttachmentId = 2000UL;
-        foreach (var year in new[] { 2018, 2020, 2022, 2024 })
+        int[] years = [2018, 2020, 2022, 2024];
+        foreach (var year in years)
         {
             for (var i = 0; i < 5; i++)
-            {
                 AddMessage(_memeChannel, nextDiscordId++, Year(year), Attachment(nextAttachmentId++, $"m{year}-{i}.jpg"));
-            }
         }
         await _db.SaveChangesAsync();
 
@@ -78,7 +77,7 @@ public sealed class MemeSampleServiceTests(PostgresFixture fixture) : IClassFixt
 
         Assert.Equal(8, sample.Count);
         var perYear = sample.GroupBy(s => s.CreatedAtUtc.Year).ToDictionary(g => g.Key, g => g.Count());
-        Assert.Equal(new[] { 2018, 2020, 2022, 2024 }, perYear.Keys.Order());
+        Assert.Equal([2018, 2020, 2022, 2024], perYear.Keys.Order());
         Assert.All(perYear.Values, count => Assert.Equal(2, count));
     }
 
@@ -94,7 +93,7 @@ public sealed class MemeSampleServiceTests(PostgresFixture fixture) : IClassFixt
 
         Assert.Equal(2, sample.Count);
         Assert.All(sample, s => Assert.Equal(300UL, s.MessageDiscordId));
-        Assert.Equal(new[] { 3000UL, 3001UL }, sample.Select(s => s.AttachmentDiscordId).Order().ToArray());
+        Assert.Equal([3000UL, 3001UL], sample.Select(s => s.AttachmentDiscordId).Order().ToArray());
     }
 
     private MemeSampleService NewService() =>

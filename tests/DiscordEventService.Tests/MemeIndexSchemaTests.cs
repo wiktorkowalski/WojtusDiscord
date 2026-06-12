@@ -6,9 +6,6 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// #220 acceptance contracts for the meme_index schema: idempotency key,
-// status lifecycle CHECK, FTS + trigram search semantics on the stored
-// generated columns, and the soft-delete join shape /meme (§6) will use.
 public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private DiscordDbContext _db = null!;

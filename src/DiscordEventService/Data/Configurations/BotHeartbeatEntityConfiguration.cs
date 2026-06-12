@@ -6,10 +6,8 @@ namespace DiscordEventService.Data.Configurations;
 
 internal sealed class BotHeartbeatEntityConfiguration : IEntityTypeConfiguration<BotHeartbeatEntity>
 {
-    public void Configure(EntityTypeBuilder<BotHeartbeatEntity> builder)
-    {
-        // Index on LastHeartbeatUtc — append-only table, "most recent tick"
-        // lookups via OrderByDescending(LastHeartbeatUtc).First() use this.
+    // Index on LastHeartbeatUtc — append-only table, "most recent tick"
+    // lookups via OrderByDescending(LastHeartbeatUtc).First() use this.
+    public void Configure(EntityTypeBuilder<BotHeartbeatEntity> builder) =>
         builder.HasIndex(h => h.LastHeartbeatUtc);
-    }
 }

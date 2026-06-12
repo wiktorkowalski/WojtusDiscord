@@ -22,7 +22,7 @@ public sealed class RoleEventHandler(EventPipeline pipeline) :
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
 
-                RoleEventEntity NewRoleEvent() => new()
+                RoleEventEntity NewRoleEvent() => new RoleEventEntity
                 {
                     RoleDiscordId = e.Role.Id,
                     GuildDiscordId = e.Guild.Id,
@@ -90,9 +90,7 @@ public sealed class RoleEventHandler(EventPipeline pipeline) :
                     .FirstOrDefaultAsync(r => r.DiscordId == e.RoleAfter.Id);
 
                 if (roleEntity != null)
-                {
                     UpdateRoleEntity(roleEntity, e.RoleAfter);
-                }
 
                 var roleEvent = new RoleEventEntity
                 {

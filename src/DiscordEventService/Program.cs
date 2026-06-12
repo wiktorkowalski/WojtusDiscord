@@ -20,10 +20,7 @@ using Microsoft.Extensions.Options;
 // Load .env from repo root (two levels up from project directory)
 var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
 var envPath = Path.Combine(repoRoot, ".env");
-if (File.Exists(envPath))
-{
-    Env.Load(envPath);
-}
+if (File.Exists(envPath)) Env.Load(envPath);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,7 +35,6 @@ builder.Host.UseDefaultServiceProvider(opts =>
     opts.ValidateScopes = builder.Environment.IsDevelopment();
 });
 
-// Configuration with validation
 builder.Services.AddOptions<DatabaseOptions>()
     .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName));
 
@@ -120,45 +116,34 @@ builder.Services.AddSingleton(rootSp =>
         services.AddMemoryCache();
     });
 
-    // Event handlers
     clientBuilder.ConfigureEventHandlers(b => b
-        // Messages & Reactions
         .AddEventHandlers<MessageEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<ReactionEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<PollEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<PinEventHandler>(ServiceLifetime.Scoped)
-        // Voice & Presence
         .AddEventHandlers<VoiceEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<VoiceServerEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<PresenceEventHandler>(ServiceLifetime.Scoped)
-        // Members & Bans
         .AddEventHandlers<MemberEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<BanEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<GuildMembersChunkHandler>(ServiceLifetime.Scoped)
-        // Guild updates
         .AddEventHandlers<GuildEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<GuildUpdateEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<EmojiEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<StickerEventHandler>(ServiceLifetime.Scoped)
-        // Channels, Roles & Threads
         .AddEventHandlers<ChannelEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<RoleEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<ThreadEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<ThreadSyncHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<StageInstanceEventHandler>(ServiceLifetime.Scoped)
-        // Scheduled Events & AutoMod
         .AddEventHandlers<ScheduledEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<AutoModEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<AutoModRuleEventHandler>(ServiceLifetime.Scoped)
-        // Invites & Typing
         .AddEventHandlers<InviteEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<TypingEventHandler>(ServiceLifetime.Scoped)
-        // Webhooks & Integrations
         .AddEventHandlers<WebhookEventHandler>(ServiceLifetime.Scoped)
         .AddEventHandlers<IntegrationEventHandler>(ServiceLifetime.Scoped)
-        // Audit Log
         .AddEventHandlers<AuditLogEventHandler>(ServiceLifetime.Scoped)
-        // Socket lifecycle (downtime tracking)
         .AddEventHandlers<SocketLifecycleHandler>(ServiceLifetime.Scoped)
     );
 
@@ -178,7 +163,6 @@ builder.Services.AddSingleton(rootSp =>
     return clientBuilder.Build();
 });
 
-// Hosted Service
 // Order is load-bearing: DiscordHostedService.StartAsync runs InferStartupGapAsync
 // (against the stale last_heartbeat_utc) before HeartbeatBackgroundService can write
 // a fresh tick that would mask the gap. Do not reorder.
@@ -197,7 +181,6 @@ builder.Services.AddScoped<ThreadChannelBackfillService>();
 builder.Services.AddScoped<MemberRoleSnapshotBackfillService>();
 builder.Services.AddScoped<MessageMentionsBackfillService>();
 
-// Health checks
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<DiscordDbContext>();
 
@@ -273,7 +256,6 @@ builder.Services.AddHangfireServer(options =>
     options.Queues = ["backfill", "default"];
 });
 
-// Backfill jobs
 builder.Services.AddScoped<BackfillJobExecutor>();
 builder.Services.AddScoped<RolesBackfillJob>();
 builder.Services.AddScoped<EmojisBackfillJob>();
@@ -307,7 +289,6 @@ if (Environment.GetEnvironmentVariable("VALIDATE_AND_EXIT") == "1")
     return;
 }
 
-// Apply migrations if configured
 var dbOptions = app.Services.GetRequiredService<IOptions<DatabaseOptions>>().Value;
 if (dbOptions.AutoMigrate)
 {
@@ -322,12 +303,10 @@ if (dbOptions.AutoMigrate)
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-// Dashboard read API
 app.MapControllers();
 
 app.MapHealthChecks("/health");
 
-// Hangfire dashboard
 app.MapHangfireDashboard("/hangfire");
 
 // Weekly full backfill safety net — catches anything reconnect-backfill misses
@@ -351,13 +330,10 @@ RecurringJob.AddOrUpdate<MemeIndexSweepJob>(
     j => j.ExecuteAsync(),
     "0 5 * * 0"); // Sundays 05:00 UTC
 
-// Backfill API
 app.MapBackfillEndpoints();
 
-// Operations API
 app.MapOpsEndpoints();
 
-// Meme benchmark API (#219)
 app.MapMemeBenchmarkEndpoints();
 app.MapMemeIndexEndpoints();
 
