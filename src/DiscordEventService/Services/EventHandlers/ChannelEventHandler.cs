@@ -202,5 +202,4 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
         ReceivedAtUtc = ctx.ReceivedAtUtc,
         RawEventJson = ctx.RawJson,
     };
-
 }

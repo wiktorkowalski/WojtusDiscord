@@ -33,9 +33,14 @@ internal sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFa
                 // GuildUpdateEventHandler); pass logRawEvent: false to skip a duplicate row.
                 if (logRawEvent)
                 {
-                    var serialized = await SerializeAndFlushRawEventAsync(
-                        scope.ServiceProvider, db, e, eventType, guildId, channelId, userId, correlationId);
+                    var rawEventService = scope.ServiceProvider.GetRequiredService<RawEventLogService>();
+                    var serialized = await rawEventService.SerializeAndLogAsync(
+                        e, eventType, guildId, channelId, userId, correlationId: correlationId);
                     rawJson = serialized.Json;
+
+                    // Flush the raw event row before handler logic. Any ChangeTracker.Clear()
+                    // in upsert services would silently drop staged raw_event_logs rows otherwise.
+                    await db.SaveChangesAsync();
 
                     // Serialization failure means raw_event_logs holds an unreplayable stub. The
                     // row is flagged (serialization_failed=true); surface it loudly and record a
@@ -59,27 +64,6 @@ internal sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFa
                 await RecordFailureAsync(ex);
             }
         }
-    }
-
-    private static async Task<EventSerializationResult> SerializeAndFlushRawEventAsync<TEventArgs>(
-        IServiceProvider services,
-        DiscordDbContext db,
-        TEventArgs e,
-        string eventType,
-        ulong guildId,
-        ulong? channelId,
-        ulong? userId,
-        Guid correlationId) where TEventArgs : class
-    {
-        var rawEventService = services.GetRequiredService<RawEventLogService>();
-        var serialized = await rawEventService.SerializeAndLogAsync(
-            e, eventType, guildId, channelId, userId, correlationId: correlationId);
-
-        // Flush the raw event row before handler logic. Any ChangeTracker.Clear()
-        // in upsert services would silently drop staged raw_event_logs rows otherwise.
-        await db.SaveChangesAsync();
-
-        return serialized;
     }
 
     // Isolated scope so a soft failure can be recorded even after the handler's scope faulted.

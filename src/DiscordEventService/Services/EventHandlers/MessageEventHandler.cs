@@ -428,5 +428,4 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
             });
         }
     }
-
 }

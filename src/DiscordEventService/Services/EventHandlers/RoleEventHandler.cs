@@ -166,5 +166,4 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
         ReceivedAtUtc = ctx.ReceivedAtUtc,
         RawEventJson = ctx.RawJson,
     };
-
 }

@@ -113,7 +113,8 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
                         await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
                         var memberEvent = BuildMemberUpdatedEvent(
-                            e, ctx, rolesAdded, rolesRemoved, premiumBefore, mutedBefore, deafenedBefore);
+                            e, ctx, rolesAdded, rolesRemoved,
+                            premiumBefore, premiumAfter, mutedBefore, mutedAfter, deafenedBefore, deafenedAfter);
 
                         ctx.Db.MemberEvents.Add(memberEvent);
                         await ctx.Db.SaveChangesAsync();
@@ -228,8 +229,11 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
         List<ulong> rolesAdded,
         List<ulong> rolesRemoved,
         DateTimeOffset? premiumBefore,
+        DateTimeOffset? premiumAfter,
         bool? mutedBefore,
-        bool? deafenedBefore) => new MemberEventEntity
+        bool mutedAfter,
+        bool? deafenedBefore,
+        bool deafenedAfter) => new MemberEventEntity
     {
         UserDiscordId = e.Member.Id,
         GuildDiscordId = e.Guild.Id,
@@ -244,18 +248,17 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
             : null,
         TimeoutUntilUtc = e.CommunicationDisabledUntilAfter?.UtcDateTime,
         PremiumSinceBeforeUtc = premiumBefore?.UtcDateTime,
-        PremiumSinceAfterUtc = e.Member.PremiumSince?.UtcDateTime,
+        PremiumSinceAfterUtc = premiumAfter?.UtcDateTime,
         GuildAvatarHashBefore = e.GuildAvatarHashBefore,
         GuildAvatarHashAfter = e.GuildAvatarHashAfter,
         IsPendingBefore = e.PendingBefore,
         IsPendingAfter = e.PendingAfter,
         IsMutedBefore = mutedBefore,
-        IsMutedAfter = e.Member.IsMuted,
+        IsMutedAfter = mutedAfter,
         IsDeafenedBefore = deafenedBefore,
-        IsDeafenedAfter = e.Member.IsDeafened,
+        IsDeafenedAfter = deafenedAfter,
         EventTimestampUtc = ctx.ReceivedAtUtc,
         ReceivedAtUtc = ctx.ReceivedAtUtc,
         RawEventJson = ctx.RawJson,
     };
-
 }
