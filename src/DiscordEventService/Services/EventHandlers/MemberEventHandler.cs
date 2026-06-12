@@ -157,6 +157,50 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
             });
     }
 
+    public async Task HandleEventAsync(DiscordClient sender, GuildBanAddedEventArgs e)
+    {
+        await pipeline.ExecuteAsync(e, "GuildBanAddedMember", nameof(MemberEventHandler),
+            e.Guild.Id, null, e.Member.Id, async ctx =>
+            {
+                var userService = ctx.Services.GetRequiredService<UserService>();
+                await userService.UpsertUserAsync(e.Member);
+
+                ctx.Db.MemberEvents.Add(new MemberEventEntity
+                {
+                    UserDiscordId = e.Member.Id,
+                    GuildDiscordId = e.Guild.Id,
+                    EventType = MemberEventType.Banned,
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson,
+                });
+
+                await ctx.Db.SaveChangesAsync();
+            });
+    }
+
+    public async Task HandleEventAsync(DiscordClient sender, GuildBanRemovedEventArgs e)
+    {
+        await pipeline.ExecuteAsync(e, "GuildBanRemovedMember", nameof(MemberEventHandler),
+            e.Guild.Id, null, e.Member.Id, async ctx =>
+            {
+                var userService = ctx.Services.GetRequiredService<UserService>();
+                await userService.UpsertUserAsync(e.Member);
+
+                ctx.Db.MemberEvents.Add(new MemberEventEntity
+                {
+                    UserDiscordId = e.Member.Id,
+                    GuildDiscordId = e.Guild.Id,
+                    EventType = MemberEventType.Unbanned,
+                    EventTimestampUtc = ctx.ReceivedAtUtc,
+                    ReceivedAtUtc = ctx.ReceivedAtUtc,
+                    RawEventJson = ctx.RawJson,
+                });
+
+                await ctx.Db.SaveChangesAsync();
+            });
+    }
+
     private static async Task MaintainRoleSnapshotsAsync(
         DiscordDbContext db, ILogger logger, ulong userDiscordId, ulong guildDiscordId,
         List<ulong> rolesAdded, List<ulong> rolesRemoved,
@@ -202,49 +246,5 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
                     member.Id, roleId);
             }
         }
-    }
-
-    public async Task HandleEventAsync(DiscordClient sender, GuildBanAddedEventArgs e)
-    {
-        await pipeline.ExecuteAsync(e, "GuildBanAddedMember", nameof(MemberEventHandler),
-            e.Guild.Id, null, e.Member.Id, async ctx =>
-            {
-                var userService = ctx.Services.GetRequiredService<UserService>();
-                await userService.UpsertUserAsync(e.Member);
-
-                ctx.Db.MemberEvents.Add(new MemberEventEntity
-                {
-                    UserDiscordId = e.Member.Id,
-                    GuildDiscordId = e.Guild.Id,
-                    EventType = MemberEventType.Banned,
-                    EventTimestampUtc = ctx.ReceivedAtUtc,
-                    ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson,
-                });
-
-                await ctx.Db.SaveChangesAsync();
-            });
-    }
-
-    public async Task HandleEventAsync(DiscordClient sender, GuildBanRemovedEventArgs e)
-    {
-        await pipeline.ExecuteAsync(e, "GuildBanRemovedMember", nameof(MemberEventHandler),
-            e.Guild.Id, null, e.Member.Id, async ctx =>
-            {
-                var userService = ctx.Services.GetRequiredService<UserService>();
-                await userService.UpsertUserAsync(e.Member);
-
-                ctx.Db.MemberEvents.Add(new MemberEventEntity
-                {
-                    UserDiscordId = e.Member.Id,
-                    GuildDiscordId = e.Guild.Id,
-                    EventType = MemberEventType.Unbanned,
-                    EventTimestampUtc = ctx.ReceivedAtUtc,
-                    ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson,
-                });
-
-                await ctx.Db.SaveChangesAsync();
-            });
     }
 }

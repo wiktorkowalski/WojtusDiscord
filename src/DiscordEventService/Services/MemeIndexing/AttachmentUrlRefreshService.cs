@@ -46,6 +46,12 @@ internal sealed class AttachmentUrlRefreshService(
         return result;
     }
 
+    public static string StripQuery(string url)
+    {
+        var queryStart = url.IndexOf('?');
+        return queryStart < 0 ? url : url[..queryStart];
+    }
+
     private async Task RefreshBatchAsync(
         List<string> batch,
         Dictionary<string, string> result,
@@ -78,12 +84,6 @@ internal sealed class AttachmentUrlRefreshService(
     }
 
     // The signature params are exactly what's stale — match on the bare URL.
-    public static string StripQuery(string url)
-    {
-        var queryStart = url.IndexOf('?');
-        return queryStart < 0 ? url : url[..queryStart];
-    }
-
     private sealed record RefreshResponse(
         [property: JsonPropertyName("refreshed_urls")] List<RefreshedUrl>? RefreshedUrls);
 

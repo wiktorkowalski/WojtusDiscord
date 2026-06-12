@@ -14,10 +14,11 @@ internal sealed class MessagesBackfillJob(
     BackfillJobExecutor executor,
     ILogger<MessagesBackfillJob> logger) : BackfillJobBase, IBackfillJob
 {
-    protected override BackfillType BackfillType => BackfillType.Messages;
-
     private const int BatchSize = 100;
+
     private static readonly TimeSpan DelayBetweenBatches = TimeSpan.FromMilliseconds(500);
+
+    protected override BackfillType BackfillType => BackfillType.Messages;
 
     public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
         => ExecuteAsync(guildId, null, cancellationToken);

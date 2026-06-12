@@ -3,22 +3,6 @@ using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace DiscordEventService.Infrastructure;
 
-// Logical column type from EF metadata — drives both raw-SQL value coercion and frontend cell rendering.
-public enum ColumnKind
-{
-    String,
-    Int,
-    Long,
-    Snowflake,
-    Bool,
-    Timestamp,
-    Uuid,
-    Json,
-    Number,
-    Enum,
-    Other,
-}
-
 public sealed record ColumnMeta(
     string Name,
     ColumnKind Kind,
@@ -27,26 +11,6 @@ public sealed record ColumnMeta(
     IReadOnlyList<EnumValue>? EnumValues);
 
 public sealed record EnumValue(int Value, string Name);
-
-public sealed class TableMeta
-{
-    public required string TableName { get; init; }
-    public required string DisplayName { get; init; }
-    public required string EntityName { get; init; }
-    public required IReadOnlyList<ColumnMeta> Columns { get; init; }
-
-    private Dictionary<string, ColumnMeta>? _byName;
-    private Dictionary<string, ColumnMeta> ByName =>
-        _byName ??= Columns.ToDictionary(c => c.Name, StringComparer.Ordinal);
-
-    public bool HasColumn(string column) => ByName.ContainsKey(column);
-
-    public ColumnMeta? Column(string column) => ByName.GetValueOrDefault(column);
-
-    // Stable default sort: the single-column PK if present, else the first column.
-    public string DefaultSortColumn =>
-        Columns.FirstOrDefault(c => c.IsPrimaryKey)?.Name ?? Columns[0].Name;
-}
 
 // Security boundary for the generic explorer: only table/column identifiers present here are ever emitted
 // into SQL, and the emitted literal is the trusted model value — never client-supplied text. Hangfire and

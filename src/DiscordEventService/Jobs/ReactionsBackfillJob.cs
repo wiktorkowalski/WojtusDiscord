@@ -15,9 +15,9 @@ internal sealed class ReactionsBackfillJob(
 {
     private const int MessageBatchSize = 100;
 
-    protected override BackfillType BackfillType => BackfillType.Reactions;
-
     private static readonly TimeSpan DelayBetweenBatches = TimeSpan.FromMilliseconds(200);
+
+    protected override BackfillType BackfillType => BackfillType.Reactions;
 
     public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
         => ExecuteAsync(guildId, null, cancellationToken);

@@ -15,11 +15,6 @@ internal sealed class OpenRouterClient(
 {
     public const string HttpClientName = "openrouter";
 
-    private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
-    {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
-
     private const string SystemPrompt =
         """
         You analyze meme images from a Polish Discord community and produce search metadata.
@@ -31,6 +26,12 @@ internal sealed class OpenRouterClient(
         - source: the platform whose watermark or UI is visible in the image (e.g. reddit, twitter, x, facebook, instagram, tiktok, kwejk, jbzd, 9gag, demotywatory, wykop), or null if none is visible.
         - template: the canonical meme template name (e.g. "drake", "distracted boyfriend", "doge"), or null if not a recognizable template.
         """;
+
+
+    private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
 
     // strict json_schema makes the model return the MemeMetadata contract directly (no
     // markdown-fence scraping): every property required, nullability expressed in types.

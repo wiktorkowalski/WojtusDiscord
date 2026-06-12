@@ -57,33 +57,24 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         GROUP BY c.id, c.name, c.discord_id, rc.reactions ORDER BY msgs DESC, c.id LIMIT
         """;
 
-    // Top message authors, ordered by count. Shared by the Overview tile (top 1) and the
-    // People endpoint (top 20); they differ only in row count. Same GROUP BY as the
-    // Community topChatters leaderboard.
-    private IQueryable<UserStatDto> TopChatters() =>
-        db.Messages.AsNoTracking()
-            .GroupBy(m => new { m.Author.Username, m.Author.DiscordId, m.Author.AvatarHash })
-            .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Count = g.LongCount() })
-            .OrderByDescending(x => x.Count)
-            .ThenBy(x => x.DiscordId)
-            .Select(x => new UserStatDto(x.Username, x.DiscordId, x.Count, x.AvatarHash));
-
-    // Most-used reaction emotes (Overview top 5 / Behavior top 25). IsCustom (custom emotes
-    // carry a snowflake id) is computed in memory after the grouped count.
-    private async Task<List<EmojiStatDto>> TopEmojisAsync(int limit, CancellationToken ct)
-    {
-        var rows = await db.ReactionEvents.AsNoTracking().WherePresent()
-            .GroupBy(r => new { r.EmoteName, r.EmoteDiscordId })
-            .Select(g => new { g.Key.EmoteName, g.Key.EmoteDiscordId, Count = g.LongCount() })
-            .OrderByDescending(x => x.Count)
-            .ThenBy(x => x.EmoteName)
-            .ThenBy(x => x.EmoteDiscordId)
-            .Take(limit)
-            .ToListAsync(ct);
-        return rows
-            .Select(x => new EmojiStatDto(x.EmoteName, x.EmoteDiscordId, x.EmoteDiscordId is > 0, x.Count))
-            .ToList();
-    }
+    // Voice minutes credited for one session segment [v.received_at_utc, v.next_ts),
+    // MINUS any overlap with a bot_downtime_intervals window (open intervals coalesced
+    // to now()). During an outage a "leave" can go unobserved, so the raw gap to the
+    // user's next event would otherwise count the whole blind window as voice time (the
+    // 2026-05 blackout would credit ~14k phantom minutes to anyone left in a channel).
+    // We SUBTRACT the downtime overlap rather than drop the segment, so a legitimate
+    // multi-hour call spanning a brief restart is preserved. Every voice query aliases
+    // the sessionized rows as `v`. Mirrors the downtime handling in OnlineMinutesMetricAsync.
+    private const string VoiceSegmentMinutes =
+        """
+        GREATEST(0, EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc)) - COALESCE((
+            SELECT SUM(EXTRACT(EPOCH FROM (
+                LEAST(v.next_ts, COALESCE(d.ended_at_utc, now()))
+              - GREATEST(v.received_at_utc, d.started_at_utc))))
+            FROM bot_downtime_intervals d
+            WHERE v.received_at_utc < COALESCE(d.ended_at_utc, now())
+              AND v.next_ts > d.started_at_utc), 0)) / 60.0
+        """;
 
     [HttpGet("overview")]
     [ProducesResponseType<OverviewDto>(StatusCodes.Status200OK)]
@@ -477,6 +468,34 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         return new SpotifyDto(nowPlaying, topTracks);
     }
 
+    // Top message authors, ordered by count. Shared by the Overview tile (top 1) and the
+    // People endpoint (top 20); they differ only in row count. Same GROUP BY as the
+    // Community topChatters leaderboard.
+    private IQueryable<UserStatDto> TopChatters() =>
+        db.Messages.AsNoTracking()
+            .GroupBy(m => new { m.Author.Username, m.Author.DiscordId, m.Author.AvatarHash })
+            .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Count = g.LongCount() })
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.DiscordId)
+            .Select(x => new UserStatDto(x.Username, x.DiscordId, x.Count, x.AvatarHash));
+
+    // Most-used reaction emotes (Overview top 5 / Behavior top 25). IsCustom (custom emotes
+    // carry a snowflake id) is computed in memory after the grouped count.
+    private async Task<List<EmojiStatDto>> TopEmojisAsync(int limit, CancellationToken ct)
+    {
+        var rows = await db.ReactionEvents.AsNoTracking().WherePresent()
+            .GroupBy(r => new { r.EmoteName, r.EmoteDiscordId })
+            .Select(g => new { g.Key.EmoteName, g.Key.EmoteDiscordId, Count = g.LongCount() })
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.EmoteName)
+            .ThenBy(x => x.EmoteDiscordId)
+            .Take(limit)
+            .ToListAsync(ct);
+        return rows
+            .Select(x => new EmojiStatDto(x.EmoteName, x.EmoteDiscordId, x.EmoteDiscordId is > 0, x.Count))
+            .ToList();
+    }
+
     private async Task<List<T>> QueryAsync<T>(string sql, Func<NpgsqlDataReader, T> map, CancellationToken ct)
     {
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();
@@ -582,25 +601,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             """;
         return await QueryAsync(sql, r => r.GetInt64(0), ct);
     }
-
-    // Voice minutes credited for one session segment [v.received_at_utc, v.next_ts),
-    // MINUS any overlap with a bot_downtime_intervals window (open intervals coalesced
-    // to now()). During an outage a "leave" can go unobserved, so the raw gap to the
-    // user's next event would otherwise count the whole blind window as voice time (the
-    // 2026-05 blackout would credit ~14k phantom minutes to anyone left in a channel).
-    // We SUBTRACT the downtime overlap rather than drop the segment, so a legitimate
-    // multi-hour call spanning a brief restart is preserved. Every voice query aliases
-    // the sessionized rows as `v`. Mirrors the downtime handling in OnlineMinutesMetricAsync.
-    private const string VoiceSegmentMinutes =
-        """
-        GREATEST(0, EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc)) - COALESCE((
-            SELECT SUM(EXTRACT(EPOCH FROM (
-                LEAST(v.next_ts, COALESCE(d.ended_at_utc, now()))
-              - GREATEST(v.received_at_utc, d.started_at_utc))))
-            FROM bot_downtime_intervals d
-            WHERE v.received_at_utc < COALESCE(d.ended_at_utc, now())
-              AND v.next_ts > d.started_at_utc), 0)) / 60.0
-        """;
 
     // Voice minutes: sessionize via LEAD() and count a segment when its start is inside
     // the window. Spark buckets segment minutes by the CET day of the segment start.
