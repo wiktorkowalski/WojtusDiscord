@@ -1,4 +1,3 @@
-
 namespace DiscordEventService.Data.Entities.Events;
 
 public class FailedEventEntity

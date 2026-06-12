@@ -10,8 +10,6 @@ internal static class MemeBenchmarkEndpoints
     private const int DefaultSampleSize = 100;
     private const int MaxSampleSize = 500;
 
-    private static int ClampSampleSize(int? sampleSize) => Math.Clamp(sampleSize ?? DefaultSampleSize, 1, MaxSampleSize);
-
     public static void MapMemeBenchmarkEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/ops/meme-benchmark");
@@ -104,6 +102,8 @@ internal static class MemeBenchmarkEndpoints
         var content = await File.ReadAllTextAsync(latest, ct);
         return Results.Content(content, "text/markdown; charset=utf-8");
     }
+
+    private static int ClampSampleSize(int? sampleSize) => Math.Clamp(sampleSize ?? DefaultSampleSize, 1, MaxSampleSize);
 }
 
 internal sealed record BenchmarkStartResponse

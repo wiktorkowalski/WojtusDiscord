@@ -175,7 +175,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     [HttpGet("volume/by-type")]
     [ProducesResponseType<List<VolumeByTypeDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<List<VolumeByTypeDto>>> VolumeByType(CancellationToken ct) => await
-
         db.RawEventLogs.AsNoTracking()
             .Where(e => !e.IsSerializationFailed)
             .GroupBy(e => e.EventType)
@@ -199,7 +198,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     [HttpGet("people/top-messages")]
     [ProducesResponseType<List<UserStatDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<List<UserStatDto>>> TopMessages(CancellationToken ct) => await
-
         TopChatters().Take(LeaderboardSize).ToListAsync(ct);
 
     // Reactions GIVEN per user. LEFT-join semantics (a reactor with no stored user row keeps
@@ -208,7 +206,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     [HttpGet("people/top-reactions-given")]
     [ProducesResponseType<List<UserStatDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<List<UserStatDto>>> TopReactionsGiven(CancellationToken ct) => await
-
         db.ReactionEvents.AsNoTracking().WherePresent()
             .GroupBy(r => r.UserDiscordId)
             .Select(g => new { UserDiscordId = g.Key, Count = g.LongCount() })
@@ -227,7 +224,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     [HttpGet("people/top-reactions-received")]
     [ProducesResponseType<List<UserStatDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<List<UserStatDto>>> TopReactionsReceived(CancellationToken ct) => await
-
         db.ReactionEvents.AsNoTracking().WherePresent()
             .Join(db.Messages.AsNoTracking(), r => r.MessageDiscordId, m => m.DiscordId, (r, m) => m.Author)
             .GroupBy(a => new { a.Username, a.DiscordId, a.AvatarHash })
@@ -272,7 +268,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     [HttpGet("behavior/top-activities")]
     [ProducesResponseType<List<ActivityStatDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<List<ActivityStatDto>>> TopActivities(CancellationToken ct) => await
-
         db.Activities.AsNoTracking()
             .Where(a => a.Name != null)
             .GroupBy(a => a.Name)
@@ -422,7 +417,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Take(SpotifyListSize)
             .Select(a => new
             {
-                a.User!.DiscordId,
+                a.User.DiscordId,
                 a.User.Username,
                 a.User.AvatarHash,
                 a.SpotifySongTitle,

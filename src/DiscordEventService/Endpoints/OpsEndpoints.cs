@@ -11,29 +11,29 @@ internal static class OpsEndpoints
         var group = app.MapGroup("/api/ops");
 
         group.MapPost("/downtime/start", StartDowntimeAsync)
-            .WithName("StartDowntimeAsync")
+            .WithName("StartDowntime")
             .Produces<DowntimeStartResponse>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest);
 
         group.MapPost("/replay-orphans", ReplayOrphansAsync)
-            .WithName("ReplayOrphansAsync")
+            .WithName("ReplayOrphans")
             .Produces<OrphanReplayResult>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest);
 
         group.MapPost("/backfill-thread-channels", BackfillThreadChannelsAsync)
-            .WithName("BackfillThreadChannelsAsync")
+            .WithName("BackfillThreadChannels")
             .Produces<ThreadChannelBackfillService.Result>(StatusCodes.Status200OK);
 
         group.MapPost("/backfill-role-snapshots", BackfillRoleSnapshotsAsync)
-            .WithName("BackfillRoleSnapshotsAsync")
+            .WithName("BackfillRoleSnapshots")
             .Produces<MemberRoleSnapshotBackfillService.Result>(StatusCodes.Status200OK);
 
         group.MapPost("/backfill-message-mentions", BackfillMessageMentionsAsync)
-            .WithName("BackfillMessageMentionsAsync")
+            .WithName("BackfillMessageMentions")
             .Produces<MessageMentionsBackfillService.Result>(StatusCodes.Status200OK);
 
         group.MapPost("/failed-events/{id:guid}/resolve", ResolveFailedEventAsync)
-            .WithName("ResolveFailedEventAsync")
+            .WithName("ResolveFailedEvent")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status404NotFound);
     }

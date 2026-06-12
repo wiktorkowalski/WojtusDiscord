@@ -27,7 +27,6 @@ internal sealed class OpenRouterClient(
         - template: the canonical meme template name (e.g. "drake", "distracted boyfriend", "doge"), or null if not a recognizable template.
         """;
 
-
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,

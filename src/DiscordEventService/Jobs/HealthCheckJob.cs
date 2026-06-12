@@ -147,7 +147,7 @@ internal sealed class HealthCheckJob(
 
         lock (_lock) { _lastCrashLoopAlert = now; }
 
-        logger.LogWarning("Health check alert: {Restarts} restarts in last 30 min — possible crash-loop", recentRestarts);
+        logger.LogWarning("Health check alert: {Restarts} restarts in last {WindowMinutes} min — possible crash-loop", recentRestarts, CrashLoopWindowMinutes);
     }
 
     private async Task CheckEventTypeRatioAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)

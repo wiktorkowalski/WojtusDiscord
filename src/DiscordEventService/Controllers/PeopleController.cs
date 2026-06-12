@@ -13,11 +13,11 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
 {
     private const string Tz = "Europe/Warsaw";
 
-    // Presence sessions: gaps longer than this break an online streak.
-    private static readonly TimeSpan MaxPresenceGap = TimeSpan.FromMinutes(30);
-
     // Daily-activity sparkline window on the profile.
     private const int SparklineDays = 14;
+
+    // Presence sessions: gaps longer than this break an online streak.
+    private static readonly TimeSpan MaxPresenceGap = TimeSpan.FromMinutes(30);
 
     [HttpGet("{discordId:long}/profile")]
     [ProducesResponseType<ProfileDto>(StatusCodes.Status200OK)]

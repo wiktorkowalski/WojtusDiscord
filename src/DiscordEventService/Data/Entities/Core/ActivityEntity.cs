@@ -1,4 +1,3 @@
-
 namespace DiscordEventService.Data.Entities.Core;
 
 public class ActivityEntity

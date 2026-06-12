@@ -46,6 +46,7 @@ internal sealed class AttachmentUrlRefreshService(
         return result;
     }
 
+    // The signature params are exactly what's stale — match on the bare URL.
     public static string StripQuery(string url)
     {
         var queryStart = url.IndexOf('?');
@@ -83,7 +84,6 @@ internal sealed class AttachmentUrlRefreshService(
         }
     }
 
-    // The signature params are exactly what's stale — match on the bare URL.
     private sealed record RefreshResponse(
         [property: JsonPropertyName("refreshed_urls")] List<RefreshedUrl>? RefreshedUrls);
 
