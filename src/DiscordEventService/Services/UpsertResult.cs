@@ -1,10 +1,6 @@
 namespace DiscordEventService.Services;
 
-/// <summary>
-/// Outcome of an upsert: success carries the resolved <typeparamref name="T"/>; failure carries a
-/// reason (already logged by the service). Replaces the prior <c>Guid.Empty</c>-as-error sentinel so
-/// callers branch on <see cref="IsSuccess"/> instead of pattern-matching a magic value.
-/// </summary>
+// Replaces the prior Guid.Empty-as-error sentinel so callers branch on IsSuccess, not a magic value.
 public sealed record UpsertResult<T>(bool IsSuccess, T? Value, string? FailureReason)
 {
     public static UpsertResult<T> Success(T value) => new(true, value, null);

@@ -4,12 +4,8 @@ using DiscordEventService.Services.Pipeline;
 
 namespace DiscordEventService.Services;
 
-/// <summary>
-/// Single source of truth for the scoped services that both the root (ASP.NET Core) and the
-/// DSharpPlus child DI container need. Registration loops over <see cref="CoreServiceTypes"/> and
-/// <see cref="StartupValidator"/> validates the same list, so adding a service is one line here and
-/// it is registered in both containers and validated at startup.
-/// </summary>
+// Single source of truth for the scoped services both the root (ASP.NET Core) and the DSharpPlus
+// child DI container need — registration and StartupValidator both loop over CoreServiceTypes.
 public static class CoreServiceRegistration
 {
     public static readonly Type[] CoreServiceTypes =

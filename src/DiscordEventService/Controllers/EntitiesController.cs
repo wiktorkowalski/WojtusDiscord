@@ -5,11 +5,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Controllers;
 
-/// <summary>
-/// Rich, hand-crafted views over the core current-state entities (users, channels,
-/// members, messages) with name-resolved joins and detail drill-downs. All reads
-/// are AsNoTracking; joins are core-to-core by Guid FK.
-/// </summary>
 [ApiController]
 [Route("api/entities")]
 public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
@@ -60,9 +55,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
             .FirstOrDefaultAsync(ct);
 
         if (user is null)
-        {
             return NotFound();
-        }
 
         var history = await db.UserNameHistory.AsNoTracking()
             .Where(h => h.UserId == id)
@@ -109,9 +102,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
             .FirstOrDefaultAsync(ct);
 
         if (channel is null)
-        {
             return NotFound();
-        }
 
         return Ok(new ChannelDetailDto(
             channel.Id, channel.DiscordId, channel.Name, channel.Type.ToString(), channel.Topic,
@@ -136,9 +127,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
     {
         var query = db.Messages.AsNoTracking();
         if (channelId is not null)
-        {
             query = query.Where(m => m.ChannelId == channelId.Value);
-        }
 
         return PageAsync(
             query.OrderByDescending(m => m.CreatedAtUtc).ThenByDescending(m => m.Id)
@@ -177,9 +166,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
             .FirstOrDefaultAsync(ct);
 
         if (message is null)
-        {
             return NotFound();
-        }
 
         var edits = await db.MessageEditHistory.AsNoTracking()
             .Where(h => h.MessageId == id)

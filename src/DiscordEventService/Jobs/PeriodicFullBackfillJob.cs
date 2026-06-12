@@ -4,14 +4,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
 
-/// <summary>
-/// Weekly safety-net backfill. Reconnect-backfill is capped to 2 days,
-/// so anything older needs this periodic sweep. Scoped to the last 2 weeks
-/// to avoid full-history crawls that take hours on large guilds.
-///
-/// Skips guilds with an InProgress checkpoint to avoid stepping on the
-/// reconnect path or the operator-triggered /api/backfill endpoint.
-/// </summary>
+// Reconnect-backfill is capped to 2 days, so anything older needs this periodic sweep;
+// skips guilds with an InProgress checkpoint to avoid stepping on the reconnect path or
+// the operator-triggered /api/backfill endpoint.
 public class PeriodicFullBackfillJob(
     IServiceScopeFactory scopeFactory,
     ILogger<PeriodicFullBackfillJob> logger)

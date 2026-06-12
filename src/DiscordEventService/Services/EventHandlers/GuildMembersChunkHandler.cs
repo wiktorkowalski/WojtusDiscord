@@ -1,18 +1,18 @@
+using System.Text.Json;
 using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
-using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
 public sealed class GuildMembersChunkHandler(EventPipeline pipeline) :
     IEventHandler<GuildMembersChunkedEventArgs>
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = false
+        WriteIndented = false,
     };
 
     public async Task HandleEventAsync(DiscordClient sender, GuildMembersChunkedEventArgs args)
@@ -23,9 +23,7 @@ public sealed class GuildMembersChunkHandler(EventPipeline pipeline) :
                 var userService = ctx.Services.GetRequiredService<UserService>();
 
                 foreach (var member in args.Members)
-                {
                     await userService.UpsertUserAsync(member);
-                }
 
                 ctx.Db.GuildMembersChunkEvents.Add(new GuildMembersChunkEventEntity
                 {
@@ -48,7 +46,7 @@ public sealed class GuildMembersChunkHandler(EventPipeline pipeline) :
                         : null,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();

@@ -1,7 +1,7 @@
 using System.Text.Json;
 using DiscordEventService.Controllers;
-using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data;
+using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Dtos;
 using DiscordEventService.Infrastructure;
 using Microsoft.AspNetCore.Mvc;

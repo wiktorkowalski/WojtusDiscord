@@ -6,10 +6,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-// One image attachment in a meme channel: snowflakes for the jump link plus
-// the stored (expired) CDN URL, which AttachmentUrlRefreshService re-signs.
-// The trailing defaults keep pre-#221 benchmark links files deserializable —
-// old exports simply lack MessageId/FileSizeBytes.
+// Trailing defaults keep pre-#221 benchmark links files deserializable — old exports lack MessageId/FileSizeBytes.
 public sealed record MemeSampleItem(
     ulong GuildDiscordId,
     ulong ChannelDiscordId,
@@ -29,10 +26,6 @@ public sealed class MemeSampleService(
     // Matches the 4-field shape MessageEventHandler/MessagesBackfillJob serialize.
     private sealed record StoredAttachment(ulong Id, string? Url, string? FileName, int FileSize);
 
-    // Stratified-by-year random sample of image attachments from the configured
-    // meme channels. Old low-res memes must be represented in the benchmark, so
-    // quota is distributed round-robin across years rather than uniformly over
-    // rows (recent years would otherwise dominate).
     public async Task<List<MemeSampleItem>> SampleAsync(int sampleSize, CancellationToken cancellationToken)
     {
         var candidates = await GetCandidatesAsync(cancellationToken);
@@ -45,8 +38,7 @@ public sealed class MemeSampleService(
         return picked;
     }
 
-    // Shared by the DB path above and the links-file path (prod export run
-    // locally): round-robin across years so old low-res memes are represented.
+    // Round-robin across years so old low-res memes are represented, not drowned out by recent years.
     public static List<MemeSampleItem> Stratify(IReadOnlyCollection<MemeSampleItem> candidates, int sampleSize)
     {
         var byYear = candidates
@@ -70,14 +62,9 @@ public sealed class MemeSampleService(
         return picked;
     }
 
-    // Also the candidate source for the indexing job (#221) — every image
-    // attachment in the configured meme channels, no sampling.
     public Task<List<MemeSampleItem>> GetCandidatesAsync(CancellationToken cancellationToken)
         => GetCandidatesCoreAsync(messageDiscordId: null, cancellationToken);
 
-    // #222 live path: the candidates of ONE message (empty when the message is
-    // not in a configured meme channel — the job-level guard behind the
-    // handler's channel filter).
     public Task<List<MemeSampleItem>> GetCandidatesForMessageAsync(
         ulong messageDiscordId, CancellationToken cancellationToken)
         => GetCandidatesCoreAsync(messageDiscordId, cancellationToken);

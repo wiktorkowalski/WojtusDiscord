@@ -190,7 +190,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
         _db.ChangeTracker.Clear();
     }
 
-    private static MessageEntity Message(Guid authorId, Guid channelId, Guid guildId, ulong discordId) => new()
+    private static MessageEntity Message(Guid authorId, Guid channelId, Guid guildId, ulong discordId) => new MessageEntity
     {
         DiscordId = discordId,
         AuthorId = authorId,
@@ -201,7 +201,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     };
 
     private static VoiceStateEventEntity Voice(
-        ulong user, ulong guild, ulong? before, ulong? after, VoiceEventType type, DateTime at) => new()
+        ulong user, ulong guild, ulong? before, ulong? after, VoiceEventType type, DateTime at) => new VoiceStateEventEntity
         {
             UserDiscordId = user,
             GuildDiscordId = guild,
@@ -213,7 +213,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
         };
 
     private static ReactionEventEntity Reaction(
-        ulong user, ulong guild, ulong channel, string emote, ulong? emoteId) => new()
+        ulong user, ulong guild, ulong channel, string emote, ulong? emoteId) => new ReactionEventEntity
         {
             UserDiscordId = user,
             GuildDiscordId = guild,
@@ -226,7 +226,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
             EventTimestampUtc = DateTime.UtcNow,
         };
 
-    private static RawEventLogEntity Raw(string type, DateTime at) => new()
+    private static RawEventLogEntity Raw(string type, DateTime at) => new RawEventLogEntity
     {
         EventType = type,
         GuildDiscordId = 742554855180206203UL,

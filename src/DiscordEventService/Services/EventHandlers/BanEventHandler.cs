@@ -38,7 +38,7 @@ public sealed class BanEventHandler(EventPipeline pipeline) :
                             GuildId = guildGuid,
                             UserId = userGuid,
                             IsActive = true,
-                            BannedAtUtc = ctx.ReceivedAtUtc
+                            BannedAtUtc = ctx.ReceivedAtUtc,
                         });
                     }
                 }
@@ -50,7 +50,7 @@ public sealed class BanEventHandler(EventPipeline pipeline) :
                     EventType = BanEventType.Added,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -87,7 +87,7 @@ public sealed class BanEventHandler(EventPipeline pipeline) :
                     EventType = BanEventType.Removed,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();

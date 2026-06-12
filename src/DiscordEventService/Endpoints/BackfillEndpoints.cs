@@ -36,14 +36,11 @@ public static class BackfillEndpoints
         GuildBackfillOrchestrator orchestrator,
         DiscordDbContext db)
     {
-        // Check if backfill already in progress
         var existingInProgress = await db.BackfillCheckpoints
             .AnyAsync(c => c.GuildDiscordId == guildId && c.Status == BackfillStatus.InProgress);
 
         if (existingInProgress)
-        {
             return Results.BadRequest(new { error = "Backfill already in progress for this guild" });
-        }
 
         var options = request?.ToOptions() ?? BackfillOptions.Default;
         var jobId = orchestrator.StartBackfill(guildId, options);
@@ -81,8 +78,8 @@ public static class BackfillEndpoints
                 ErrorCount = c.ErrorCount,
                 LastError = c.LastError,
                 StartedAt = c.StartedAtUtc,
-                CompletedAt = c.CompletedAtUtc
-            }).ToList()
+                CompletedAt = c.CompletedAtUtc,
+            }).ToList(),
         });
     }
 
@@ -98,9 +95,7 @@ public static class BackfillEndpoints
         foreach (var checkpoint in inProgress)
         {
             if (!string.IsNullOrEmpty(checkpoint.HangfireJobId))
-            {
                 jobClient.Delete(checkpoint.HangfireJobId);
-            }
             checkpoint.Status = BackfillStatus.Cancelled;
         }
 
@@ -128,10 +123,10 @@ public record BackfillRequest
     public bool IncludeMessages { get; init; } = true;
     public bool IncludeReactions { get; init; } = true;
 
-    public BackfillOptions ToOptions() => new()
+    public BackfillOptions ToOptions() => new BackfillOptions
     {
         IncludeMessages = IncludeMessages,
-        IncludeReactions = IncludeReactions
+        IncludeReactions = IncludeReactions,
     };
 }
 

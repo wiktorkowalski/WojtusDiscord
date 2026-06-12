@@ -25,11 +25,6 @@ public sealed class HealthCheckEventRatioTests(PostgresFixture fixture)
 
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
-    /// <summary>
-    /// A type whose recent count collapses against its time-of-day baseline only alerts once the
-    /// drop has persisted for EventRatioConsecutiveRuns runs (debounce), and excluded voice types
-    /// never alert at all — even when their counts collapse identically.
-    /// </summary>
     [Fact]
     public async Task EventRatioDrop_DebouncesAcrossRuns_AndExcludesVoice()
     {
@@ -37,8 +32,11 @@ public sealed class HealthCheckEventRatioTests(PostgresFixture fixture)
 
         // Baseline: 20 events/day for each of the previous 7 days, ~1h before "now" so they land
         // inside the 6h time-of-day baseline window. One normal type and one excluded voice type.
-        foreach (var type in new[] { "MessageCreated", "VoiceStateUpdated" })
+        string[] eventTypes = ["MessageCreated", "VoiceStateUpdated"];
+        foreach (var type in eventTypes)
+        {
             for (var day = 1; day <= 7; day++)
+            {
                 for (var i = 0; i < 20; i++)
                     _db.RawEventLogs.Add(new RawEventLogEntity
                     {
@@ -47,6 +45,8 @@ public sealed class HealthCheckEventRatioTests(PostgresFixture fixture)
                         EventJson = "{}",
                         ReceivedAtUtc = now.AddDays(-day).AddHours(-1).AddSeconds(i),
                     });
+            }
+        }
         // Recent 6h window: nothing seeded for either type -> both read as a near-total drop.
         await _db.SaveChangesAsync();
 

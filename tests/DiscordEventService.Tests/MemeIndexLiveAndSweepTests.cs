@@ -12,10 +12,6 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// #222 acceptance contracts: the live single-message path (IndexMessageAsync),
-// the weekly healing sweep (ExecuteSweepAsync + MemeIndexSweepJob coordinator),
-// end-to-end against real Postgres with the same handler-level HTTP fakes as
-// MemeIndexingJobTests.
 public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private const ulong GuildDiscordId = 1UL;
@@ -316,8 +312,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     }
 }
 
-// Captures Hangfire enqueues without a storage backend; the coordinator's
-// contract is "which jobs got created", not their execution.
+// Captures enqueues without a storage backend.
 internal sealed class RecordingJobClient : IBackgroundJobClient
 {
     public List<Job> Created { get; } = [];

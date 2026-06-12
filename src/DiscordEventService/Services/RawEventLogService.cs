@@ -1,15 +1,12 @@
+using System.Reflection;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
-using System.Reflection;
 
 namespace DiscordEventService.Services;
 
-/// <summary>
-/// Outcome of serializing an event. <see cref="Error"/> is non-null when serialization failed,
-/// in which case <see cref="Json"/> is a diagnostic stub (not the real payload).
-/// </summary>
+// Error is non-null when serialization failed; Json is then a diagnostic stub, not the real payload.
 public sealed record EventSerializationResult(string Json, Exception? Error)
 {
     public bool Failed => Error is not null;
@@ -17,10 +14,7 @@ public sealed record EventSerializationResult(string Json, Exception? Error)
 
 public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogService> logger)
 {
-    /// <summary>
-    /// Marker value placed in the <c>error</c> field of a serialization-failure stub.
-    /// Kept as a constant so detectors don't hard-code the literal.
-    /// </summary>
+    // Marker in the error field of a serialization-failure stub — kept constant so detectors don't hard-code the literal.
     public const string SerializationFailedMarker = "Serialization failed";
 
     // #107 switched to Newtonsoft to fix System.Text.Json's
@@ -36,7 +30,7 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
     // letting Newtonsoft fall back to default Dictionary serialization (the
     // resulting JSON shape is a dict of snowflakes instead of an array — fine
     // for raw_event_logs which is replay/debug, not a Discord-wire payload).
-    private static readonly JsonSerializerSettings JsonSettings = new()
+    private static readonly JsonSerializerSettings JsonSettings = new JsonSerializerSettings
     {
         ContractResolver = new BypassRecursiveConverterResolver(),
         ReferenceLoopHandling = ReferenceLoopHandling.Ignore,
@@ -44,12 +38,8 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
         MaxDepth = 32,
     };
 
-    /// <summary>
-    /// Serializes an event args object to JSON. On failure returns a diagnostic stub and reports
-    /// the exception via <see cref="EventSerializationResult.Error"/> so the caller can flag the
-    /// row and record the failure — the failure is NOT swallowed here (no log; the caller owns it,
-    /// where it has handler/correlation context).
-    /// </summary>
+    // On failure returns a diagnostic stub and surfaces the exception via Error rather than swallowing it
+    // here — the caller owns the failure, where it has handler/correlation context.
     public EventSerializationResult SerializeEvent<T>(T eventArgs) where T : class
     {
         try
@@ -70,9 +60,6 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
         }
     }
 
-    /// <summary>
-    /// Logs a raw event to the RawEventLog table.
-    /// </summary>
     public async Task LogRawEventAsync(
         string eventType,
         string eventJson,
@@ -106,9 +93,6 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
         }
     }
 
-    /// <summary>
-    /// Convenience method to serialize and log in one call.
-    /// </summary>
     public async Task<EventSerializationResult> SerializeAndLogAsync<T>(
         T eventArgs,
         string eventType,
@@ -129,7 +113,7 @@ public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogS
         // recursion. Strip it so the default object/dictionary serializer runs.
         private const string ProblemConverterName = "SnowflakeArrayAsDictionaryJsonConverter";
 
-        private static readonly HashSet<string> SensitiveProperties = new(StringComparer.OrdinalIgnoreCase)
+        private static readonly HashSet<string> SensitiveProperties = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "VoiceToken"
         };

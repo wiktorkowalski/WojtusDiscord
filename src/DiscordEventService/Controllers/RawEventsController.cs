@@ -6,10 +6,6 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Controllers;
 
-/// <summary>
-/// Technical explorer over raw_event_logs: filter by event type / time / failed-flag,
-/// inspect the full raw JSON payload of any event. The replay/debug surface.
-/// </summary>
 [ApiController]
 [Route("api/raw-events")]
 public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
@@ -17,7 +13,6 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
     private const int DefaultPageSize = 50;
     private const int MaxPageSize = 200;
 
-    /// <summary>Distinct event types with counts, for the filter dropdown.</summary>
     [HttpGet("types")]
     public async Task<ActionResult<IReadOnlyList<RawEventTypeDto>>> GetTypes(CancellationToken ct)
     {
@@ -31,7 +26,6 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
         return Ok(types);
     }
 
-    /// <summary>Paginated raw-event summaries (no payload), newest first.</summary>
     [HttpGet]
     public async Task<ActionResult<PagedResult<RawEventSummaryDto>>> GetEvents(
         [FromQuery] int page = 1,
@@ -46,18 +40,14 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
 
         var query = db.RawEventLogs.AsNoTracking();
         if (!string.IsNullOrWhiteSpace(eventType))
-        {
             query = query.Where(r => r.EventType == eventType);
-        }
         if (since is not null)
         {
             var sinceUtc = since.Value.ToUtcInstant();
             query = query.Where(r => r.ReceivedAtUtc >= sinceUtc);
         }
         if (failedOnly)
-        {
             query = query.Where(r => r.SerializationFailed);
-        }
 
         var total = await query.LongCountAsync(ct);
         var items = await query
@@ -73,7 +63,6 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
         return Ok(new PagedResult<RawEventSummaryDto>(items, total, page, pageSize));
     }
 
-    /// <summary>A single raw event with its full parsed JSON payload.</summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<RawEventDetailDto>> GetEvent(Guid id, CancellationToken ct)
     {
@@ -95,9 +84,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
             .FirstOrDefaultAsync(ct);
 
         if (row is null)
-        {
             return NotFound();
-        }
 
         return Ok(new RawEventDetailDto(
             row.Id, row.EventType, row.GuildDiscordId, row.ChannelDiscordId, row.UserDiscordId,

@@ -14,7 +14,7 @@ public sealed class AttachmentUrlRefreshServiceTests
     [Fact]
     public async Task RefreshAsync_StripsQueryBatchesAndMapsResults()
     {
-        var requests = new List<List<string>>();
+        List<List<string>> requests = [];
         var service = NewService(req =>
         {
             var body = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
@@ -87,7 +87,8 @@ public sealed class AttachmentUrlRefreshServiceTests
     }
 
     private static AttachmentUrlRefreshService NewService(Func<HttpRequestMessage, HttpResponseMessage> respond) =>
-        new(new StubHttpClientFactory(new StubHandler(respond)),
+        new AttachmentUrlRefreshService(
+            new StubHttpClientFactory(new StubHandler(respond)),
             Options.Create(new DiscordOptions { Token = new string('x', 60) }),
             NullLogger<AttachmentUrlRefreshService>.Instance);
 

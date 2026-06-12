@@ -23,7 +23,7 @@ public sealed class ChannelEventHandler(EventPipeline pipeline) :
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
 
-                ChannelEventEntity NewChannelEvent() => new()
+                ChannelEventEntity NewChannelEvent() => new ChannelEventEntity
                 {
                     ChannelDiscordId = e.Channel.Id,
                     GuildDiscordId = e.Guild.Id,
@@ -34,7 +34,7 @@ public sealed class ChannelEventHandler(EventPipeline pipeline) :
                     PositionAfter = e.Channel.Position,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 };
 
                 // Upsert the channel (handles the 23505 race internally) before staging the event,
@@ -75,7 +75,7 @@ public sealed class ChannelEventHandler(EventPipeline pipeline) :
                             UserLimit = e.Channel.UserLimit,
                             RateLimitPerUser = e.Channel.PerUserRateLimit,
                             IsNsfw = e.Channel.IsNSFW,
-                            IsDeleted = false
+                            IsDeleted = false,
                         },
                         c => c.Id);
 
@@ -95,9 +95,7 @@ public sealed class ChannelEventHandler(EventPipeline pipeline) :
                     .FirstOrDefaultAsync(c => c.DiscordId == e.ChannelAfter.Id);
 
                 if (channelEntity != null)
-                {
                     UpdateChannelEntity(channelEntity, e.ChannelAfter);
-                }
 
                 var channelEvent = new ChannelEventEntity
                 {
@@ -107,7 +105,7 @@ public sealed class ChannelEventHandler(EventPipeline pipeline) :
                     EventType = ChannelEventType.Updated,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 };
 
                 if (e.ChannelBefore.Name != e.ChannelAfter.Name)
@@ -158,7 +156,7 @@ public sealed class ChannelEventHandler(EventPipeline pipeline) :
                     PositionBefore = e.Channel.Position,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -178,7 +176,7 @@ public sealed class ChannelEventHandler(EventPipeline pipeline) :
                     EventType = ChannelEventType.PinsUpdated,
                     EventTimestampUtc = e.LastPinTimestamp?.UtcDateTime ?? ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();

@@ -1,10 +1,10 @@
+using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace DiscordEventService.Services;
 
@@ -13,7 +13,7 @@ public class BootQuickSyncService(
     DiscordClient discordClient,
     ILogger<BootQuickSyncService> logger)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = false
@@ -39,17 +39,15 @@ public class BootQuickSyncService(
             .Where(c => c.Type is DiscordChannelType.Text or DiscordChannelType.News)
             .ToList();
 
-        int totalInserted = 0;
+        var totalInserted = 0;
 
         foreach (var channel in textChannels)
         {
             try
             {
-                var messages = new List<DiscordMessage>();
+                List<DiscordMessage> messages = [];
                 await foreach (var msg in channel.GetMessagesAsync(50))
-                {
                     messages.Add(msg);
-                }
 
                 if (messages.Count == 0) continue;
 
@@ -161,8 +159,8 @@ public class BootQuickSyncService(
         var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
         var userService = scope.ServiceProvider.GetRequiredService<UserService>();
 
-        int presenceSnapshots = 0;
-        int activitiesInserted = 0;
+        var presenceSnapshots = 0;
+        var activitiesInserted = 0;
         var now = DateTime.UtcNow;
 
         var guildGuid = await db.Guilds
@@ -172,11 +170,9 @@ public class BootQuickSyncService(
 
         if (guildGuid is null) return (0, 0);
 
-        var members = new List<DiscordMember>();
+        List<DiscordMember> members = [];
         await foreach (var member in guild.GetAllMembersAsync())
-        {
             members.Add(member);
-        }
 
         foreach (var member in members)
         {

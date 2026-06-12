@@ -23,7 +23,6 @@ public sealed class VoiceEventHandler(EventPipeline pipeline) :
                     ChannelDiscordIdAfter = args.After?.Channel?.Id,
                     EventType = eventType,
 
-                    // Before state flags
                     WasSelfMuted = args.Before?.IsSelfMuted ?? false,
                     WasSelfDeafened = args.Before?.IsSelfDeafened ?? false,
                     WasServerMuted = args.Before?.IsServerMuted ?? false,
@@ -32,7 +31,6 @@ public sealed class VoiceEventHandler(EventPipeline pipeline) :
                     WasVideo = args.Before?.IsSelfVideo ?? false,
                     WasSuppressed = args.Before?.IsSuppressed ?? false,
 
-                    // After state flags
                     IsSelfMuted = args.After?.IsSelfMuted ?? false,
                     IsSelfDeafened = args.After?.IsSelfDeafened ?? false,
                     IsServerMuted = args.After?.IsServerMuted ?? false,
@@ -59,19 +57,15 @@ public sealed class VoiceEventHandler(EventPipeline pipeline) :
         var beforeChannelId = args.Before?.Channel?.Id;
         var afterChannelId = args.After?.Channel?.Id;
 
-        // Joined: before channel null, after not null
         if (beforeChannelId == null && afterChannelId != null)
             return VoiceEventType.Joined;
 
-        // Left: before not null, after null
         if (beforeChannelId != null && afterChannelId == null)
             return VoiceEventType.Left;
 
-        // Moved: both not null, different
         if (beforeChannelId != null && afterChannelId != null && beforeChannelId != afterChannelId)
             return VoiceEventType.Moved;
 
-        // StateChanged: same channel, flags changed
         return VoiceEventType.StateChanged;
     }
 }

@@ -1,9 +1,6 @@
 namespace DiscordEventService.Data.Configurations;
 
-/// <summary>
-/// Shared CHECK constraint body keeping <c>is_deleted</c> ↔ <c>deleted_at_utc IS NOT NULL</c> in
-/// sync (§P2.5). Applied per soft-deletable entity in its configuration.
-/// </summary>
+// Shared CHECK body keeping is_deleted <-> deleted_at_utc in sync (applied per soft-deletable entity).
 internal static class SoftDeleteConstraint
 {
     public const string Check =

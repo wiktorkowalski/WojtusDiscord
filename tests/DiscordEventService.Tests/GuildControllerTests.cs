@@ -114,7 +114,7 @@ public sealed class GuildControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     private static PresenceEventEntity Presence(
-        ulong user, DateTime at, int desktop = 0, int mobile = 0, int web = 0) => new()
+        ulong user, DateTime at, int desktop = 0, int mobile = 0, int web = 0) => new PresenceEventEntity
         {
             UserDiscordId = user,
             GuildDiscordId = GuildSf,

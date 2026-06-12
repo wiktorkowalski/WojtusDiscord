@@ -6,12 +6,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Controllers;
 
-/// <summary>
-/// Server header: identity, headline counts, and a small "who's online now" list
-/// derived from the latest presence row per user. Counts are global (single-guild
-/// deployment); the guild identity row is chosen deterministically (still-joined row
-/// first, then earliest first-seen) so it is stable across requests.
-/// </summary>
+// Counts are global (single-guild deployment); the guild identity row is chosen
+// deterministically (still-joined row first, then earliest first-seen) so it is stable
+// across requests.
 [ApiController]
 [Route("api/guild")]
 public sealed class GuildController(DiscordDbContext db) : ControllerBase
@@ -26,9 +23,7 @@ public sealed class GuildController(DiscordDbContext db) : ControllerBase
             .FirstOrDefaultAsync(ct);
 
         if (guild is null)
-        {
             return NotFound();
-        }
 
         var memberCount = await db.Members.LongCountAsync(ct);
         var channelCount = await db.Channels.LongCountAsync(c => !c.IsDeleted, ct);

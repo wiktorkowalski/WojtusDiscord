@@ -26,7 +26,7 @@ public sealed class IntegrationEventHandler(EventPipeline pipeline) :
                     GuildId = guildGuid,
                     Name = e.Integration.Name,
                     Type = e.Integration.Type,
-                    IsEnabled = e.Integration.IsEnabled
+                    IsEnabled = e.Integration.IsEnabled,
                 });
 
                 ctx.Db.IntegrationEvents.Add(new IntegrationEventEntity
@@ -39,7 +39,7 @@ public sealed class IntegrationEventHandler(EventPipeline pipeline) :
                     IsEnabled = e.Integration.IsEnabled,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -67,7 +67,7 @@ public sealed class IntegrationEventHandler(EventPipeline pipeline) :
                     IsEnabled = e.Integration.IsEnabled,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -92,7 +92,7 @@ public sealed class IntegrationEventHandler(EventPipeline pipeline) :
                     EventType = IntegrationEventType.Deleted,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();

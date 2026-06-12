@@ -43,9 +43,7 @@ public static class OpsEndpoints
         DowntimeTrackerService tracker)
     {
         if (!Enum.IsDefined(type))
-        {
             return Results.BadRequest(new { error = $"Unknown downtime type: {(int)type}" });
-        }
 
         var result = await tracker.OpenDowntimeAsync(
             type,
@@ -56,7 +54,7 @@ public static class OpsEndpoints
         {
             Id = result.Id,
             Type = result.ActualType.ToString(),
-            Created = result.Created
+            Created = result.Created,
         });
     }
 
@@ -66,9 +64,7 @@ public static class OpsEndpoints
         CancellationToken ct)
     {
         if (!string.Equals(event_type, "GuildMemberUpdated", StringComparison.Ordinal))
-        {
             return Results.BadRequest(new { error = $"event_type '{event_type}' not yet supported" });
-        }
 
         var result = await svc.ReplayMemberUpdateOrphansAsync(ct);
         return Results.Ok(result);

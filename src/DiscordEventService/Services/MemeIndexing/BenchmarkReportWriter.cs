@@ -18,9 +18,6 @@ public sealed record BenchmarkRun(
     string[] Models,
     List<BenchmarkItem> Items);
 
-// Pure markdown rendering of a benchmark run — side-by-side model outputs per
-// meme so the winner can be picked by eyeballing (#219). Inline images use the
-// fresh signed CDN URLs, which stay valid ~24h after the run.
 public static class BenchmarkReportWriter
 {
     public static string Render(BenchmarkRun run)
@@ -89,6 +86,7 @@ public static class BenchmarkReportWriter
         sb.AppendLine();
         if (item.FreshUrl is not null)
         {
+            // Fresh signed CDN URL — stays valid only ~24h after the run.
             sb.AppendLine($"![meme]({item.FreshUrl})");
             sb.AppendLine();
         }
@@ -107,10 +105,8 @@ public static class BenchmarkReportWriter
         sb.AppendLine();
     }
 
-    private static void AppendRow(StringBuilder sb, string field, List<BenchmarkCell> cells, Func<BenchmarkCell, string?> value)
-    {
+    private static void AppendRow(StringBuilder sb, string field, List<BenchmarkCell> cells, Func<BenchmarkCell, string?> value) =>
         sb.AppendLine($"| {field} | {string.Join(" | ", cells.Select(c => Escape(value(c) ?? "—")))} |");
-    }
 
     private static string JumpLink(MemeSampleItem sample) =>
         $"https://discord.com/channels/{sample.GuildDiscordId}/{sample.ChannelDiscordId}/{sample.MessageDiscordId}";

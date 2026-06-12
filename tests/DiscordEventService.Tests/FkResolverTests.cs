@@ -114,7 +114,7 @@ public sealed class FkResolverTests
     }
 
     private static EventContext NewContext(ILogger logger, List<Exception> recordedFailures) =>
-        new(
+        new EventContext(
             Db: null!,
             Services: null!,
             CorrelationId: Guid.NewGuid(),
@@ -141,7 +141,7 @@ public sealed class FkResolverTests
 
         private sealed class NullScope : IDisposable
         {
-            public static readonly NullScope Instance = new();
+            public static readonly NullScope Instance = new NullScope();
             public void Dispose() { }
         }
     }

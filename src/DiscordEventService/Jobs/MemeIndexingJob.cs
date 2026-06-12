@@ -7,18 +7,6 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Jobs;
 
-// #221: walks every image attachment in the configured meme channels and
-// produces Indexed meme rows. Purely DB-driven (binding comment on #221):
-// candidates come from messages.attachments_json, expired CDN URLs are
-// re-signed via attachments/refresh-urls — no channel-history pagination, no
-// gateway. Idempotent: terminal rows (Indexed/Skipped) are skipped on re-run,
-// Failed rows are retried. Not part of the weekly full-backfill chain.
-//
-// Three entry points (#222): ExecuteAsync is the operator-triggered backfill
-// (Failed retries uncapped — deliberate, see PR #228), ExecuteSweepAsync is the
-// weekly healing sweep (Failed retries capped so an autonomous recurring job
-// can't re-bill permanently-broken rows forever), and IndexMessageAsync is the
-// live single-message path enqueued by MessageEventHandler.
 public sealed class MemeIndexingJob(
     BackfillJobExecutor executor,
     IServiceScopeFactory scopeFactory,
@@ -34,12 +22,6 @@ public sealed class MemeIndexingJob(
     public Task ExecuteSweepAsync(ulong guildId, CancellationToken cancellationToken)
         => RunAsync(guildId, SweepMaxFailedAttempts, cancellationToken);
 
-    // #222 live path: index every image attachment of one freshly-posted
-    // message. No checkpoint — checkpoints are unique per (guild, type) and
-    // belong to the backfill/sweep runs; live jobs are small, frequent, and
-    // idempotent (terminal rows are skipped), so a Hangfire retry after a
-    // mid-run crash is safe and a concurrent backfill at worst costs one
-    // duplicate model call resolved by the unique attachment index.
     public async Task IndexMessageAsync(ulong guildId, ulong messageDiscordId, CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();

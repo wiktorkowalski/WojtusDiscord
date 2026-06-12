@@ -1,10 +1,10 @@
+using System.Text.Json;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
@@ -47,7 +47,7 @@ public sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
                     EventType = (int)e.Rule.EventType,
                     TriggerType = (int)e.Rule.TriggerType,
                     IsEnabled = e.Rule.IsEnabled,
-                    ActionsJson = e.Rule.Actions != null ? JsonSerializer.Serialize(e.Rule.Actions) : null
+                    ActionsJson = e.Rule.Actions != null ? JsonSerializer.Serialize(e.Rule.Actions) : null,
                 });
 
                 ctx.Db.AutoModRuleEvents.Add(new AutoModRuleEventEntity
@@ -61,7 +61,7 @@ public sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
                     IsEnabled = e.Rule.IsEnabled,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -94,7 +94,7 @@ public sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
                     IsEnabled = e.Rule.IsEnabled,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -123,7 +123,7 @@ public sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
                     Name = e.Rule.Name ?? string.Empty,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();

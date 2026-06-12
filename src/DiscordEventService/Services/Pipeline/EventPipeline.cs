@@ -20,9 +20,7 @@ public sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFact
         {
             string? rawJson = null;
 
-            // Records a FailedEvent in an isolated scope using this event's metadata. Used both
-            // by the pipeline's own exception path and by handlers that want to record a soft
-            // failure (e.g. an unresolved FK) and return without throwing.
+            // Isolated scope so a soft failure can be recorded even after the handler's scope faulted.
             async Task RecordFailureAsync(Exception ex)
             {
                 using var failureScope = scopeFactory.CreateScope();

@@ -8,20 +8,7 @@ public record OrphanReplayResult(int Scanned, int Inserted, int Skipped);
 
 public class OrphanReplayService(DiscordDbContext db, ILogger<OrphanReplayService> logger)
 {
-    // Scan-only for now. Reconstruction (BuildMemberUpdateEntityFromJson) is
-    // deferred until a real (non-stub) GuildMemberUpdated orphan appears in
-    // prod and we can sample its JSON shape — the Newtonsoft-with-[JsonProperty]
-    // field names for GuildMemberUpdatedEventArgs aren't predictable without one.
-    // Any such row is logged at Warn below so it can be reverse-engineered.
-    //
-    // Note for future reconstruction work: most non-stub orphans will NOT be
-    // handler crashes. MemberEventHandler.HandleEventAsync(GuildMemberUpdatedEventArgs)
-    // only inserts a MemberEventEntity when a watched field changed (nickname,
-    // roles, timeout, avatar, pending, premium, mute, deafen — see lines 146-180).
-    // GuildMemberUpdated for any other field (Member.Flags, UnusualDmActivityUntil,
-    // etc.) writes the raw log but intentionally skips the structured insert.
-    // Reconstruction must re-apply that same change-detection or it will
-    // resurrect rows the handler purposefully filtered out.
+    // Scan-only: JSON reconstruction is deferred until a real non-stub orphan is sampled in prod.
     public async Task<OrphanReplayResult> ReplayMemberUpdateOrphansAsync(CancellationToken ct)
     {
         var orphans = await db.RawEventLogs

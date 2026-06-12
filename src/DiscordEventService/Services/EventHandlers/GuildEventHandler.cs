@@ -46,7 +46,7 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
                             Name = e.Guild.Name,
                             IconHash = e.Guild.IconHash,
                             OwnerId = e.Guild.OwnerId,
-                            LeftAtUtc = null
+                            LeftAtUtc = null,
                         },
                         g => g.Id);
 
@@ -57,11 +57,9 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
             });
     }
 
-    public Task HandleEventAsync(DiscordClient sender, GuildAvailableEventArgs e)
-    {
-        // GuildAvailable fires during initial connection - delegate to GuildCreated handler
-        return HandleEventAsync(sender, (GuildCreatedEventArgs)e);
-    }
+    // GuildAvailable fires during initial connection - delegate to GuildCreated handler
+    public Task HandleEventAsync(DiscordClient sender, GuildAvailableEventArgs e) =>
+        HandleEventAsync(sender, (GuildCreatedEventArgs)e);
 
     public async Task HandleEventAsync(DiscordClient sender, GuildUpdatedEventArgs e)
     {
@@ -133,7 +131,7 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
                     RateLimitPerUser = channel.PerUserRateLimit,
                     IsNsfw = false,
                     Position = channel.Position,
-                    IsDeleted = false
+                    IsDeleted = false,
                 },
                 c => c.Id);
         }
@@ -164,7 +162,7 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
                     Permissions = permissions,
                     IsManaged = role.IsManaged,
                     IsMentionable = role.IsMentionable,
-                    IsDeleted = false
+                    IsDeleted = false,
                 },
                 r => r.Id);
         }

@@ -106,7 +106,6 @@ public sealed class CommunityStatsTests(PostgresFixture fixture) : IClassFixture
         var thisWeek = DateTime.UtcNow.AddDays(-1);
         var priorWeek = DateTime.UtcNow.AddDays(-10); // inside prev 7-14d window
 
-        // This-week messages: alice x2 (one with attachment, one with embed), bob x1 (plain).
         _db.Messages.AddRange(
             Message(alice.Id, channel.Id, guild.Id, 1UL, thisWeek, attach: true),
             Message(alice.Id, channel.Id, guild.Id, 2UL, thisWeek, embed: true),
@@ -114,12 +113,10 @@ public sealed class CommunityStatsTests(PostgresFixture fixture) : IClassFixture
             // Prior-week message (counts in prev, excluded from current value).
             Message(alice.Id, channel.Id, guild.Id, 4UL, priorWeek));
 
-        // Reactions received on alice's messages this week: 2 added.
         _db.ReactionEvents.AddRange(
             Reaction(Bob, "👍", 1UL, thisWeek),
             Reaction(Bob, "🎉", 2UL, thisWeek));
 
-        // Voice: alice 12 min this week.
         var v = thisWeek;
         _db.VoiceStateEvents.AddRange(
             Voice(Alice, null, ChannelSf, VoiceEventType.Joined, v),
@@ -140,7 +137,7 @@ public sealed class CommunityStatsTests(PostgresFixture fixture) : IClassFixture
 
     private static MessageEntity Message(
         Guid authorId, Guid channelId, Guid guildId, ulong discordId, DateTime at,
-        bool attach = false, bool embed = false) => new()
+        bool attach = false, bool embed = false) => new MessageEntity
         {
             DiscordId = discordId,
             AuthorId = authorId,
@@ -152,7 +149,7 @@ public sealed class CommunityStatsTests(PostgresFixture fixture) : IClassFixture
             CreatedAtUtc = at,
         };
 
-    private static ReactionEventEntity Reaction(ulong user, string emote, ulong messageId, DateTime at) => new()
+    private static ReactionEventEntity Reaction(ulong user, string emote, ulong messageId, DateTime at) => new ReactionEventEntity
     {
         UserDiscordId = user,
         GuildDiscordId = GuildSf,
@@ -165,7 +162,7 @@ public sealed class CommunityStatsTests(PostgresFixture fixture) : IClassFixture
     };
 
     private static VoiceStateEventEntity Voice(
-        ulong user, ulong? before, ulong? after, VoiceEventType type, DateTime at) => new()
+        ulong user, ulong? before, ulong? after, VoiceEventType type, DateTime at) => new VoiceStateEventEntity
         {
             UserDiscordId = user,
             GuildDiscordId = GuildSf,

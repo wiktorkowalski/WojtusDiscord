@@ -1,8 +1,5 @@
 namespace DiscordEventService.Services.MemeIndexing;
 
-// Magic-byte MIME sniffing for the formats in indexing scope. Attachment
-// filenames lie often enough (FB_IMG_*.jpg that is really png) that the
-// bytes, not the extension, decide what we tell the vision model.
 public static class ImageMagic
 {
     private static readonly string[] ImageExtensions = ["jpg", "jpeg", "png", "webp", "gif"];
@@ -13,6 +10,7 @@ public static class ImageMagic
         return ImageExtensions.Contains(ext);
     }
 
+    // Filenames lie (FB_IMG_*.jpg that is really png) — bytes decide what we tell the vision model.
     public static string? SniffMimeType(ReadOnlySpan<byte> bytes)
     {
         if (bytes.Length < 12)

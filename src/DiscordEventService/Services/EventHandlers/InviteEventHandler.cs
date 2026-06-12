@@ -66,7 +66,7 @@ public sealed class InviteEventHandler(EventPipeline pipeline) :
                         ? invite.CreatedAt.UtcDateTime
                         : ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -92,7 +92,7 @@ public sealed class InviteEventHandler(EventPipeline pipeline) :
                     Code = e.Invite.Code,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();

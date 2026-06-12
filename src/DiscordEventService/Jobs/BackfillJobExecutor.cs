@@ -4,14 +4,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
 
-/// <summary>
-/// Owns the lifecycle every backfill job shares: a fresh DI scope + DbContext, checkpoint
-/// get-or-create, the InProgress flip (with resume-cursor reset), and the four terminal
-/// transitions — Completed, short-circuit→Failed, cancelled→Failed (no rethrow), faulted→Failed
-/// (rethrow). Jobs supply only guild resolution + per-item work as a delegate, keeping
-/// <c>DiscordClient</c> out of the executor so its transitions are unit-testable against a real
-/// DbContext with no gateway.
-/// </summary>
+// Jobs supply only per-item work as a delegate, keeping DiscordClient out of the executor so its
+// checkpoint transitions are unit-testable against a real DbContext with no gateway.
 public sealed class BackfillJobExecutor(
     IServiceScopeFactory scopeFactory,
     ILogger<BackfillJobExecutor> logger)

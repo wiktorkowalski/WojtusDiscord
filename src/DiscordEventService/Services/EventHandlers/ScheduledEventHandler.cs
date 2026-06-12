@@ -180,13 +180,13 @@ public sealed class ScheduledEventHandler(EventPipeline pipeline) :
             .Where(g => g.DiscordId == evt.GuildId)
             .Select(g => g.Id)
             .FirstOrDefaultAsync();
-        Guid? channelGuid = evt.ChannelId.HasValue
+        var channelGuid = evt.ChannelId.HasValue
             ? await db.Channels
                 .Where(c => c.DiscordId == evt.ChannelId.Value)
                 .Select(c => (Guid?)c.Id)
                 .FirstOrDefaultAsync()
             : null;
-        Guid? creatorGuid = creatorDiscordId.HasValue
+        var creatorGuid = creatorDiscordId.HasValue
             ? await db.Users
                 .Where(u => u.DiscordId == creatorDiscordId.Value)
                 .Select(u => (Guid?)u.Id)

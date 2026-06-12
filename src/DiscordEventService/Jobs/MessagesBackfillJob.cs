@@ -34,7 +34,6 @@ public sealed class MessagesBackfillJob(
             if (guildEntity is null)
                 return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
-            // Filter to text-based channels
             var textChannels = channels
                 .Where(c => c.Type is DSharpPlus.Entities.DiscordChannelType.Text
                          or DSharpPlus.Entities.DiscordChannelType.News
@@ -70,15 +69,13 @@ public sealed class MessagesBackfillJob(
         var channelEntity = await db.Channels.FirstOrDefaultAsync(c => c.DiscordId == channel.Id, cancellationToken);
 
         if (channelEntity is null)
-        {
             logger.LogWarning("Channel {ChannelId} not found in database, messages will have null channel FK", channel.Id);
-        }
 
-        ulong? beforeId = checkpoint.LastProcessedId;
-        bool hasMore = true;
-        int batchNum = 0;
-        int totalInserted = 0;
-        string exitReason = "unknown";
+        var beforeId = checkpoint.LastProcessedId;
+        var hasMore = true;
+        var batchNum = 0;
+        var totalInserted = 0;
+        var exitReason = "unknown";
 
         // #124 diagnostic: trace exactly why per-channel loops terminated at ~one batch
         // in auto-startup runs but went deep when manually triggered.
@@ -100,9 +97,7 @@ public sealed class MessagesBackfillJob(
 
                 messages = [];
                 await foreach (var msg in asyncMessages)
-                {
                     messages.Add(msg);
-                }
             }
             catch (DSharpPlus.Exceptions.UnauthorizedException ex)
             {
@@ -149,7 +144,6 @@ public sealed class MessagesBackfillJob(
 
                     var authorEntity = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == message.Author.Id, cancellationToken);
 
-                    // Check if message exists
                     var exists = await db.Messages.AnyAsync(m => m.DiscordId == message.Id, cancellationToken);
                     if (!exists)
                     {

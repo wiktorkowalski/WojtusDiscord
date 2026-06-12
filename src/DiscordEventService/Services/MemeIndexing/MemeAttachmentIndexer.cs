@@ -20,11 +20,7 @@ public sealed class MemeIndexRunCounters
     public decimal CostUsd { get; set; }
 }
 
-// The per-attachment indexing pipeline (#221): download → MIME sniff → sha256
-// repost dedupe → vision model → status lifecycle. Extracted from
-// MemeIndexingJob so the live single-message path (#222) and the backfill/sweep
-// runs share one implementation. The DbContext stays a parameter — callers own
-// the unit of work and decide when to flush.
+// The DbContext stays a parameter — callers own the unit of work and decide when to flush.
 public sealed class MemeAttachmentIndexer(
     OpenRouterClient openRouterClient,
     IHttpClientFactory httpClientFactory,
@@ -49,7 +45,7 @@ public sealed class MemeAttachmentIndexer(
             AttachmentDiscordId = item.AttachmentDiscordId,
             FileName = item.FileName,
             FileSizeBytes = item.FileSizeBytes,
-            Status = MemeIndexStatus.Pending
+            Status = MemeIndexStatus.Pending,
         };
         db.MemeIndex.Add(row);
         return row;

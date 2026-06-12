@@ -32,7 +32,6 @@ public sealed class ReactionsBackfillJob(
             if (guildEntity is null)
                 return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
-            // Get all text channels
             var textChannels = channels
                 .Where(c => c.Type is DiscordChannelType.Text
                          or DiscordChannelType.News
@@ -66,8 +65,8 @@ public sealed class ReactionsBackfillJob(
         CancellationToken cancellationToken)
     {
         const int messageBatchSize = 100;
-        ulong? beforeId = checkpoint.LastProcessedId;
-        bool hasMore = true;
+        var beforeId = checkpoint.LastProcessedId;
+        var hasMore = true;
 
         while (hasMore)
         {
@@ -82,9 +81,7 @@ public sealed class ReactionsBackfillJob(
 
                 messages = [];
                 await foreach (var msg in asyncMessages)
-                {
                     messages.Add(msg);
-                }
             }
             catch (DSharpPlus.Exceptions.UnauthorizedException ex)
             {
@@ -105,7 +102,6 @@ public sealed class ReactionsBackfillJob(
                 break;
             }
 
-            // Filter to messages with reactions
             var messagesWithReactions = messages
                 .Where(m => m.Reactions != null && m.Reactions.Count > 0)
                 .ToList();
@@ -128,7 +124,6 @@ public sealed class ReactionsBackfillJob(
                 }
             }
 
-            // Save all reactions from this batch
             beforeId = messages.Last().Id;
             checkpoint.LastProcessedId = beforeId;
             await db.SaveChangesAsync(cancellationToken);
@@ -166,7 +161,6 @@ public sealed class ReactionsBackfillJob(
 
                 await userService.UpsertUserAsync(user);
 
-                // Check if this reaction event already exists
                 var exists = await db.ReactionEvents.AnyAsync(r =>
                     r.MessageDiscordId == message.Id &&
                     r.UserDiscordId == user.Id &&

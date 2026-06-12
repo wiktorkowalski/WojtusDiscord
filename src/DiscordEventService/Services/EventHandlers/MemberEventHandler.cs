@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
@@ -5,7 +6,6 @@ using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
-using System.Text.Json;
 
 namespace DiscordEventService.Services.EventHandlers;
 
@@ -35,7 +35,7 @@ public sealed class MemberEventHandler(EventPipeline pipeline) :
                         : null,
                     EventTimestampUtc = e.Member.JoinedAt.UtcDateTime,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -58,7 +58,7 @@ public sealed class MemberEventHandler(EventPipeline pipeline) :
                         : null,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -73,8 +73,8 @@ public sealed class MemberEventHandler(EventPipeline pipeline) :
                 var userService = ctx.Services.GetRequiredService<UserService>();
                 await userService.UpsertMemberAsync(e.Member);
 
-                var oldRoleIds = e.RolesBefore?.Select(r => r.Id).ToHashSet() ?? new HashSet<ulong>();
-                var newRoleIds = e.RolesAfter?.Select(r => r.Id).ToHashSet() ?? new HashSet<ulong>();
+                var oldRoleIds = e.RolesBefore?.Select(r => r.Id).ToHashSet() ?? [];
+                var newRoleIds = e.RolesAfter?.Select(r => r.Id).ToHashSet() ?? [];
 
                 var rolesAdded = newRoleIds.Except(oldRoleIds).ToList();
                 var rolesRemoved = oldRoleIds.Except(newRoleIds).ToList();
@@ -95,12 +95,12 @@ public sealed class MemberEventHandler(EventPipeline pipeline) :
                 var premiumAfter = e.Member.PremiumSince;
                 var premiumChanged = hasBefore && premiumBefore != premiumAfter;
 
-                bool? mutedBefore = memberBefore?.IsMuted;
-                bool mutedAfter = e.Member.IsMuted;
+                var mutedBefore = memberBefore?.IsMuted;
+                var mutedAfter = e.Member.IsMuted;
                 var mutedChanged = mutedBefore.HasValue && mutedBefore.Value != mutedAfter;
 
-                bool? deafenedBefore = memberBefore?.IsDeafened;
-                bool deafenedAfter = e.Member.IsDeafened;
+                var deafenedBefore = memberBefore?.IsDeafened;
+                var deafenedAfter = e.Member.IsDeafened;
                 var deafenedChanged = deafenedBefore.HasValue && deafenedBefore.Value != deafenedAfter;
 
                 if (nicknameChanged || rolesAdded.Any() || rolesRemoved.Any() || timeoutChanged
@@ -138,7 +138,7 @@ public sealed class MemberEventHandler(EventPipeline pipeline) :
                             IsDeafenedAfter = deafenedAfter,
                             EventTimestampUtc = ctx.ReceivedAtUtc,
                             ReceivedAtUtc = ctx.ReceivedAtUtc,
-                            RawEventJson = ctx.RawJson
+                            RawEventJson = ctx.RawJson,
                         };
 
                         ctx.Db.MemberEvents.Add(memberEvent);
@@ -185,7 +185,7 @@ public sealed class MemberEventHandler(EventPipeline pipeline) :
                     MemberId = member.Id,
                     RoleDiscordId = roleId,
                     GrantedAtUtc = eventTime,
-                    SourceEventId = sourceEventId
+                    SourceEventId = sourceEventId,
                 });
         }
 
@@ -219,7 +219,7 @@ public sealed class MemberEventHandler(EventPipeline pipeline) :
                     EventType = MemberEventType.Banned,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();
@@ -241,7 +241,7 @@ public sealed class MemberEventHandler(EventPipeline pipeline) :
                     EventType = MemberEventType.Unbanned,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
+                    RawEventJson = ctx.RawJson,
                 });
 
                 await ctx.Db.SaveChangesAsync();

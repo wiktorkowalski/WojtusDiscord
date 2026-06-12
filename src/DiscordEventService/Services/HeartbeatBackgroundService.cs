@@ -35,9 +35,7 @@ public class HeartbeatBackgroundService(
             try
             {
                 if (!await timer.WaitForNextTickAsync(stoppingToken))
-                {
                     break;
-                }
             }
             catch (OperationCanceledException)
             {

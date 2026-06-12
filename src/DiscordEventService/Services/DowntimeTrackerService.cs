@@ -55,22 +55,16 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         // manually-opened Deploy/HostDown row from the ops endpoint.
         var query = db.BotDowntimeIntervals.Where(x => x.EndedAtUtc == null);
         if (onlyType.HasValue)
-        {
             query = query.Where(x => x.Type == onlyType.Value);
-        }
 
         var affected = await query.ExecuteUpdateAsync(s => s
             .SetProperty(x => x.EndedAtUtc, endedAtUtc)
             .SetProperty(x => x.LastUpdatedUtc, endedAtUtc));
 
         if (affected > 1)
-        {
             logger.LogWarning("Closed {Count} open downtime rows (expected at most 1)", affected);
-        }
         else if (affected == 1)
-        {
             logger.LogInformation("Closed open downtime row at {EndedAt:O} (filter={Filter})", endedAtUtc, onlyType?.ToString() ?? "any");
-        }
         return affected;
     }
 
@@ -121,15 +115,11 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         var now = DateTime.UtcNow;
         var result = await GetLastAliveAtUtcAsync();
         if (result.LastAliveUtc is null)
-        {
             return null;
-        }
 
         var gap = now - result.LastAliveUtc.Value;
         if (gap < StartupGapThreshold)
-        {
             return null;
-        }
 
         var row = new BotDowntimeIntervalEntity
         {

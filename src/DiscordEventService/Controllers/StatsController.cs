@@ -10,15 +10,6 @@ using Npgsql;
 
 namespace DiscordEventService.Controllers;
 
-/// <summary>
-/// Pre-aggregated statistics across four buckets: Volume &amp; trends, People, Places,
-/// Behavior. Time buckets use guild-local time (Europe/Warsaw) computed server-side.
-/// Aggregations are EF LINQ where the provider can translate them; raw SQL is reserved for
-/// what LINQ/Npgsql cannot express — CET-local <c>AT TIME ZONE</c> bucketing, dense
-/// <c>generate_series</c> zero-fill, and <c>LEAD()</c> window sessionization (each noted at
-/// its call site). All queries are fixed (no client identifiers) over base tables — no
-/// dependency on the prod-only SQL views, so the same queries run under Testcontainers.
-/// </summary>
 [ApiController]
 [Route("api/stats")]
 public sealed class StatsController(DiscordDbContext db) : ControllerBase
@@ -84,8 +75,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(x => new EmojiStatDto(x.EmoteName, x.EmoteDiscordId, x.EmoteDiscordId is > 0, x.Count))
             .ToList();
     }
-
-    // ---- Overview (home dashboard) ----
 
     [HttpGet("overview")]
     public async Task<OverviewDto> Overview(CancellationToken ct)
@@ -168,7 +157,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             topChatter, topChannel, messagesDaily, topEmojis);
     }
 
-    // ---- Volume & trends ----
     // volume/daily + volume/hourly stay raw: they bucket by CET calendar day / hour via
     // `... AT TIME ZONE 'Europe/Warsaw'`, which Npgsql's EF Core provider does not translate
     // from LINQ. volume/by-type (no time bucketing) is plain EF below.
@@ -202,8 +190,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         GROUP BY hour ORDER BY hour
         """,
         r => new VolumeHourlyDto(r.GetInt32(0), r.GetInt64(1)), ct);
-
-    // ---- People ----
 
     [HttpGet("people/top-messages")]
     public Task<List<UserStatDto>> TopMessages(CancellationToken ct) =>
@@ -241,11 +227,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(x => new UserStatDto(x.Username, x.DiscordId, x.Count, x.AvatarHash))
             .ToListAsync(ct);
 
-    /// <summary>
-    /// Voice minutes per user. Each event where the user is in a channel
-    /// (channel_discord_id_after not null) contributes the gap until their next
-    /// event. Open sessions (no following event) are excluded — surfaced in the UI.
-    /// </summary>
+    // Open sessions (no following event) are excluded — surfaced in the UI.
     [HttpGet("people/voice-leaderboard")]
     public Task<List<VoiceStatDto>> VoiceLeaderboard(CancellationToken ct) => QueryAsync(
         $"""
@@ -263,22 +245,16 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         """,
         r => new VoiceStatDto(NullableString(r, 0), Snowflake(r, 1), r.GetInt64(2), NullableString(r, 3)), ct);
 
-    // ---- Places ----
-
     [HttpGet("places/channel-activity")]
     public Task<List<ChannelActivityDto>> ChannelActivity(CancellationToken ct) => QueryAsync(
         $"{ChannelActivitySql} 50",
         r => new ChannelActivityDto(r.GetString(0), Snowflake(r, 1), r.GetInt64(2), r.GetInt64(3)), ct);
 
-    // ---- Behavior ----
-
     [HttpGet("behavior/top-emojis")]
     public Task<List<EmojiStatDto>> TopEmojis(CancellationToken ct) => TopEmojisAsync(25, ct);
 
-    /// <summary>
-    /// Top presence activities ("playing X"). NOTE: includes presence artifacts such
-    /// as "Custom Status" and "Playing N/10" — surfaced (not hidden) with a UI note.
-    /// </summary>
+    // Includes presence artifacts such as "Custom Status" and "Playing N/10" —
+    // surfaced (not hidden) with a UI note.
     [HttpGet("behavior/top-activities")]
     public Task<List<ActivityStatDto>> TopActivities(CancellationToken ct) =>
         db.Activities.AsNoTracking()
@@ -303,22 +279,13 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         """,
         r => new HeatmapCellDto(r.GetInt32(0), r.GetInt32(1), r.GetInt64(2)), ct);
 
-    // ---- Community (windowed headline metrics + leaderboards) ----
-
-    /// <summary>
-    /// Headline community metrics over a rolling window (week=7d, month=30d, all=since
-    /// launch) with a same-length preceding-window comparison (null for <c>all</c>) and
-    /// a dense daily sparkline. Leaderboards are the top 6 per metric in the window.
-    /// </summary>
     [HttpGet("community")]
     public async Task<ActionResult<CommunityDto>> Community(
         [FromQuery] string range = "week", CancellationToken ct = default)
     {
         range = (range ?? "week").Trim().ToLowerInvariant();
         if (range is not ("week" or "month" or "all"))
-        {
             return BadRequest(new { error = "range must be one of: week, month, all." });
-        }
 
         var (curStart, curEnd, prevStart, prevEnd, sparkDays, label, prevLabel) =
             await ResolveWindowAsync(range, ct);
@@ -420,19 +387,11 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         return new CommunityDto(range, label, prevLabel, metrics, leaderboards);
     }
 
-    // ---- Spotify ----
-
-    /// <summary>
-    /// Spotify listening: who is listening right now (active Listening activities) and
-    /// the most-played tracks all-time. Artist is the first entry of the JSON artist
-    /// array stored on the activity.
-    /// NOTE (data reality): the bot currently records only the activity name ("Spotify")
-    /// for Listening presence — the rich track fields (song title, artist, album, art) are
-    /// not captured and are NULL/placeholder in stored data. So <c>track</c> is null when
-    /// the stored "song title" is just the generic activity name, and top-tracks excludes
-    /// that placeholder (yielding an empty list until richer presence is ingested). The
-    /// now-playing tile still honestly shows who is currently listening.
-    /// </summary>
+    // Data reality: the bot currently records only the activity name ("Spotify") for
+    // Listening presence — the rich track fields (title, artist, album, art) are
+    // NULL/placeholder. So track is null when the stored "song title" is just the generic
+    // activity name, and top-tracks excludes that placeholder until richer presence is
+    // ingested.
     [HttpGet("spotify")]
     public async Task<SpotifyDto> Spotify(CancellationToken ct)
     {
@@ -489,15 +448,11 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         return new SpotifyDto(nowPlaying, topTracks);
     }
 
-    // ---- helpers ----
-
     private async Task<List<T>> QueryAsync<T>(string sql, Func<NpgsqlDataReader, T> map, CancellationToken ct)
     {
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         if (connection.State != ConnectionState.Open)
-        {
             await connection.OpenAsync(ct);
-        }
 
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;
@@ -505,9 +460,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
 
         var results = new List<T>();
         while (await reader.ReadAsync(ct))
-        {
             results.Add(map(reader));
-        }
         return results;
     }
 
@@ -515,9 +468,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     {
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         if (connection.State != ConnectionState.Open)
-        {
             await connection.OpenAsync(ct);
-        }
 
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;
@@ -533,8 +484,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // regardless of how Npgsql materializes the column kind.
     private static DateTime? AsUtc(DateTime? dt) =>
         dt is null ? null : DateTime.SpecifyKind(dt.Value, DateTimeKind.Utc);
-
-    // ---- Community window helpers ----
 
     // Window resolution: anchor everything to a single DB now() so the current and
     // preceding windows line up exactly (the spark series, prev comparison and counts
@@ -752,9 +701,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     {
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         if (connection.State != ConnectionState.Open)
-        {
             await connection.OpenAsync(ct);
-        }
 
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;
@@ -772,9 +719,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     private static string? FirstArtist(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
-        {
             return null;
-        }
 
         try
         {

@@ -50,7 +50,7 @@ public static class MemeIndexEndpoints
             HangfireJobId = jobId,
             GuildId = guildId,
             Model = openRouterOptions.Value.Model,
-            MaxImagesPerRun = memeIndexOptions.Value.MaxImagesPerRun
+            MaxImagesPerRun = memeIndexOptions.Value.MaxImagesPerRun,
         });
     }
 
@@ -68,7 +68,7 @@ public static class MemeIndexEndpoints
                 ErrorCount = c.ErrorCount,
                 LastError = c.LastError,
                 StartedAt = c.StartedAtUtc,
-                CompletedAt = c.CompletedAtUtc
+                CompletedAt = c.CompletedAtUtc,
             })
             .ToListAsync();
 
@@ -85,7 +85,7 @@ public static class MemeIndexEndpoints
                 Pending = countsByStatus.GetValueOrDefault(MemeIndexStatus.Pending),
                 Indexed = countsByStatus.GetValueOrDefault(MemeIndexStatus.Indexed),
                 Failed = countsByStatus.GetValueOrDefault(MemeIndexStatus.Failed),
-                Skipped = countsByStatus.GetValueOrDefault(MemeIndexStatus.Skipped)
+                Skipped = countsByStatus.GetValueOrDefault(MemeIndexStatus.Skipped),
             }
         });
     }

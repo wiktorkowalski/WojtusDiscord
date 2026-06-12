@@ -17,7 +17,7 @@ public sealed class OpenRouterOptions
     [
         "google/gemini-2.5-flash",
         "google/gemini-3-flash-preview",
-        "google/gemini-3.5-flash"
+        "google/gemini-3.5-flash",
     ];
 
     public int RequestDelayMs { get; set; } = 250;
