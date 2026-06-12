@@ -7,7 +7,8 @@ namespace DiscordEventService.Controllers;
 public sealed class PingController : ControllerBase
 {
     [HttpGet]
-    public IActionResult Get() => Ok(new PingResponse("pong"));
+    [ProducesResponseType<PingResponse>(StatusCodes.Status200OK)]
+    public ActionResult<PingResponse> Get() => Ok(new PingResponse("pong"));
 }
 
 public sealed record PingResponse(string Message);

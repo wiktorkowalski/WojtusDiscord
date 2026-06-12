@@ -18,6 +18,7 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
     private const int MaxPageSize = 200;
 
     [HttpGet]
+    [ProducesResponseType<TimelinePage>(StatusCodes.Status200OK)]
     public async Task<ActionResult<TimelinePage>> GetTimeline(
         [FromQuery] int pageSize = DefaultPageSize,
         [FromQuery] string? cursor = null,

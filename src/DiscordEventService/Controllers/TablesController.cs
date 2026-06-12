@@ -20,6 +20,7 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
     private const int MaxPageSize = 200;
 
     [HttpGet]
+    [ProducesResponseType<IReadOnlyList<TableInfoDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<TableInfoDto>>> GetTables(CancellationToken ct)
     {
         var counts = await GetApproxRowCountsAsync(ct);
@@ -38,6 +39,8 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
     }
 
     [HttpGet("{table}/columns")]
+    [ProducesResponseType<IReadOnlyList<ColumnMetadataDto>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public ActionResult<IReadOnlyList<ColumnMetadataDto>> GetColumns(string table)
     {
         if (!catalog.TryGetTable(table, out var meta))
@@ -47,6 +50,8 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
     }
 
     [HttpGet("{table}")]
+    [ProducesResponseType(typeof(PagedResult<Dictionary<string, object>>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<PagedResult<Dictionary<string, object?>>>> GetRows(
         string table,
         [FromQuery] int page = 1,

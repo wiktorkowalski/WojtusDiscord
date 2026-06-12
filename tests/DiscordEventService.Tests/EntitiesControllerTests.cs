@@ -39,7 +39,7 @@ public sealed class EntitiesControllerTests(PostgresFixture fixture) : IClassFix
     {
         var controller = new EntitiesController(_db);
 
-        var page = await controller.GetMessages(ct: default);
+        var page = (await controller.GetMessages(ct: default)).Value!;
 
         var msg = Assert.Single(page.Items);
         Assert.Equal("alice", msg.AuthorName);
@@ -56,10 +56,10 @@ public sealed class EntitiesControllerTests(PostgresFixture fixture) : IClassFix
     {
         var controller = new EntitiesController(_db);
 
-        var matching = await controller.GetMessages(channelId: _channelId, ct: default);
+        var matching = (await controller.GetMessages(channelId: _channelId, ct: default)).Value!;
         Assert.Equal(1, matching.TotalCount);
 
-        var other = await controller.GetMessages(channelId: Guid.NewGuid(), ct: default);
+        var other = (await controller.GetMessages(channelId: Guid.NewGuid(), ct: default)).Value!;
         Assert.Equal(0, other.TotalCount);
     }
 

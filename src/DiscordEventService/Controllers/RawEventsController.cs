@@ -14,6 +14,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
     private const int MaxPageSize = 200;
 
     [HttpGet("types")]
+    [ProducesResponseType<IReadOnlyList<RawEventTypeDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<RawEventTypeDto>>> GetTypes(CancellationToken ct)
     {
         var grouped = await db.RawEventLogs.AsNoTracking()
@@ -27,6 +28,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType<PagedResult<RawEventSummaryDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<PagedResult<RawEventSummaryDto>>> GetEvents(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = DefaultPageSize,
@@ -64,6 +66,8 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
     }
 
     [HttpGet("{id:guid}")]
+    [ProducesResponseType<RawEventDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<RawEventDetailDto>> GetEvent(Guid id, CancellationToken ct)
     {
         var row = await db.RawEventLogs.AsNoTracking()

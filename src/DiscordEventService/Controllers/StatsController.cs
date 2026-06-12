@@ -86,7 +86,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     }
 
     [HttpGet("overview")]
-    public async Task<OverviewDto> Overview(CancellationToken ct)
+    [ProducesResponseType<OverviewDto>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<OverviewDto>> Overview(CancellationToken ct)
     {
         var messages = await QuerySingleAsync(
             $"""
@@ -171,7 +172,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // from LINQ. volume/by-type (no time bucketing) is plain EF below.
 
     [HttpGet("volume/daily")]
-    public Task<List<VolumeDailyDto>> VolumeDaily(CancellationToken ct) => QueryAsync(
+    [ProducesResponseType<List<VolumeDailyDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<VolumeDailyDto>>> VolumeDaily(CancellationToken ct) => await QueryAsync(
         $"""
         SELECT date_trunc('day', received_at_utc AT TIME ZONE '{Tz}')::date::text AS day, count(*)::bigint
         FROM raw_event_logs WHERE NOT serialization_failed
@@ -180,7 +182,9 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         r => new VolumeDailyDto(r.GetString(0), r.GetInt64(1)), ct);
 
     [HttpGet("volume/by-type")]
-    public Task<List<VolumeByTypeDto>> VolumeByType(CancellationToken ct) =>
+    [ProducesResponseType<List<VolumeByTypeDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<VolumeByTypeDto>>> VolumeByType(CancellationToken ct) => await
+
         db.RawEventLogs.AsNoTracking()
             .Where(e => !e.IsSerializationFailed)
             .GroupBy(e => e.EventType)
@@ -192,7 +196,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .ToListAsync(ct);
 
     [HttpGet("volume/hourly")]
-    public Task<List<VolumeHourlyDto>> VolumeHourly(CancellationToken ct) => QueryAsync(
+    [ProducesResponseType<List<VolumeHourlyDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<VolumeHourlyDto>>> VolumeHourly(CancellationToken ct) => await QueryAsync(
         $"""
         SELECT EXTRACT(HOUR FROM received_at_utc AT TIME ZONE '{Tz}')::int AS hour, count(*)::bigint
         FROM raw_event_logs WHERE NOT serialization_failed
@@ -201,14 +206,18 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         r => new VolumeHourlyDto(r.GetInt32(0), r.GetInt64(1)), ct);
 
     [HttpGet("people/top-messages")]
-    public Task<List<UserStatDto>> TopMessages(CancellationToken ct) =>
+    [ProducesResponseType<List<UserStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<UserStatDto>>> TopMessages(CancellationToken ct) => await
+
         TopChatters().Take(LeaderboardSize).ToListAsync(ct);
 
     // Reactions GIVEN per user. LEFT-join semantics (a reactor with no stored user row keeps
     // a null username) are preserved by resolving the user via a correlated lookup on the
     // top 20 — bounded, index-backed, no whole-table join.
     [HttpGet("people/top-reactions-given")]
-    public Task<List<UserStatDto>> TopReactionsGiven(CancellationToken ct) =>
+    [ProducesResponseType<List<UserStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<UserStatDto>>> TopReactionsGiven(CancellationToken ct) => await
+
         db.ReactionEvents.AsNoTracking().WherePresent()
             .GroupBy(r => r.UserDiscordId)
             .Select(g => new { UserDiscordId = g.Key, Count = g.LongCount() })
@@ -225,7 +234,9 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // Reactions RECEIVED per author (reaction -> its message -> the message author). Inner
     // joins: only reactions on stored messages with a known author count.
     [HttpGet("people/top-reactions-received")]
-    public Task<List<UserStatDto>> TopReactionsReceived(CancellationToken ct) =>
+    [ProducesResponseType<List<UserStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<UserStatDto>>> TopReactionsReceived(CancellationToken ct) => await
+
         db.ReactionEvents.AsNoTracking().WherePresent()
             .Join(db.Messages.AsNoTracking(), r => r.MessageDiscordId, m => m.DiscordId, (r, m) => m.Author)
             .GroupBy(a => new { a.Username, a.DiscordId, a.AvatarHash })
@@ -238,7 +249,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
 
     // Open sessions (no following event) are excluded — surfaced in the UI.
     [HttpGet("people/voice-leaderboard")]
-    public Task<List<VoiceStatDto>> VoiceLeaderboard(CancellationToken ct) => QueryAsync(
+    [ProducesResponseType<List<VoiceStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<VoiceStatDto>>> VoiceLeaderboard(CancellationToken ct) => await QueryAsync(
         $"""
         SELECT u.username, v.user_discord_id,
                round(SUM({VoiceSegmentMinutes}))::bigint AS minutes,
@@ -255,17 +267,21 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         r => new VoiceStatDto(NullableString(r, 0), Snowflake(r, 1), r.GetInt64(2), NullableString(r, 3)), ct);
 
     [HttpGet("places/channel-activity")]
-    public Task<List<ChannelActivityDto>> ChannelActivity(CancellationToken ct) => QueryAsync(
+    [ProducesResponseType<List<ChannelActivityDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<ChannelActivityDto>>> ChannelActivity(CancellationToken ct) => await QueryAsync(
         $"{ChannelActivitySql} {ChannelActivityLimit}",
         r => new ChannelActivityDto(r.GetString(0), Snowflake(r, 1), r.GetInt64(2), r.GetInt64(3)), ct);
 
     [HttpGet("behavior/top-emojis")]
-    public Task<List<EmojiStatDto>> TopEmojis(CancellationToken ct) => TopEmojisAsync(BehaviorListSize, ct);
+    [ProducesResponseType<List<EmojiStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<EmojiStatDto>>> TopEmojis(CancellationToken ct) => await TopEmojisAsync(BehaviorListSize, ct);
 
     // Includes presence artifacts such as "Custom Status" and "Playing N/10" —
     // surfaced (not hidden) with a UI note.
     [HttpGet("behavior/top-activities")]
-    public Task<List<ActivityStatDto>> TopActivities(CancellationToken ct) =>
+    [ProducesResponseType<List<ActivityStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<ActivityStatDto>>> TopActivities(CancellationToken ct) => await
+
         db.Activities.AsNoTracking()
             .Where(a => a.Name != null)
             .GroupBy(a => a.Name)
@@ -279,7 +295,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // Stays raw: buckets by CET day-of-week + hour via `AT TIME ZONE 'Europe/Warsaw'`, which
     // the Npgsql EF Core provider does not translate from LINQ.
     [HttpGet("behavior/heatmap")]
-    public Task<List<HeatmapCellDto>> Heatmap(CancellationToken ct) => QueryAsync(
+    [ProducesResponseType<List<HeatmapCellDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<HeatmapCellDto>>> Heatmap(CancellationToken ct) => await QueryAsync(
         $"""
         SELECT EXTRACT(DOW FROM created_at_utc AT TIME ZONE '{Tz}')::int AS dow,
                EXTRACT(HOUR FROM created_at_utc AT TIME ZONE '{Tz}')::int AS hour,
@@ -289,6 +306,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         r => new HeatmapCellDto(r.GetInt32(0), r.GetInt32(1), r.GetInt64(2)), ct);
 
     [HttpGet("community")]
+    [ProducesResponseType<CommunityDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<CommunityDto>> Community(
         [FromQuery] string range = "week", CancellationToken ct = default)
     {
@@ -402,7 +421,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // activity name, and top-tracks excludes that placeholder until richer presence is
     // ingested.
     [HttpGet("spotify")]
-    public async Task<SpotifyDto> Spotify(CancellationToken ct)
+    [ProducesResponseType<SpotifyDto>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<SpotifyDto>> Spotify(CancellationToken ct)
     {
         var nowPlayingRows = await db.Activities.AsNoTracking()
             .Where(a => a.ActivityType == 2 && a.IsActive)

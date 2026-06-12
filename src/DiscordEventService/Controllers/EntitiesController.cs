@@ -13,7 +13,8 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
     private const int MaxPageSize = 200;
 
     [HttpGet("users")]
-    public Task<PagedResult<UserListDto>> GetUsers(
+    [ProducesResponseType<PagedResult<UserListDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<PagedResult<UserListDto>>> GetUsers(
         [FromQuery] int page = 1, [FromQuery] int pageSize = DefaultPageSize,
         [FromQuery] string? search = null, CancellationToken ct = default)
     {
@@ -25,7 +26,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
                 || (u.GlobalName != null && EF.Functions.ILike(u.GlobalName, like)));
         }
 
-        return PageAsync(
+        return await PageAsync(
             query.OrderByDescending(u => u.LastUpdatedUtc).ThenByDescending(u => u.Id)
                 .Select(u => new UserListDto(
                     u.Id, u.DiscordId, u.Username, u.GlobalName, u.IsBot, u.IsSystem,
@@ -34,6 +35,8 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
     }
 
     [HttpGet("users/{id:guid}")]
+    [ProducesResponseType<UserDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<UserDetailDto>> GetUser(Guid id, CancellationToken ct)
     {
         var user = await db.Users.AsNoTracking()
@@ -71,9 +74,10 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
     }
 
     [HttpGet("channels")]
-    public Task<PagedResult<ChannelListDto>> GetChannels(
+    [ProducesResponseType<PagedResult<ChannelListDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<PagedResult<ChannelListDto>>> GetChannels(
         [FromQuery] int page = 1, [FromQuery] int pageSize = DefaultPageSize, CancellationToken ct = default)
-        => PageAsync(
+        => await PageAsync(
             db.Channels.AsNoTracking()
                 .OrderBy(c => c.Position).ThenBy(c => c.Name).ThenBy(c => c.Id)
                 .Select(c => new ChannelListDto(
@@ -82,6 +86,8 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
             page, pageSize, ct);
 
     [HttpGet("channels/{id:guid}")]
+    [ProducesResponseType<ChannelDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ChannelDetailDto>> GetChannel(Guid id, CancellationToken ct)
     {
         var channel = await db.Channels.AsNoTracking()
@@ -110,9 +116,10 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
     }
 
     [HttpGet("members")]
-    public Task<PagedResult<MemberListDto>> GetMembers(
+    [ProducesResponseType<PagedResult<MemberListDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<PagedResult<MemberListDto>>> GetMembers(
         [FromQuery] int page = 1, [FromQuery] int pageSize = DefaultPageSize, CancellationToken ct = default)
-        => PageAsync(
+        => await PageAsync(
             db.Members.AsNoTracking()
                 .OrderBy(m => m.User.Username).ThenBy(m => m.Id)
                 .Select(m => new MemberListDto(
@@ -121,7 +128,8 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
             page, pageSize, ct);
 
     [HttpGet("messages")]
-    public Task<PagedResult<MessageListDto>> GetMessages(
+    [ProducesResponseType<PagedResult<MessageListDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<PagedResult<MessageListDto>>> GetMessages(
         [FromQuery] int page = 1, [FromQuery] int pageSize = DefaultPageSize,
         [FromQuery] Guid? channelId = null, CancellationToken ct = default)
     {
@@ -129,7 +137,7 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
         if (channelId is not null)
             query = query.Where(m => m.ChannelId == channelId.Value);
 
-        return PageAsync(
+        return await PageAsync(
             query.OrderByDescending(m => m.CreatedAtUtc).ThenByDescending(m => m.Id)
                 .Select(m => new MessageListDto(
                     m.Id, m.DiscordId, m.Content,
@@ -141,6 +149,8 @@ public sealed class EntitiesController(DiscordDbContext db) : ControllerBase
     }
 
     [HttpGet("messages/{id:guid}")]
+    [ProducesResponseType<MessageDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<MessageDetailDto>> GetMessage(Guid id, CancellationToken ct)
     {
         var message = await db.Messages.AsNoTracking()

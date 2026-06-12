@@ -30,7 +30,7 @@ public sealed class SpotifyStatsTests(PostgresFixture fixture) : IClassFixture<P
     {
         var controller = new StatsController(_db);
 
-        var dto = await controller.Spotify(default);
+        var dto = (await controller.Spotify(default)).Value!;
 
         var np = Assert.Single(dto.NowPlaying);
         Assert.Equal(Alice, np.UserDiscordId);
@@ -46,7 +46,7 @@ public sealed class SpotifyStatsTests(PostgresFixture fixture) : IClassFixture<P
     {
         var controller = new StatsController(_db);
 
-        var dto = await controller.Spotify(default);
+        var dto = (await controller.Spotify(default)).Value!;
 
         Assert.Equal("Song A", dto.TopTracks[0].Track); // played 3x
         Assert.Equal(3, dto.TopTracks[0].Plays);

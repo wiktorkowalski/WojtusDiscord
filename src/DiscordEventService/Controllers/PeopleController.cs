@@ -20,6 +20,8 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
     private const int SparklineDays = 14;
 
     [HttpGet("{discordId:long}/profile")]
+    [ProducesResponseType<ProfileDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ProfileDto>> Profile(long discordId, CancellationToken ct)
     {
         // Snowflakes are stored as unchecked (long)ulong; current ids are < 2^63 so the
