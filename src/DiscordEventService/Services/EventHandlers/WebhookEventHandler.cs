@@ -10,7 +10,7 @@ internal sealed class WebhookEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, WebhooksUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "WebhooksUpdated", nameof(WebhookEventHandler),
+        await pipeline.ExecuteAsync(e, "WebhooksUpdated", nameof(WebhookEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 ctx.Db.WebhookEvents.Add(new WebhookEventEntity

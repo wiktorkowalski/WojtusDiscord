@@ -41,18 +41,18 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task Search_MultiWordAccentlessQuery_RanksMatchingRowOnly()
+    public async Task SearchAsync_MultiWordAccentlessQuery_RanksMatchingRowOnly()
     {
-        await SeedIndexedMeme(11UL, 1001UL,
+        await SeedIndexedMemeAsync(11UL, 1001UL,
             descriptionPl: "Pies siedzi przy komputerze",
             ocrText: "kiedy kod działa za pierwszym razem",
             tags: ["pies", "programowanie"]);
-        await SeedIndexedMeme(12UL, 1002UL,
+        await SeedIndexedMemeAsync(12UL, 1002UL,
             descriptionPl: "Kot patrzy na lodówkę",
             ocrText: "",
             tags: ["kot"]);
 
-        var hits = await Search("kod dziala");
+        var hits = await RunSearchAsync("kod dziala");
 
         var hit = Assert.Single(hits);
         Assert.Equal(11UL, hit.AttachmentDiscordId);
@@ -60,18 +60,18 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
     }
 
     [Fact]
-    public async Task Search_TagHit_OutranksDescriptionOnlyHit()
+    public async Task SearchAsync_TagHit_OutranksDescriptionOnlyHit()
     {
-        await SeedIndexedMeme(21UL, 1101UL,
+        await SeedIndexedMemeAsync(21UL, 1101UL,
             descriptionPl: "Mem o czymś zupełnie innym",
             ocrText: "",
             tags: ["rakieta"]);
-        await SeedIndexedMeme(22UL, 1102UL,
+        await SeedIndexedMemeAsync(22UL, 1102UL,
             descriptionPl: "Start rakieta kończy się klapą",
             ocrText: "",
             tags: ["porażka"]);
 
-        var hits = await Search("rakieta");
+        var hits = await RunSearchAsync("rakieta");
 
         Assert.Equal(2, hits.Count);
         // setweight A (tags) ≫ C (descriptions) under ts_rank.
@@ -80,46 +80,46 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
     }
 
     [Fact]
-    public async Task Search_PolishInflectedQuery_MatchesViaTrigram()
+    public async Task SearchAsync_PolishInflectedQuery_MatchesViaTrigram()
     {
-        await SeedIndexedMeme(31UL, 1201UL,
+        await SeedIndexedMemeAsync(31UL, 1201UL,
             descriptionPl: "Mem o bazie danych",
             ocrText: "",
             tags: ["postgres"]);
 
         // FTS can't stem Polish ("postgresie" ≠ "postgres" in the simple
         // config) — word_similarity is what rescues the inflected query.
-        var hits = await Search("postgresie");
+        var hits = await RunSearchAsync("postgresie");
 
         var hit = Assert.Single(hits);
         Assert.Equal(31UL, hit.AttachmentDiscordId);
     }
 
     [Fact]
-    public async Task Search_RowOnSoftDeletedMessage_IsExcluded()
+    public async Task SearchAsync_RowOnSoftDeletedMessage_IsExcluded()
     {
-        await SeedIndexedMeme(41UL, 1301UL,
+        await SeedIndexedMemeAsync(41UL, 1301UL,
             descriptionPl: "Unikatowy żółw na deskorolce",
             ocrText: "",
             tags: ["żółw"]);
-        await SeedIndexedMeme(42UL, 1302UL,
+        await SeedIndexedMemeAsync(42UL, 1302UL,
             descriptionPl: "Unikatowy żółw na hulajnodze",
             ocrText: "",
             tags: ["żółw"],
             messageDeleted: true);
 
-        var hits = await Search("zolw");
+        var hits = await RunSearchAsync("zolw");
 
         var hit = Assert.Single(hits);
         Assert.Equal(41UL, hit.AttachmentDiscordId);
     }
 
     [Fact]
-    public async Task Search_NonIndexedStatuses_AreExcluded()
+    public async Task SearchAsync_NonIndexedStatuses_AreExcluded()
     {
         // A Failed row may carry metadata from an earlier attempt; the status
         // CHECK allows it. Search must still ignore anything not Indexed.
-        var failed = await SeedIndexedMeme(51UL, 1401UL,
+        var failed = await SeedIndexedMemeAsync(51UL, 1401UL,
             descriptionPl: "Niepowtarzalny borsuk gra na perkusji",
             ocrText: "",
             tags: ["borsuk"]);
@@ -129,86 +129,86 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         failed.ModelId = null;
         await _db.SaveChangesAsync();
 
-        var hits = await Search("borsuk");
+        var hits = await RunSearchAsync("borsuk");
 
         Assert.Empty(hits);
     }
 
     [Fact]
-    public async Task Search_OtherGuildRows_AreExcluded()
+    public async Task SearchAsync_OtherGuildRows_AreExcluded()
     {
-        await SeedIndexedMeme(61UL, 1501UL,
+        await SeedIndexedMemeAsync(61UL, 1501UL,
             descriptionPl: "Jednorożec w innym lochu",
             ocrText: "",
             tags: ["jednorożec"],
             guildDiscordId: 999UL);
 
-        var hits = await Search("jednorozec");
+        var hits = await RunSearchAsync("jednorozec");
 
         Assert.Empty(hits);
     }
 
     [Fact]
-    public async Task Search_EqualScores_BreakTiesByMessageRecency()
+    public async Task SearchAsync_EqualScores_BreakTiesByMessageRecency()
     {
         // Repost dedupe copies metadata verbatim → identical scores.
-        await SeedIndexedMeme(71UL, 1601UL,
+        await SeedIndexedMemeAsync(71UL, 1601UL,
             descriptionPl: "Słoń maluje płot",
             ocrText: "",
             tags: ["słoń"],
             messageCreatedAtUtc: DateTime.UtcNow.AddDays(-30));
-        await SeedIndexedMeme(72UL, 1602UL,
+        await SeedIndexedMemeAsync(72UL, 1602UL,
             descriptionPl: "Słoń maluje płot",
             ocrText: "",
             tags: ["słoń"],
             messageCreatedAtUtc: DateTime.UtcNow.AddDays(-1));
 
-        var hits = await Search("slon");
+        var hits = await RunSearchAsync("slon");
 
         Assert.Equal(2, hits.Count);
         Assert.Equal(72UL, hits[0].AttachmentDiscordId);
     }
 
     [Fact]
-    public async Task Search_RespectsLimit()
+    public async Task SearchAsync_MoreHitsThanLimit_ReturnsOnlyLimit()
     {
-        await SeedIndexedMeme(81UL, 1701UL, "Trzy wielbłądy na pustyni", "", ["wielbłąd"]);
-        await SeedIndexedMeme(82UL, 1702UL, "Dwa wielbłądy w oazie", "", ["wielbłąd"]);
-        await SeedIndexedMeme(83UL, 1703UL, "Jeden wielbłąd w biurze", "", ["wielbłąd"]);
+        await SeedIndexedMemeAsync(81UL, 1701UL, "Trzy wielbłądy na pustyni", "", ["wielbłąd"]);
+        await SeedIndexedMemeAsync(82UL, 1702UL, "Dwa wielbłądy w oazie", "", ["wielbłąd"]);
+        await SeedIndexedMemeAsync(83UL, 1703UL, "Jeden wielbłąd w biurze", "", ["wielbłąd"]);
 
-        var hits = await Search("wielblad", limit: 2);
+        var hits = await RunSearchAsync("wielblad", limit: 2);
 
         Assert.Equal(2, hits.Count);
     }
 
     [Fact]
-    public async Task Search_NoMatch_ReturnsEmpty()
+    public async Task SearchAsync_NoMatch_ReturnsEmpty()
     {
-        await SeedIndexedMeme(91UL, 1801UL, "Pies siedzi przy komputerze", "", ["pies"]);
+        await SeedIndexedMemeAsync(91UL, 1801UL, "Pies siedzi przy komputerze", "", ["pies"]);
 
-        var hits = await Search("kwantowa termodynamika frytek");
+        var hits = await RunSearchAsync("kwantowa termodynamika frytek");
 
         Assert.Empty(hits);
     }
 
     [Fact]
-    public async Task Search_QueryWithoutWordCharacters_ReturnsEmptyWithoutQuerying()
+    public async Task SearchAsync_QueryWithoutWordCharacters_ReturnsEmptyWithoutQuerying()
     {
-        await SeedIndexedMeme(101UL, 1901UL, "Cokolwiek", "", ["cokolwiek"]);
+        await SeedIndexedMemeAsync(101UL, 1901UL, "Cokolwiek", "", ["cokolwiek"]);
 
-        var hits = await Search("!!! ??? ((( |||");
+        var hits = await RunSearchAsync("!!! ??? ((( |||");
 
         Assert.Empty(hits);
     }
 
-    private async Task<List<MemeSearchHit>> Search(string query, int limit = MemeSearchService.DefaultLimit)
+    private async Task<List<MemeSearchHit>> RunSearchAsync(string query, int limit = MemeSearchService.DefaultLimit)
     {
         await using var db = NewContext();
         return await new MemeSearchService(db)
             .SearchAsync(GuildDiscordId, query, limit, CancellationToken.None);
     }
 
-    private async Task<MemeIndexEntity> SeedIndexedMeme(
+    private async Task<MemeIndexEntity> SeedIndexedMemeAsync(
         ulong attachmentDiscordId,
         ulong messageDiscordId,
         string descriptionPl,

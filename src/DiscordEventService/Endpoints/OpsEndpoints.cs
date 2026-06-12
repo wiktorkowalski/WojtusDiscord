@@ -1,5 +1,6 @@
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services;
+using Microsoft.AspNetCore.Mvc;
 
 namespace DiscordEventService.Endpoints;
 
@@ -9,35 +10,35 @@ internal static class OpsEndpoints
     {
         var group = app.MapGroup("/api/ops");
 
-        group.MapPost("/downtime/start", StartDowntime)
+        group.MapPost("/downtime/start", StartDowntimeAsync)
             .WithName("StartDowntime")
             .Produces<DowntimeStartResponse>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest);
 
-        group.MapPost("/replay-orphans", ReplayOrphans)
+        group.MapPost("/replay-orphans", ReplayOrphansAsync)
             .WithName("ReplayOrphans")
             .Produces<OrphanReplayResult>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest);
 
-        group.MapPost("/backfill-thread-channels", BackfillThreadChannels)
+        group.MapPost("/backfill-thread-channels", BackfillThreadChannelsAsync)
             .WithName("BackfillThreadChannels")
             .Produces<ThreadChannelBackfillService.Result>(StatusCodes.Status200OK);
 
-        group.MapPost("/backfill-role-snapshots", BackfillRoleSnapshots)
+        group.MapPost("/backfill-role-snapshots", BackfillRoleSnapshotsAsync)
             .WithName("BackfillRoleSnapshots")
             .Produces<MemberRoleSnapshotBackfillService.Result>(StatusCodes.Status200OK);
 
-        group.MapPost("/backfill-message-mentions", BackfillMessageMentions)
+        group.MapPost("/backfill-message-mentions", BackfillMessageMentionsAsync)
             .WithName("BackfillMessageMentions")
             .Produces<MessageMentionsBackfillService.Result>(StatusCodes.Status200OK);
 
-        group.MapPost("/failed-events/{id:guid}/resolve", ResolveFailedEvent)
+        group.MapPost("/failed-events/{id:guid}/resolve", ResolveFailedEventAsync)
             .WithName("ResolveFailedEvent")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status404NotFound);
     }
 
-    private static async Task<IResult> StartDowntime(
+    private static async Task<IResult> StartDowntimeAsync(
         BotDowntimeType type,
         string? reason,
         DowntimeTrackerService tracker)
@@ -58,19 +59,19 @@ internal static class OpsEndpoints
         });
     }
 
-    private static async Task<IResult> ReplayOrphans(
-        string event_type,
+    private static async Task<IResult> ReplayOrphansAsync(
+        [FromQuery(Name = "event_type")] string eventType,
         OrphanReplayService svc,
         CancellationToken ct)
     {
-        if (!string.Equals(event_type, "GuildMemberUpdated", StringComparison.Ordinal))
-            return Results.BadRequest(new { error = $"event_type '{event_type}' not yet supported" });
+        if (!string.Equals(eventType, "GuildMemberUpdated", StringComparison.Ordinal))
+            return Results.BadRequest(new { error = $"event_type '{eventType}' not yet supported" });
 
         var result = await svc.ReplayMemberUpdateOrphansAsync(ct);
         return Results.Ok(result);
     }
 
-    private static async Task<IResult> BackfillThreadChannels(
+    private static async Task<IResult> BackfillThreadChannelsAsync(
         ThreadChannelBackfillService svc,
         CancellationToken ct)
     {
@@ -78,7 +79,7 @@ internal static class OpsEndpoints
         return Results.Ok(result);
     }
 
-    private static async Task<IResult> BackfillRoleSnapshots(
+    private static async Task<IResult> BackfillRoleSnapshotsAsync(
         MemberRoleSnapshotBackfillService svc,
         CancellationToken ct)
     {
@@ -86,7 +87,7 @@ internal static class OpsEndpoints
         return Results.Ok(result);
     }
 
-    private static async Task<IResult> BackfillMessageMentions(
+    private static async Task<IResult> BackfillMessageMentionsAsync(
         MessageMentionsBackfillService svc,
         CancellationToken ct)
     {
@@ -96,7 +97,7 @@ internal static class OpsEndpoints
 
     // Acknowledge/resolve a dead-letter row so the HealthCheckJob alert can clear by explicit
     // action. A 0-row update (unknown id or already resolved) is a clean 404, not a 500.
-    private static async Task<IResult> ResolveFailedEvent(
+    private static async Task<IResult> ResolveFailedEventAsync(
         Guid id,
         string? notes,
         FailedEventService svc,

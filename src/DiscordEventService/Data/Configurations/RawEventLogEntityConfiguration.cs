@@ -14,5 +14,9 @@ internal sealed class RawEventLogEntityConfiguration : IEntityTypeConfiguration<
         builder.HasIndex(r => r.UserDiscordId);
 
         builder.Property(r => r.EventJson).HasColumnType("jsonb");
+        builder.Property(r => r.EventType).HasMaxLength(100);
+
+        // Property carries the Is- prefix convention; the column predates it.
+        builder.Property(r => r.IsSerializationFailed).HasColumnName("serialization_failed");
     }
 }

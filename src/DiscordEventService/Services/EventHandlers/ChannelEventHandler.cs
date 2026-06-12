@@ -17,25 +17,11 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, ChannelCreatedEventArgs e)
     {
-        await pipeline.Execute(e, "ChannelCreated", nameof(ChannelEventHandler),
+        await pipeline.ExecuteAsync(e, "ChannelCreated", nameof(ChannelEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
-
-                ChannelEventEntity NewChannelEvent() => new ChannelEventEntity
-                {
-                    ChannelDiscordId = e.Channel.Id,
-                    GuildDiscordId = e.Guild.Id,
-                    ChannelType = (int)e.Channel.Type,
-                    EventType = ChannelEventType.Created,
-                    NameAfter = e.Channel.Name,
-                    TopicAfter = e.Channel.Topic,
-                    PositionAfter = e.Channel.Position,
-                    EventTimestampUtc = ctx.ReceivedAtUtc,
-                    ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson,
-                };
 
                 // Upsert the channel (handles the 23505 race internally) before staging the event,
                 // then commit channel + event together. ExecutionStrategy is required because
@@ -79,7 +65,19 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
                         },
                         c => c.Id);
 
-                    ctx.Db.ChannelEvents.Add(NewChannelEvent());
+                    ctx.Db.ChannelEvents.Add(new ChannelEventEntity
+                    {
+                        ChannelDiscordId = e.Channel.Id,
+                        GuildDiscordId = e.Guild.Id,
+                        ChannelType = (int)e.Channel.Type,
+                        EventType = ChannelEventType.Created,
+                        NameAfter = e.Channel.Name,
+                        TopicAfter = e.Channel.Topic,
+                        PositionAfter = e.Channel.Position,
+                        EventTimestampUtc = ctx.ReceivedAtUtc,
+                        ReceivedAtUtc = ctx.ReceivedAtUtc,
+                        RawEventJson = ctx.RawJson,
+                    });
                     await ctx.Db.SaveChangesAsync();
                     await tx.CommitAsync();
                 });
@@ -88,13 +86,13 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "ChannelUpdated", nameof(ChannelEventHandler),
+        await pipeline.ExecuteAsync(e, "ChannelUpdated", nameof(ChannelEventHandler),
             e.ChannelAfter.Guild.Id, e.ChannelAfter.Id, null, async ctx =>
             {
                 var channelEntity = await ctx.Db.Channels
                     .FirstOrDefaultAsync(c => c.DiscordId == e.ChannelAfter.Id);
 
-                if (channelEntity != null)
+                if (channelEntity is not null)
                     UpdateChannelEntity(channelEntity, e.ChannelAfter);
 
                 var channelEvent = new ChannelEventEntity
@@ -133,13 +131,13 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelDeletedEventArgs e)
     {
-        await pipeline.Execute(e, "ChannelDeleted", nameof(ChannelEventHandler),
+        await pipeline.ExecuteAsync(e, "ChannelDeleted", nameof(ChannelEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 var channelEntity = await ctx.Db.Channels
                     .FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
 
-                if (channelEntity != null)
+                if (channelEntity is not null)
                 {
                     channelEntity.IsDeleted = true;
                     channelEntity.DeletedAtUtc = ctx.ReceivedAtUtc;
@@ -165,7 +163,7 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelPinsUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "ChannelPinsUpdatedChannel", nameof(ChannelEventHandler),
+        await pipeline.ExecuteAsync(e, "ChannelPinsUpdatedChannel", nameof(ChannelEventHandler),
             e.Guild?.Id ?? 0, e.Channel.Id, null, async ctx =>
             {
                 ctx.Db.ChannelEvents.Add(new ChannelEventEntity

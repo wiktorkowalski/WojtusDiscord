@@ -13,6 +13,12 @@ internal sealed class HealthCheckJob(
     IOptions<HealthCheckOptions> options,
     ILogger<HealthCheckJob> logger)
 {
+    // Inline tuning knobs; the operator-facing thresholds live in HealthCheckOptions.
+    private const int RecentFailureDisplayCount = 5;
+    private const int HeartbeatFreshSeconds = 30;
+    private const int CrashLoopWindowMinutes = 30;
+    private const int CrashLoopRestartThreshold = 3;
+
     private static DateTime _lastFailedEventAlert = DateTime.MinValue;
     private static DateTime _lastIngestStallAlert = DateTime.MinValue;
     private static DateTime _lastEventRatioAlert = DateTime.MinValue;
@@ -21,7 +27,7 @@ internal sealed class HealthCheckJob(
     private static readonly object _lock = new object();
     private static readonly TimeSpan WebhookTimeout = TimeSpan.FromSeconds(10);
 
-    public async Task ExecuteAsync()
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         var opts = options.Value;
         if (string.IsNullOrWhiteSpace(opts.WebhookUrl))
@@ -34,18 +40,18 @@ internal sealed class HealthCheckJob(
         var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
         var now = DateTime.UtcNow;
 
-        await CheckFailedEventsAsync(db, opts, now);
-        await CheckIngestStallAsync(db, opts, now);
-        await CheckEventTypeRatioAsync(db, opts, now);
-        await CheckCrashLoopAsync(db, opts, now);
+        await CheckFailedEventsAsync(db, opts, now, cancellationToken);
+        await CheckIngestStallAsync(db, opts, now, cancellationToken);
+        await CheckEventTypeRatioAsync(db, opts, now, cancellationToken);
+        await CheckCrashLoopAsync(db, opts, now, cancellationToken);
     }
 
-    private async Task CheckFailedEventsAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now)
+    private async Task CheckFailedEventsAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
     {
         var windowStart = now.AddMinutes(-opts.FailedEventWindowMinutes);
         var count = await db.FailedEvents
             .Where(f => f.FailedAtUtc > windowStart && !f.IsResolved)
-            .CountAsync();
+            .CountAsync(cancellationToken);
 
         if (count == 0)
             return;
@@ -59,15 +65,15 @@ internal sealed class HealthCheckJob(
         var recent = await db.FailedEvents
             .Where(f => f.FailedAtUtc > windowStart && !f.IsResolved)
             .OrderByDescending(f => f.FailedAtUtc)
-            .Take(5)
+            .Take(RecentFailureDisplayCount)
             .Select(f => new { f.EventType, f.HandlerName, f.ExceptionType, f.FailedAtUtc })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         var details = string.Join("\n", recent.Select(r =>
             $"- `{r.EventType}` in `{r.HandlerName}` ({r.ExceptionType}) at {r.FailedAtUtc:HH:mm:ss}"));
 
         if (!await SendWebhookAsync(opts.WebhookUrl!,
-            $"**{count} failed event(s)** in the last {opts.FailedEventWindowMinutes} min\n{details}"))
+            $"**{count} failed event(s)** in the last {opts.FailedEventWindowMinutes} min\n{details}", cancellationToken))
             return;
 
         lock (_lock) { _lastFailedEventAlert = now; }
@@ -75,25 +81,25 @@ internal sealed class HealthCheckJob(
         logger.LogWarning("Health check alert: {Count} failed events in last {Window} min", count, opts.FailedEventWindowMinutes);
     }
 
-    private async Task CheckIngestStallAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now)
+    private async Task CheckIngestStallAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
     {
         var lastConnectedHeartbeat = await db.BotHeartbeats
             .Where(h => h.IsGatewayConnected == true)
             .OrderByDescending(h => h.LastHeartbeatUtc)
             .Select(h => (DateTime?)h.LastHeartbeatUtc)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (lastConnectedHeartbeat is null)
             return;
 
         var heartbeatAge = now - lastConnectedHeartbeat.Value;
-        if (heartbeatAge.TotalSeconds > 30)
+        if (heartbeatAge.TotalSeconds > HeartbeatFreshSeconds)
             return;
 
         var lastEvent = await db.RawEventLogs
             .OrderByDescending(r => r.ReceivedAtUtc)
             .Select(r => (DateTime?)r.ReceivedAtUtc)
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (lastEvent is null)
             return;
@@ -109,7 +115,7 @@ internal sealed class HealthCheckJob(
         }
 
         if (!await SendWebhookAsync(opts.WebhookUrl!,
-            $"**Ingest stall detected** — bot is connected but no events for {eventAge.TotalMinutes:F0} min (last event at {lastEvent.Value:yyyy-MM-dd HH:mm:ss} UTC)"))
+            $"**Ingest stall detected** — bot is connected but no events for {eventAge.TotalMinutes:F0} min (last event at {lastEvent.Value:yyyy-MM-dd HH:mm:ss} UTC)", cancellationToken))
             return;
 
         lock (_lock) { _lastIngestStallAlert = now; }
@@ -117,16 +123,16 @@ internal sealed class HealthCheckJob(
         logger.LogWarning("Health check alert: ingest stall, last event {MinutesAgo:F0} min ago", eventAge.TotalMinutes);
     }
 
-    private async Task CheckCrashLoopAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now)
+    private async Task CheckCrashLoopAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
     {
-        var windowStart = now.AddMinutes(-30);
+        var windowStart = now.AddMinutes(-CrashLoopWindowMinutes);
         var recentRestarts = await db.BotDowntimeIntervals
             .Where(d => d.StartedAtUtc > windowStart && d.EndedAtUtc != null
                 && d.Type != Data.Entities.Core.BotDowntimeType.GracefulShutdown
                 && d.Type != Data.Entities.Core.BotDowntimeType.Deploy)
-            .CountAsync();
+            .CountAsync(cancellationToken);
 
-        if (recentRestarts < 3)
+        if (recentRestarts < CrashLoopRestartThreshold)
             return;
 
         lock (_lock)
@@ -136,15 +142,15 @@ internal sealed class HealthCheckJob(
         }
 
         if (!await SendWebhookAsync(opts.WebhookUrl!,
-            $"**Possible crash-loop** — {recentRestarts} restarts in the last 30 minutes. Check container logs for `Stack overflow` or other fatal errors."))
+            $"**Possible crash-loop** — {recentRestarts} restarts in the last {CrashLoopWindowMinutes} minutes. Check container logs for `Stack overflow` or other fatal errors.", cancellationToken))
             return;
 
         lock (_lock) { _lastCrashLoopAlert = now; }
 
-        logger.LogWarning("Health check alert: {Restarts} restarts in last 30 min — possible crash-loop", recentRestarts);
+        logger.LogWarning("Health check alert: {Restarts} restarts in last {WindowMinutes} min — possible crash-loop", recentRestarts, CrashLoopWindowMinutes);
     }
 
-    private async Task CheckEventTypeRatioAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now)
+    private async Task CheckEventTypeRatioAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
     {
         var recentStart = now.AddHours(-opts.EventRatioRecentHours);
 
@@ -167,7 +173,7 @@ internal sealed class HealthCheckJob(
                 .Where(r => r.ReceivedAtUtc > windowStart && r.ReceivedAtUtc <= windowEnd)
                 .GroupBy(r => r.EventType)
                 .Select(g => new { EventType = g.Key, Count = g.Count() })
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
             foreach (var c in counts)
                 baselineTotals[c.EventType] = baselineTotals.GetValueOrDefault(c.EventType) + c.Count;
         }
@@ -217,7 +223,7 @@ internal sealed class HealthCheckJob(
         }));
 
         if (!await SendWebhookAsync(opts.WebhookUrl!,
-            $"**Event type ratio drop** — {confirmed.Count} event type(s) below {opts.EventRatioDropThreshold:P0} of baseline for {opts.EventRatioConsecutiveRuns}+ runs:\n{details}"))
+            $"**Event type ratio drop** — {confirmed.Count} event type(s) below {opts.EventRatioDropThreshold:P0} of baseline for {opts.EventRatioConsecutiveRuns}+ runs:\n{details}", cancellationToken))
             return;
 
         lock (_lock) { _lastEventRatioAlert = now; }
@@ -226,7 +232,7 @@ internal sealed class HealthCheckJob(
             string.Join(", ", confirmed.Select(d => d.EventType)));
     }
 
-    private async Task<bool> SendWebhookAsync(string webhookUrl, string message)
+    private async Task<bool> SendWebhookAsync(string webhookUrl, string message, CancellationToken cancellationToken)
     {
         try
         {
@@ -234,12 +240,12 @@ internal sealed class HealthCheckJob(
             client.Timeout = WebhookTimeout;
             var payload = JsonSerializer.Serialize(new { content = message });
             using var response = await client.PostAsync(webhookUrl,
-                new StringContent(payload, Encoding.UTF8, "application/json"));
+                new StringContent(payload, Encoding.UTF8, "application/json"), cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {
                 logger.LogError("Webhook POST failed: {StatusCode} {Body}",
-                    response.StatusCode, await response.Content.ReadAsStringAsync());
+                    response.StatusCode, await response.Content.ReadAsStringAsync(cancellationToken));
                 return false;
             }
 

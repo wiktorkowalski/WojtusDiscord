@@ -19,7 +19,7 @@ internal sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
         var guildDiscordId = e.Rule!.Guild?.Id ?? 0UL;
         var creatorDiscordId = e.Rule.Creator?.Id ?? 0UL;
 
-        await pipeline.Execute(e, "AutoModRuleCreatedRule", nameof(AutoModRuleEventHandler),
+        await pipeline.ExecuteAsync(e, "AutoModRuleCreatedRule", nameof(AutoModRuleEventHandler),
             guildDiscordId, null, creatorDiscordId, async ctx =>
             {
                 Guid? guildGuid = null;
@@ -47,7 +47,7 @@ internal sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
                     EventType = (int)e.Rule.EventType,
                     TriggerType = (int)e.Rule.TriggerType,
                     IsEnabled = e.Rule.IsEnabled,
-                    ActionsJson = e.Rule.Actions != null ? JsonSerializer.Serialize(e.Rule.Actions) : null,
+                    ActionsJson = e.Rule.Actions is not null ? JsonSerializer.Serialize(e.Rule.Actions) : null,
                 });
 
                 ctx.Db.AutoModRuleEvents.Add(new AutoModRuleEventEntity
@@ -73,7 +73,7 @@ internal sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
         // DSharpPlus annotates Rule nullable on this EventArgs, but the gateway payload always carries it.
         var guildDiscordId = e.Rule!.Guild?.Id ?? 0UL;
 
-        await pipeline.Execute(e, "AutoModRuleUpdatedRule", nameof(AutoModRuleEventHandler),
+        await pipeline.ExecuteAsync(e, "AutoModRuleUpdatedRule", nameof(AutoModRuleEventHandler),
             guildDiscordId, null, e.Rule.Creator?.Id, async ctx =>
             {
                 await ctx.Db.AutoModRules
@@ -105,7 +105,7 @@ internal sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
     {
         var guildDiscordId = e.Rule.Guild?.Id ?? 0UL;
 
-        await pipeline.Execute(e, "AutoModRuleDeletedRule", nameof(AutoModRuleEventHandler),
+        await pipeline.ExecuteAsync(e, "AutoModRuleDeletedRule", nameof(AutoModRuleEventHandler),
             guildDiscordId, null, e.Rule.Creator?.Id, async ctx =>
             {
                 await ctx.Db.AutoModRules

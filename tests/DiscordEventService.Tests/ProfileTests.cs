@@ -36,7 +36,7 @@ public sealed class ProfileTests(PostgresFixture fixture) : IClassFixture<Postgr
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task Profile_AggregatesAllTimeStats()
+    public async Task Profile_KnownUser_AggregatesAllTimeStats()
     {
         var controller = new PeopleController(_db);
 

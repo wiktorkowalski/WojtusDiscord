@@ -174,7 +174,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     }
 
     [Fact]
-    public async Task SweepCoordinator_EnqueuesOnePerGuildJob()
+    public async Task ExecuteAsync_ConfiguredGuilds_EnqueuesOnePerGuildJob()
     {
         var jobClient = new RecordingJobClient();
 
@@ -186,7 +186,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     }
 
     [Fact]
-    public async Task SweepCoordinator_SkipsGuildWithIndexingInProgress()
+    public async Task ExecuteAsync_GuildWithIndexingInProgress_IsSkipped()
     {
         _db.BackfillCheckpoints.Add(new BackfillCheckpointEntity
         {
@@ -204,7 +204,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     }
 
     [Fact]
-    public async Task SweepCoordinator_Unconfigured_IsANoOp()
+    public async Task ExecuteAsync_Unconfigured_IsANoOp()
     {
         var jobClient = new RecordingJobClient();
 
@@ -233,7 +233,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     {
         await using var provider = BuildProvider(configured ? [ChannelDiscordId] : [], jobClient);
         using var scope = provider.CreateScope();
-        await scope.ServiceProvider.GetRequiredService<MemeIndexSweepJob>().ExecuteAsync();
+        await scope.ServiceProvider.GetRequiredService<MemeIndexSweepJob>().ExecuteAsync(CancellationToken.None);
     }
 
     private ServiceProvider BuildProvider(ulong[]? channelIds = null, IBackgroundJobClient? jobClient = null)

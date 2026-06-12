@@ -16,7 +16,7 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildCreatedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildCreated", nameof(GuildEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildCreated", nameof(GuildEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 ctx.Logger.LogInformation("GuildCreated received for guild {GuildId} ({GuildName})", e.Guild.Id, e.Guild.Name);
@@ -64,13 +64,13 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
     public async Task HandleEventAsync(DiscordClient sender, GuildUpdatedEventArgs e)
     {
         // Already raw-logged by GuildUpdateEventHandler; skip the duplicate raw row here.
-        await pipeline.Execute(e, "GuildUpdated", nameof(GuildEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildUpdated", nameof(GuildEventHandler),
             e.GuildAfter.Id, null, null, async ctx =>
             {
                 var existingGuild = await ctx.Db.Guilds
                     .Where(g => g.DiscordId == e.GuildAfter.Id)
                     .FirstOrDefaultAsync();
-                if (existingGuild != null)
+                if (existingGuild is not null)
                 {
                     existingGuild.Name = e.GuildAfter.Name;
                     existingGuild.IconHash = e.GuildAfter.IconHash;
@@ -83,13 +83,13 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, GuildDeletedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildDeleted", nameof(GuildEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildDeleted", nameof(GuildEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 var existingGuild = await ctx.Db.Guilds
                     .Where(g => g.DiscordId == e.Guild.Id)
                     .FirstOrDefaultAsync();
-                if (existingGuild != null)
+                if (existingGuild is not null)
                 {
                     existingGuild.LeftAtUtc = ctx.ReceivedAtUtc;
                     await ctx.Db.SaveChangesAsync();

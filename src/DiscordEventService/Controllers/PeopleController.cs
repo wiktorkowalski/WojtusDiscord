@@ -13,7 +13,15 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
 {
     private const string Tz = "Europe/Warsaw";
 
+    // Daily-activity sparkline window on the profile.
+    private const int SparklineDays = 14;
+
+    // Presence sessions: gaps longer than this break an online streak.
+    private static readonly TimeSpan MaxPresenceGap = TimeSpan.FromMinutes(30);
+
     [HttpGet("{discordId:long}/profile")]
+    [ProducesResponseType<ProfileDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ProfileDto>> Profile(long discordId, CancellationToken ct)
     {
         // Snowflakes are stored as unchecked (long)ulong; current ids are < 2^63 so the
@@ -185,7 +193,7 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
                 continue;
 
             var gap = next.ReceivedAtUtc - current.ReceivedAtUtc;
-            if (gap > TimeSpan.FromMinutes(30))
+            if (gap > MaxPresenceGap)
                 continue;
 
             var overlapsDowntime = downtimes.Any(d =>
@@ -206,7 +214,7 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
     {
         var tz = TimeZoneInfo.FindSystemTimeZoneById(Tz);
         var todayLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
-        var startLocal = todayLocal.AddDays(-13);
+        var startLocal = todayLocal.AddDays(-(SparklineDays - 1));
         var startUtc = TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(startLocal, DateTimeKind.Unspecified), tz);
 
         var timestamps = await db.Messages.AsNoTracking()
@@ -218,8 +226,8 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
             .GroupBy(ts => TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(ts, DateTimeKind.Utc), tz).Date)
             .ToDictionary(g => g.Key, g => (long)g.Count());
 
-        var series = new List<ProfileDailyPointDto>(14);
-        for (var i = 0; i < 14; i++)
+        var series = new List<ProfileDailyPointDto>(SparklineDays);
+        for (var i = 0; i < SparklineDays; i++)
         {
             var day = startLocal.AddDays(i);
             counts.TryGetValue(day, out var count);

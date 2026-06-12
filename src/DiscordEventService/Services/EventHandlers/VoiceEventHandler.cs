@@ -12,7 +12,7 @@ internal sealed class VoiceEventHandler(EventPipeline pipeline) :
     {
         var eventType = DetermineEventType(args);
 
-        await pipeline.Execute(args, "VoiceStateUpdated", nameof(VoiceEventHandler),
+        await pipeline.ExecuteAsync(args, "VoiceStateUpdated", nameof(VoiceEventHandler),
             args.Guild.Id, args.After?.Channel?.Id, args.User.Id, async ctx =>
             {
                 ctx.Db.VoiceStateEvents.Add(new VoiceStateEventEntity
@@ -57,15 +57,12 @@ internal sealed class VoiceEventHandler(EventPipeline pipeline) :
         var beforeChannelId = args.Before?.Channel?.Id;
         var afterChannelId = args.After?.Channel?.Id;
 
-        if (beforeChannelId == null && afterChannelId != null)
-            return VoiceEventType.Joined;
-
-        if (beforeChannelId != null && afterChannelId == null)
-            return VoiceEventType.Left;
-
-        if (beforeChannelId != null && afterChannelId != null && beforeChannelId != afterChannelId)
-            return VoiceEventType.Moved;
-
-        return VoiceEventType.StateChanged;
+        return (beforeChannelId, afterChannelId) switch
+        {
+            (null, not null) => VoiceEventType.Joined,
+            (not null, null) => VoiceEventType.Left,
+            (not null, not null) when beforeChannelId != afterChannelId => VoiceEventType.Moved,
+            _ => VoiceEventType.StateChanged,
+        };
     }
 }

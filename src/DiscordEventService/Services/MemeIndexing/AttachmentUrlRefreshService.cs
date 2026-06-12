@@ -46,6 +46,13 @@ internal sealed class AttachmentUrlRefreshService(
         return result;
     }
 
+    // The signature params are exactly what's stale — match on the bare URL.
+    public static string StripQuery(string url)
+    {
+        var queryStart = url.IndexOf('?');
+        return queryStart < 0 ? url : url[..queryStart];
+    }
+
     private async Task RefreshBatchAsync(
         List<string> batch,
         Dictionary<string, string> result,
@@ -75,13 +82,6 @@ internal sealed class AttachmentUrlRefreshService(
             if (entry.Original is not null && !string.IsNullOrEmpty(entry.Refreshed))
                 result[StripQuery(entry.Original)] = entry.Refreshed;
         }
-    }
-
-    // The signature params are exactly what's stale — match on the bare URL.
-    public static string StripQuery(string url)
-    {
-        var queryStart = url.IndexOf('?');
-        return queryStart < 0 ? url : url[..queryStart];
     }
 
     private sealed record RefreshResponse(

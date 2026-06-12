@@ -13,7 +13,7 @@ internal sealed class StickerEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildStickersUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildStickersUpdated", nameof(StickerEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildStickersUpdated", nameof(StickerEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
@@ -33,7 +33,7 @@ internal sealed class StickerEventHandler(EventPipeline pipeline) :
                 foreach (var sticker in e.StickersAfter.Values)
                 {
                     var existing = await ctx.Db.Stickers.FirstOrDefaultAsync(s => s.DiscordId == sticker.Id);
-                    if (existing == null)
+                    if (existing is null)
                     {
                         ctx.Db.Stickers.Add(new StickerEntity
                         {
@@ -41,7 +41,7 @@ internal sealed class StickerEventHandler(EventPipeline pipeline) :
                             GuildId = guildGuid,
                             Name = sticker.Name ?? string.Empty,
                             Description = sticker.Description,
-                            Tags = sticker.Tags != null ? string.Join(",", sticker.Tags) : null,
+                            Tags = sticker.Tags is not null ? string.Join(",", sticker.Tags) : null,
                             Type = (int)sticker.Type,
                             FormatType = (int)sticker.FormatType,
                             IsAvailable = true
@@ -51,7 +51,7 @@ internal sealed class StickerEventHandler(EventPipeline pipeline) :
                     {
                         existing.Name = sticker.Name ?? string.Empty;
                         existing.Description = sticker.Description;
-                        existing.Tags = sticker.Tags != null ? string.Join(",", sticker.Tags) : null;
+                        existing.Tags = sticker.Tags is not null ? string.Join(",", sticker.Tags) : null;
                         existing.IsDeleted = false;
                         existing.DeletedAtUtc = null;
                     }

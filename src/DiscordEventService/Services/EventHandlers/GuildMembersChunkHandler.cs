@@ -17,7 +17,7 @@ internal sealed class GuildMembersChunkHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, GuildMembersChunkedEventArgs args)
     {
-        await pipeline.Execute(args, "GuildMembersChunked", nameof(GuildMembersChunkHandler),
+        await pipeline.ExecuteAsync(args, "GuildMembersChunked", nameof(GuildMembersChunkHandler),
             args.Guild.Id, null, null, async ctx =>
             {
                 var userService = ctx.Services.GetRequiredService<UserService>();

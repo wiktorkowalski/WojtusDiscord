@@ -28,9 +28,9 @@ public sealed class OpenRouterClientTests
         // Capture inside the handler — the client disposes the request after sending.
         string? sentBody = null;
         string? sentAuthScheme = null;
-        var client = NewClient(req =>
+        var client = NewClient(async req =>
         {
-            sentBody = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            sentBody = await req.Content!.ReadAsStringAsync();
             sentAuthScheme = req.Headers.Authorization?.Scheme;
             return Json(HttpStatusCode.OK, CompletionBody(content, finishReason: "stop", cost: 0.0123m));
         });
@@ -59,7 +59,7 @@ public sealed class OpenRouterClientTests
     [InlineData("content_filter", null)]
     public async Task AnalyzeImageAsync_OnRefusal_ReturnsRefusalOutcome(string finishReason, string? refusal)
     {
-        var client = NewClient(_ => Json(HttpStatusCode.OK,
+        var client = NewClient(_ => JsonTask(HttpStatusCode.OK,
             CompletionBody(content: null, finishReason: finishReason, cost: null, refusal: refusal)));
 
         var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", CancellationToken.None);
@@ -74,7 +74,7 @@ public sealed class OpenRouterClientTests
     [InlineData(HttpStatusCode.Unauthorized, false)]
     public async Task AnalyzeImageAsync_OnHttpError_MapsTransience(HttpStatusCode status, bool expectTransient)
     {
-        var client = NewClient(_ => Json(status, "{\"error\":\"boom\"}"));
+        var client = NewClient(_ => JsonTask(status, "{\"error\":\"boom\"}"));
 
         var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", CancellationToken.None);
 
@@ -85,7 +85,7 @@ public sealed class OpenRouterClientTests
     [Fact]
     public async Task AnalyzeImageAsync_OnLengthTruncation_NamesTheCause()
     {
-        var client = NewClient(_ => Json(HttpStatusCode.OK,
+        var client = NewClient(_ => JsonTask(HttpStatusCode.OK,
             CompletionBody("{\"description_pl\":\"truncat", finishReason: "length", cost: null)));
 
         var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", CancellationToken.None);
@@ -98,7 +98,7 @@ public sealed class OpenRouterClientTests
     [Fact]
     public async Task AnalyzeImageAsync_OnSchemaViolatingContent_ReturnsNonTransientError()
     {
-        var client = NewClient(_ => Json(HttpStatusCode.OK,
+        var client = NewClient(_ => JsonTask(HttpStatusCode.OK,
             CompletionBody("this is not the agreed json", finishReason: "stop", cost: null)));
 
         var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", CancellationToken.None);
@@ -111,7 +111,7 @@ public sealed class OpenRouterClientTests
     public async Task AnalyzeImageAsync_WithoutApiKey_FailsWithoutCalling()
     {
         var called = false;
-        var client = NewClient(_ => { called = true; return Json(HttpStatusCode.OK, "{}"); }, apiKey: "");
+        var client = NewClient(_ => { called = true; return JsonTask(HttpStatusCode.OK, "{}"); }, apiKey: "");
 
         var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", CancellationToken.None);
 
@@ -134,7 +134,7 @@ public sealed class OpenRouterClientTests
             usage = new { prompt_tokens = 10, completion_tokens = 20, cost }
         });
 
-    private static OpenRouterClient NewClient(Func<HttpRequestMessage, HttpResponseMessage> respond, string apiKey = "test-key")
+    private static OpenRouterClient NewClient(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond, string apiKey = "test-key")
     {
         var options = Options.Create(new OpenRouterOptions { ApiKey = apiKey });
         return new OpenRouterClient(new StubHttpClientFactory(new StubHandler(respond)), options, NullLogger<OpenRouterClient>.Instance);
@@ -143,10 +143,13 @@ public sealed class OpenRouterClientTests
     private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
         new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
-    private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    private static Task<HttpResponseMessage> JsonTask(HttpStatusCode status, string body) =>
+        Task.FromResult(Json(status, body));
+
+    private sealed class StubHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(respond(request));
+            respond(request);
     }
 
     private sealed class StubHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory

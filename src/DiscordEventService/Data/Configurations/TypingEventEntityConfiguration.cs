@@ -10,5 +10,8 @@ internal sealed class TypingEventEntityConfiguration : IEntityTypeConfiguration<
     {
         builder.HasIndex(t => new { t.GuildDiscordId, t.ReceivedAtUtc });
         builder.HasIndex(t => t.UserDiscordId);
+
+        // Property carries the Utc suffix convention; the column predates it.
+        builder.Property(t => t.StartedAtUtc).HasColumnName("started_at");
     }
 }

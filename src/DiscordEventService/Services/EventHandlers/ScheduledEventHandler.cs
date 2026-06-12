@@ -19,7 +19,7 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventCreatedEventArgs e)
     {
-        await pipeline.Execute(e, "ScheduledGuildEventCreated", nameof(ScheduledEventHandler),
+        await pipeline.ExecuteAsync(e, "ScheduledGuildEventCreated", nameof(ScheduledEventHandler),
             e.Guild.Id, e.Channel?.Id, e.Creator?.Id, async ctx =>
             {
                 await UpsertScheduledEventAsync(ctx.Db, e.Event, e.Creator?.Id);
@@ -35,8 +35,8 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
                     Description = e.Event.Description,
                     Status = (int)e.Event.Status,
                     EntityType = (int)e.Event.Type,
-                    ScheduledStartTime = e.Event.StartTime.UtcDateTime,
-                    ScheduledEndTime = e.Event.EndTime?.UtcDateTime,
+                    ScheduledStartTimeUtc = e.Event.StartTime.UtcDateTime,
+                    ScheduledEndTimeUtc = e.Event.EndTime?.UtcDateTime,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
                     RawEventJson = ctx.RawJson
@@ -48,7 +48,7 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "ScheduledGuildEventUpdated", nameof(ScheduledEventHandler),
+        await pipeline.ExecuteAsync(e, "ScheduledGuildEventUpdated", nameof(ScheduledEventHandler),
             e.EventAfter.GuildId, e.EventAfter.ChannelId, e.EventAfter.Creator?.Id, async ctx =>
             {
                 await UpsertScheduledEventAsync(ctx.Db, e.EventAfter, e.EventAfter.Creator?.Id);
@@ -64,8 +64,8 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
                     Description = e.EventAfter.Description,
                     Status = (int)e.EventAfter.Status,
                     EntityType = (int)e.EventAfter.Type,
-                    ScheduledStartTime = e.EventAfter.StartTime.UtcDateTime,
-                    ScheduledEndTime = e.EventAfter.EndTime?.UtcDateTime,
+                    ScheduledStartTimeUtc = e.EventAfter.StartTime.UtcDateTime,
+                    ScheduledEndTimeUtc = e.EventAfter.EndTime?.UtcDateTime,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
                     RawEventJson = ctx.RawJson
@@ -77,7 +77,7 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventDeletedEventArgs e)
     {
-        await pipeline.Execute(e, "ScheduledGuildEventDeleted", nameof(ScheduledEventHandler),
+        await pipeline.ExecuteAsync(e, "ScheduledGuildEventDeleted", nameof(ScheduledEventHandler),
             e.Event.GuildId, e.Event.ChannelId, null, async ctx =>
             {
                 await ctx.Db.GuildScheduledEvents
@@ -104,7 +104,7 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventCompletedEventArgs e)
     {
-        await pipeline.Execute(e, "ScheduledGuildEventCompleted", nameof(ScheduledEventHandler),
+        await pipeline.ExecuteAsync(e, "ScheduledGuildEventCompleted", nameof(ScheduledEventHandler),
             e.Event.GuildId, e.Event.ChannelId, null, async ctx =>
             {
                 await UpsertScheduledEventAsync(ctx.Db, e.Event, e.Event.Creator?.Id);
@@ -128,7 +128,7 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventUserAddedEventArgs e)
     {
-        await pipeline.Execute(e, "ScheduledGuildEventUserAdded", nameof(ScheduledEventHandler),
+        await pipeline.ExecuteAsync(e, "ScheduledGuildEventUserAdded", nameof(ScheduledEventHandler),
             e.Guild.Id, null, e.User.Id, async ctx =>
             {
                 await ctx.Db.GuildScheduledEvents
@@ -152,7 +152,7 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ScheduledGuildEventUserRemovedEventArgs e)
     {
-        await pipeline.Execute(e, "ScheduledGuildEventUserRemoved", nameof(ScheduledEventHandler),
+        await pipeline.ExecuteAsync(e, "ScheduledGuildEventUserRemoved", nameof(ScheduledEventHandler),
             e.Guild.Id, null, e.User.Id, async ctx =>
             {
                 await ctx.Db.GuildScheduledEvents
@@ -194,7 +194,7 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
             : null;
 
         var existing = await db.GuildScheduledEvents.FirstOrDefaultAsync(s => s.DiscordId == evt.Id);
-        if (existing == null)
+        if (existing is null)
         {
             existing = new GuildScheduledEventEntity { DiscordId = evt.Id };
             db.GuildScheduledEvents.Add(existing);

@@ -26,7 +26,7 @@ public sealed class BackfillIterateWithCheckpointTests(PostgresFixture fixture)
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task FreshRun_VisitsAllItemsInOrder_AllWithNullCursor()
+    public async Task IterateWithCheckpointAsync_FreshRun_VisitsAllItemsInOrderWithNullCursor()
     {
         var checkpoint = await SeedAsync(currentChannelId: null, lastProcessedId: null);
 
@@ -38,7 +38,7 @@ public sealed class BackfillIterateWithCheckpointTests(PostgresFixture fixture)
     }
 
     [Fact]
-    public async Task ResumeMidList_SkipsToCursor_ResumeItemSeesSavedBatchCursor()
+    public async Task IterateWithCheckpointAsync_ResumeMidList_SkipsToCursorAndKeepsSavedBatchCursor()
     {
         // The discriminating assertion: item 30 must observe LastProcessedId=777 on entry (its saved
         // batch cursor) and 40 must observe null. Final state is identical whether or not the reset
@@ -52,7 +52,7 @@ public sealed class BackfillIterateWithCheckpointTests(PostgresFixture fixture)
     }
 
     [Fact]
-    public async Task ResumeCursorNotInList_RestartsFromBeginning_DiscardsBatchCursor()
+    public async Task IterateWithCheckpointAsync_ResumeCursorNotInList_RestartsAndDiscardsBatchCursor()
     {
         var checkpoint = await SeedAsync(currentChannelId: 999UL, lastProcessedId: 777UL);
 
@@ -62,7 +62,7 @@ public sealed class BackfillIterateWithCheckpointTests(PostgresFixture fixture)
     }
 
     [Fact]
-    public async Task PerItemFailure_RecordsErrorAndContinues()
+    public async Task IterateWithCheckpointAsync_PerItemFailure_RecordsErrorAndContinues()
     {
         var checkpoint = await SeedAsync(currentChannelId: null, lastProcessedId: null);
         var visited = new List<ulong>();

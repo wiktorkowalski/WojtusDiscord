@@ -7,6 +7,9 @@ namespace DiscordEventService.Endpoints;
 
 internal static class MemeBenchmarkEndpoints
 {
+    private const int DefaultSampleSize = 100;
+    private const int MaxSampleSize = 500;
+
     public static void MapMemeBenchmarkEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/ops/meme-benchmark");
@@ -39,7 +42,7 @@ internal static class MemeBenchmarkEndpoints
         if (!memeIndexOptions.Value.IsConfigured)
             return Results.BadRequest(new { error = "MemeIndex:ChannelIds is empty — no meme channels configured" });
 
-        var size = Math.Clamp(sampleSize ?? 100, 1, 500);
+        var size = ClampSampleSize(sampleSize);
         var jobId = backgroundJobClient.Enqueue<MemeBenchmarkJob>(j => j.RunAsync(size, CancellationToken.None));
 
         return Results.Accepted($"/api/ops/meme-benchmark/report", new BenchmarkStartResponse
@@ -69,7 +72,7 @@ internal static class MemeBenchmarkEndpoints
         if (!resolved.StartsWith(inputRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal) || !File.Exists(resolved))
             return Results.BadRequest(new { error = $"Links file '{Path.GetFileName(file)}' not found in {inputRoot}" });
 
-        var size = Math.Clamp(sampleSize ?? 100, 1, 500);
+        var size = ClampSampleSize(sampleSize);
         var jobId = backgroundJobClient.Enqueue<MemeBenchmarkJob>(j => j.RunFromFileAsync(resolved, size, CancellationToken.None));
 
         return Results.Accepted("/api/ops/meme-benchmark/report", new BenchmarkStartResponse
@@ -99,6 +102,8 @@ internal static class MemeBenchmarkEndpoints
         var content = await File.ReadAllTextAsync(latest, ct);
         return Results.Content(content, "text/markdown; charset=utf-8");
     }
+
+    private static int ClampSampleSize(int? sampleSize) => Math.Clamp(sampleSize ?? DefaultSampleSize, 1, MaxSampleSize);
 }
 
 internal sealed record BenchmarkStartResponse

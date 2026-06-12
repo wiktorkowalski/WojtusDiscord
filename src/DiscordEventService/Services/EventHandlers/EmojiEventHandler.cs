@@ -13,7 +13,7 @@ internal sealed class EmojiEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildEmojisUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildEmojisUpdated", nameof(EmojiEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildEmojisUpdated", nameof(EmojiEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
@@ -34,7 +34,7 @@ internal sealed class EmojiEventHandler(EventPipeline pipeline) :
                     var existing = await ctx.Db.Emotes
                         .Where(em => em.DiscordId == emoji.Id)
                         .FirstOrDefaultAsync();
-                    if (existing == null)
+                    if (existing is null)
                     {
                         ctx.Db.Emotes.Add(new EmoteEntity
                         {

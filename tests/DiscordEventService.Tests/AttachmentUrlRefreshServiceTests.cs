@@ -15,9 +15,9 @@ public sealed class AttachmentUrlRefreshServiceTests
     public async Task RefreshAsync_StripsQueryBatchesAndMapsResults()
     {
         List<List<string>> requests = [];
-        var service = NewService(req =>
+        var service = NewService(async req =>
         {
-            var body = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            var body = await req.Content!.ReadAsStringAsync();
             var sent = JsonSerializer.Deserialize<JsonElement>(body)
                 .GetProperty("attachment_urls").EnumerateArray().Select(e => e.GetString()!).ToList();
             requests.Add(sent);
@@ -44,13 +44,13 @@ public sealed class AttachmentUrlRefreshServiceTests
     public async Task RefreshAsync_WhenOneBatchFails_KeepsOtherBatches()
     {
         var call = 0;
-        var service = NewService(req =>
+        var service = NewService(async req =>
         {
             call++;
             if (call == 1)
                 return Json(HttpStatusCode.InternalServerError, "{\"error\":\"boom\"}");
 
-            var body = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            var body = await req.Content!.ReadAsStringAsync();
             var sent = JsonSerializer.Deserialize<JsonElement>(body)
                 .GetProperty("attachment_urls").EnumerateArray().Select(e => e.GetString()!).ToList();
             var refreshed = sent.Select(u => new { original = u, refreshed = u + "?ex=fresh" });
@@ -70,9 +70,9 @@ public sealed class AttachmentUrlRefreshServiceTests
     [Fact]
     public async Task RefreshAsync_SkipsEntriesDiscordDeclinedToRefresh()
     {
-        var service = NewService(req =>
+        var service = NewService(async req =>
         {
-            var body = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            var body = await req.Content!.ReadAsStringAsync();
             var sent = JsonSerializer.Deserialize<JsonElement>(body)
                 .GetProperty("attachment_urls").EnumerateArray().Select(e => e.GetString()!).ToList();
             var refreshed = sent.Take(1).Select(u => new { original = u, refreshed = u + "?ex=fresh" });
@@ -86,7 +86,7 @@ public sealed class AttachmentUrlRefreshServiceTests
         Assert.Single(map);
     }
 
-    private static AttachmentUrlRefreshService NewService(Func<HttpRequestMessage, HttpResponseMessage> respond) =>
+    private static AttachmentUrlRefreshService NewService(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) =>
         new AttachmentUrlRefreshService(
             new StubHttpClientFactory(new StubHandler(respond)),
             Options.Create(new DiscordOptions { Token = new string('x', 60) }),
@@ -95,10 +95,10 @@ public sealed class AttachmentUrlRefreshServiceTests
     private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
         new HttpResponseMessage(status) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
 
-    private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    private sealed class StubHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(respond(request));
+            respond(request);
     }
 
     private sealed class StubHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory

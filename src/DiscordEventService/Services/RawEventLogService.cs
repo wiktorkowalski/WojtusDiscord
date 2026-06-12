@@ -81,7 +81,7 @@ internal sealed class RawEventLogService(DiscordDbContext dbContext, ILogger<Raw
                 JsonSizeBytes = System.Text.Encoding.UTF8.GetByteCount(eventJson),
                 ReceivedAtUtc = DateTime.UtcNow,
                 CorrelationId = correlationId,
-                SerializationFailed = serializationFailed
+                IsSerializationFailed = serializationFailed
             };
 
             await dbContext.RawEventLogs.AddAsync(rawEvent);

@@ -11,6 +11,8 @@ internal sealed class MembersBackfillJob(
     BackfillJobExecutor executor,
     ILogger<MembersBackfillJob> logger) : BackfillJobBase, IBackfillJob
 {
+    private const int SaveProgressInterval = 100;
+
     protected override BackfillType BackfillType => BackfillType.Members;
 
     public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
@@ -45,10 +47,10 @@ internal sealed class MembersBackfillJob(
                 catch (Exception ex)
                 {
                     logger.LogWarning(ex, "Failed to upsert member {MemberId} in guild {GuildId}", member.Id, guildId);
-                    await RecordErrorAsync(ctx.Db, ctx.Checkpoint, ex);
+                    await RecordErrorAsync(ctx.Db, ctx.Checkpoint, ex, cancellationToken);
                 }
 
-                if (ctx.Checkpoint.ProcessedCount % 100 == 0)
+                if (ctx.Checkpoint.ProcessedCount % SaveProgressInterval == 0)
                     await ctx.Db.SaveChangesAsync(cancellationToken);
             }
 

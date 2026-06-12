@@ -14,6 +14,10 @@ internal sealed class MemeIndexingJob(
 {
     public const int SweepMaxFailedAttempts = 3;
 
+    // Refresh-urls accepts ~50 per call; chunking also keeps signed URLs
+    // fresh relative to when they are actually downloaded.
+    private const int UrlRefreshBatchSize = 50;
+
     protected override BackfillType BackfillType => BackfillType.MemeIndex;
 
     public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
@@ -134,10 +138,8 @@ internal sealed class MemeIndexingJob(
 
             var counters = new MemeIndexRunCounters();
 
-            // Refresh-urls accepts ~50 per call; chunking also keeps signed URLs
-            // fresh relative to when they're actually downloaded.
             var position = 0;
-            foreach (var batch in pending.Chunk(50))
+            foreach (var batch in pending.Chunk(UrlRefreshBatchSize))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -160,7 +162,7 @@ internal sealed class MemeIndexingJob(
                     if (lastOfMessage)
                         ctx.Checkpoint.LastProcessedId = item.MessageDiscordId;
 
-                    await SaveProgressAsync(ctx.Db, ctx.Checkpoint);
+                    await SaveProgressAsync(ctx.Db, ctx.Checkpoint, cancellationToken);
                 }
             }
 

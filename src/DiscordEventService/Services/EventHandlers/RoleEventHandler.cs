@@ -16,23 +16,11 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildRoleCreatedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildRoleCreated", nameof(RoleEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildRoleCreated", nameof(RoleEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
-
-                RoleEventEntity NewRoleEvent() => new RoleEventEntity
-                {
-                    RoleDiscordId = e.Role.Id,
-                    GuildDiscordId = e.Guild.Id,
-                    EventType = RoleEventType.Created,
-                    NameAfter = e.Role.Name,
-                    ColorAfter = e.Role.Color.Value,
-                    EventTimestampUtc = ctx.ReceivedAtUtc,
-                    ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
-                };
 
                 var permissions = long.TryParse(e.Role.Permissions.ToString(), out var perm) ? perm : 0;
 
@@ -74,7 +62,17 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
                         },
                         r => r.Id);
 
-                    ctx.Db.RoleEvents.Add(NewRoleEvent());
+                    ctx.Db.RoleEvents.Add(new RoleEventEntity
+                    {
+                        RoleDiscordId = e.Role.Id,
+                        GuildDiscordId = e.Guild.Id,
+                        EventType = RoleEventType.Created,
+                        NameAfter = e.Role.Name,
+                        ColorAfter = e.Role.Color.Value,
+                        EventTimestampUtc = ctx.ReceivedAtUtc,
+                        ReceivedAtUtc = ctx.ReceivedAtUtc,
+                        RawEventJson = ctx.RawJson,
+                    });
                     await ctx.Db.SaveChangesAsync();
                     await tx.CommitAsync();
                 });
@@ -83,13 +81,13 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, GuildRoleUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildRoleUpdated", nameof(RoleEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildRoleUpdated", nameof(RoleEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 var roleEntity = await ctx.Db.Roles
                     .FirstOrDefaultAsync(r => r.DiscordId == e.RoleAfter.Id);
 
-                if (roleEntity != null)
+                if (roleEntity is not null)
                     UpdateRoleEntity(roleEntity, e.RoleAfter);
 
                 var roleEvent = new RoleEventEntity
@@ -121,13 +119,13 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, GuildRoleDeletedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildRoleDeleted", nameof(RoleEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildRoleDeleted", nameof(RoleEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 var roleEntity = await ctx.Db.Roles
                     .FirstOrDefaultAsync(r => r.DiscordId == e.Role.Id);
 
-                if (roleEntity != null)
+                if (roleEntity is not null)
                 {
                     roleEntity.IsDeleted = true;
                     roleEntity.DeletedAtUtc = ctx.ReceivedAtUtc;

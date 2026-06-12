@@ -24,7 +24,7 @@ public sealed class UserUpsertTests(PostgresFixture fixture) : IClassFixture<Pos
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task UpsertUser_WhenNew_InsertsUserAndWritesNoHistory()
+    public async Task UpsertUserAsync_WhenNew_InsertsUserAndWritesNoHistory()
     {
         var service = new UserService(_db, NullLogger<UserService>.Instance);
 
@@ -38,7 +38,7 @@ public sealed class UserUpsertTests(PostgresFixture fixture) : IClassFixture<Pos
     }
 
     [Fact]
-    public async Task UpsertUser_WhenNameChanged_UpdatesUserAndWritesHistory()
+    public async Task UpsertUserAsync_WhenNameChanged_UpdatesUserAndWritesHistory()
     {
         var service = new UserService(_db, NullLogger<UserService>.Instance);
         await service.UpsertUserAsync(MakeUser(200UL, "bob", "Bob"));
@@ -59,7 +59,7 @@ public sealed class UserUpsertTests(PostgresFixture fixture) : IClassFixture<Pos
     }
 
     [Fact]
-    public async Task UpsertUser_WhenUnchanged_WritesNoHistory()
+    public async Task UpsertUserAsync_WhenUnchanged_WritesNoHistory()
     {
         var service = new UserService(_db, NullLogger<UserService>.Instance);
         await service.UpsertUserAsync(MakeUser(300UL, "carol", "Carol"));
@@ -72,7 +72,7 @@ public sealed class UserUpsertTests(PostgresFixture fixture) : IClassFixture<Pos
     }
 
     [Fact]
-    public async Task UpsertUser_WhenOnlyAvatarChanged_UpdatesUserWithoutHistory()
+    public async Task UpsertUserAsync_WhenOnlyAvatarChanged_UpdatesUserWithoutHistory()
     {
         var service = new UserService(_db, NullLogger<UserService>.Instance);
         await service.UpsertUserAsync(MakeUser(500UL, "dave", "Dave", avatarHash: "avatar_v1"));

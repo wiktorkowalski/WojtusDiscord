@@ -62,7 +62,7 @@ public sealed class TimelineControllerTests(PostgresFixture fixture) : IClassFix
     }
 
     [Fact]
-    public async Task GetTimeline_FiltersByEventTypeAndUser()
+    public async Task GetTimeline_TypeAndUserFilters_ReturnsOnlyMatching()
     {
         var t = new DateTime(2026, 5, 1, 12, 0, 0, DateTimeKind.Utc);
         await SeedAsync(
@@ -97,7 +97,7 @@ public sealed class TimelineControllerTests(PostgresFixture fixture) : IClassFix
     }
 
     [Fact]
-    public async Task GetTimeline_PayloadIsStructuredJson()
+    public async Task GetTimeline_SeededEvents_ReturnsStructuredJsonPayload()
     {
         await SeedAsync(("MessageCreated", DateTime.UtcNow, null));
         var controller = new TimelineController(_db);

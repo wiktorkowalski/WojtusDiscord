@@ -26,7 +26,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessageCreated", nameof(MessageEventHandler),
+        await pipeline.ExecuteAsync(e, "MessageCreated", nameof(MessageEventHandler),
             e.Guild.Id, e.Channel.Id, e.Author.Id, async ctx =>
             {
                 var attachmentsJson = e.Message.Attachments.Count > 0
@@ -46,24 +46,6 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
                 var guildId = fks.GuildId;
                 var channelId = fks.ChannelId;
                 var authorId = fks.UserId;
-
-                MessageEventEntity NewMessageEvent() => new MessageEventEntity
-                {
-                    MessageDiscordId = e.Message.Id,
-                    ChannelDiscordId = e.Channel.Id,
-                    AuthorDiscordId = e.Author.Id,
-                    GuildDiscordId = e.Guild.Id,
-                    EventType = MessageEventType.Created,
-                    Content = NormalizeContent(e.Message.Content),
-                    HasAttachments = e.Message.Attachments.Count > 0,
-                    HasEmbeds = e.Message.Embeds.Count > 0,
-                    ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
-                    AttachmentsJson = attachmentsJson,
-                    EmbedsJson = embedsJson,
-                    EventTimestampUtc = e.Message.Timestamp.UtcDateTime,
-                    ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson,
-                };
 
                 // Wrap message + event + mentions in one transaction so they commit atomically.
                 // ExecutionStrategy is required because EnableRetryOnFailure is configured on the
@@ -97,7 +79,23 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
                         });
 
                     var messageId = messageEntity!.Id;
-                    ctx.Db.MessageEvents.Add(NewMessageEvent());
+                    ctx.Db.MessageEvents.Add(new MessageEventEntity
+                    {
+                        MessageDiscordId = e.Message.Id,
+                        ChannelDiscordId = e.Channel.Id,
+                        AuthorDiscordId = e.Author.Id,
+                        GuildDiscordId = e.Guild.Id,
+                        EventType = MessageEventType.Created,
+                        Content = NormalizeContent(e.Message.Content),
+                        HasAttachments = e.Message.Attachments.Count > 0,
+                        HasEmbeds = e.Message.Embeds.Count > 0,
+                        ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
+                        AttachmentsJson = attachmentsJson,
+                        EmbedsJson = embedsJson,
+                        EventTimestampUtc = e.Message.Timestamp.UtcDateTime,
+                        ReceivedAtUtc = ctx.ReceivedAtUtc,
+                        RawEventJson = ctx.RawJson,
+                    });
                     await ctx.Db.SaveChangesAsync();
 
                     await ExtractAndSaveMentionsAsync(ctx.Db, messageId, e.Message);
@@ -112,7 +110,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessageUpdated", nameof(MessageEventHandler),
+        await pipeline.ExecuteAsync(e, "MessageUpdated", nameof(MessageEventHandler),
             e.Guild.Id, e.Channel.Id, e.Author?.Id, async ctx =>
             {
                 var attachmentsJson = e.Message.Attachments.Count > 0
@@ -227,7 +225,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessageDeleted", nameof(MessageEventHandler),
+        await pipeline.ExecuteAsync(e, "MessageDeleted", nameof(MessageEventHandler),
             e.Guild.Id, e.Channel.Id, e.Message.Author?.Id, async ctx =>
             {
                 await ctx.Db.Messages
@@ -257,7 +255,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessagesBulkDeleted", nameof(MessageEventHandler),
+        await pipeline.ExecuteAsync(e, "MessagesBulkDeleted", nameof(MessageEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 var messageIds = e.Messages.Select(m => m.Id).ToList();

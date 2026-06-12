@@ -61,10 +61,10 @@ internal sealed class MemberRoleSnapshotBackfillService(
                 continue;
             }
 
-            var rolesAdded = evt.RolesAddedJson != null
+            var rolesAdded = evt.RolesAddedJson is not null
                 ? JsonSerializer.Deserialize<List<ulong>>(evt.RolesAddedJson) ?? []
                 : [];
-            var rolesRemoved = evt.RolesRemovedJson != null
+            var rolesRemoved = evt.RolesRemovedJson is not null
                 ? JsonSerializer.Deserialize<List<ulong>>(evt.RolesRemovedJson) ?? []
                 : [];
 

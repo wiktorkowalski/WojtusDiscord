@@ -13,7 +13,7 @@ internal sealed class BanEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildBanAddedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildBanAdded", nameof(BanEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildBanAdded", nameof(BanEventHandler),
             e.Guild.Id, null, e.Member.Id, async ctx =>
             {
                 // Resolve the required guild+user FKs via the shared resolver: on a miss it logs and
@@ -31,7 +31,7 @@ internal sealed class BanEventHandler(EventPipeline pipeline) :
                     var existingBan = await ctx.Db.Bans
                         .FirstOrDefaultAsync(b => b.GuildId == guildGuid && b.UserId == userGuid && b.IsActive);
 
-                    if (existingBan == null)
+                    if (existingBan is null)
                     {
                         ctx.Db.Bans.Add(new BanEntity
                         {
@@ -59,7 +59,7 @@ internal sealed class BanEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, GuildBanRemovedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildBanRemoved", nameof(BanEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildBanRemoved", nameof(BanEventHandler),
             e.Guild.Id, null, e.Member.Id, async ctx =>
             {
                 // See GuildBanAdded: resolve guild+user via the shared resolver so a miss is logged +

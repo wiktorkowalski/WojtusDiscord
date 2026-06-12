@@ -43,7 +43,7 @@ public sealed class MemeSampleServiceTests(PostgresFixture fixture) : IClassFixt
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task SampleAsync_FiltersToImageAttachmentsInMemeChannelsOnly()
+    public async Task SampleAsync_MixedChannelsAndAttachmentTypes_FiltersToImageAttachmentsInMemeChannels()
     {
         AddMessage(_memeChannel, 100UL, Year(2023), Attachment(1000UL, "a.jpg"));
         AddMessage(_memeChannel, 101UL, Year(2023), Attachment(1001UL, "clip.mp4"));
@@ -61,7 +61,7 @@ public sealed class MemeSampleServiceTests(PostgresFixture fixture) : IClassFixt
     }
 
     [Fact]
-    public async Task SampleAsync_StratifiesAcrossYears()
+    public async Task SampleAsync_MultiYearCorpus_StratifiesAcrossYears()
     {
         var nextDiscordId = 200UL;
         var nextAttachmentId = 2000UL;
@@ -82,7 +82,7 @@ public sealed class MemeSampleServiceTests(PostgresFixture fixture) : IClassFixt
     }
 
     [Fact]
-    public async Task SampleAsync_ExpandsMultiAttachmentMessagesPerAttachment()
+    public async Task SampleAsync_MultiAttachmentMessage_ExpandsPerAttachment()
     {
         AddMessage(_memeChannel, 300UL, Year(2021),
             $"[{Attachment(3000UL, "one.png")},{Attachment(3001UL, "two.webp")},{Attachment(3002UL, "notes.txt")}]",

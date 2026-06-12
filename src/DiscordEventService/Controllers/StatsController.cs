@@ -26,6 +26,15 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // the query uses one, e.g. $"... r.{ReactionPresentSql}".
     private const string ReactionPresentSql = "event_type IN (0, 4)";
 
+    // List-size tuning knobs for the dashboard endpoints.
+    private const int OverviewTopEmojis = 5;
+    private const int TopEventTypesLimit = 15;
+    private const int LeaderboardSize = 20;
+    private const int BehaviorListSize = 25;
+    private const int CommunityLeaderboardSize = 6;
+    private const int ChannelActivityLimit = 50;
+    private const int SpotifyListSize = 5;
+
     // Shared query bodies: the home Overview tile and the dedicated Stats endpoint run
     // the same aggregation with a different LIMIT, so each is defined once (append the
     // limit at the call site) to keep the two in sync.
@@ -48,36 +57,28 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         GROUP BY c.id, c.name, c.discord_id, rc.reactions ORDER BY msgs DESC, c.id LIMIT
         """;
 
-    // Top message authors, ordered by count. Shared by the Overview tile (top 1) and the
-    // People endpoint (top 20); they differ only in row count. Same GROUP BY as the
-    // Community topChatters leaderboard.
-    private IQueryable<UserStatDto> TopChatters() =>
-        db.Messages.AsNoTracking()
-            .GroupBy(m => new { m.Author.Username, m.Author.DiscordId, m.Author.AvatarHash })
-            .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Count = g.LongCount() })
-            .OrderByDescending(x => x.Count)
-            .ThenBy(x => x.DiscordId)
-            .Select(x => new UserStatDto(x.Username, x.DiscordId, x.Count, x.AvatarHash));
-
-    // Most-used reaction emotes (Overview top 5 / Behavior top 25). IsCustom (custom emotes
-    // carry a snowflake id) is computed in memory after the grouped count.
-    private async Task<List<EmojiStatDto>> TopEmojisAsync(int limit, CancellationToken ct)
-    {
-        var rows = await db.ReactionEvents.AsNoTracking().WherePresent()
-            .GroupBy(r => new { r.EmoteName, r.EmoteDiscordId })
-            .Select(g => new { g.Key.EmoteName, g.Key.EmoteDiscordId, Count = g.LongCount() })
-            .OrderByDescending(x => x.Count)
-            .ThenBy(x => x.EmoteName)
-            .ThenBy(x => x.EmoteDiscordId)
-            .Take(limit)
-            .ToListAsync(ct);
-        return rows
-            .Select(x => new EmojiStatDto(x.EmoteName, x.EmoteDiscordId, x.EmoteDiscordId is > 0, x.Count))
-            .ToList();
-    }
+    // Voice minutes credited for one session segment [v.received_at_utc, v.next_ts),
+    // MINUS any overlap with a bot_downtime_intervals window (open intervals coalesced
+    // to now()). During an outage a "leave" can go unobserved, so the raw gap to the
+    // user's next event would otherwise count the whole blind window as voice time (the
+    // 2026-05 blackout would credit ~14k phantom minutes to anyone left in a channel).
+    // We SUBTRACT the downtime overlap rather than drop the segment, so a legitimate
+    // multi-hour call spanning a brief restart is preserved. Every voice query aliases
+    // the sessionized rows as `v`. Mirrors the downtime handling in OnlineMinutesMetricAsync.
+    private const string VoiceSegmentMinutes =
+        """
+        GREATEST(0, EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc)) - COALESCE((
+            SELECT SUM(EXTRACT(EPOCH FROM (
+                LEAST(v.next_ts, COALESCE(d.ended_at_utc, now()))
+              - GREATEST(v.received_at_utc, d.started_at_utc))))
+            FROM bot_downtime_intervals d
+            WHERE v.received_at_utc < COALESCE(d.ended_at_utc, now())
+              AND v.next_ts > d.started_at_utc), 0)) / 60.0
+        """;
 
     [HttpGet("overview")]
-    public async Task<OverviewDto> Overview(CancellationToken ct)
+    [ProducesResponseType<OverviewDto>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<OverviewDto>> Overview(CancellationToken ct)
     {
         var messages = await QuerySingleAsync(
             $"""
@@ -149,7 +150,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             """,
             r => new DailyPointDto(r.GetString(0), r.GetInt64(1)), ct);
 
-        var topEmojis = await TopEmojisAsync(5, ct);
+        var topEmojis = await TopEmojisAsync(OverviewTopEmojis, ct);
 
         return new OverviewDto(
             messages.Total, reactions.Total, counts.Events, voiceMinutes,
@@ -162,7 +163,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // from LINQ. volume/by-type (no time bucketing) is plain EF below.
 
     [HttpGet("volume/daily")]
-    public Task<List<VolumeDailyDto>> VolumeDaily(CancellationToken ct) => QueryAsync(
+    [ProducesResponseType<List<VolumeDailyDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<VolumeDailyDto>>> VolumeDaily(CancellationToken ct) => await QueryAsync(
         $"""
         SELECT date_trunc('day', received_at_utc AT TIME ZONE '{Tz}')::date::text AS day, count(*)::bigint
         FROM raw_event_logs WHERE NOT serialization_failed
@@ -171,19 +173,21 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         r => new VolumeDailyDto(r.GetString(0), r.GetInt64(1)), ct);
 
     [HttpGet("volume/by-type")]
-    public Task<List<VolumeByTypeDto>> VolumeByType(CancellationToken ct) =>
+    [ProducesResponseType<List<VolumeByTypeDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<VolumeByTypeDto>>> VolumeByType(CancellationToken ct) => await
         db.RawEventLogs.AsNoTracking()
-            .Where(e => !e.SerializationFailed)
+            .Where(e => !e.IsSerializationFailed)
             .GroupBy(e => e.EventType)
             .Select(g => new { EventType = g.Key, Count = g.LongCount() })
             .OrderByDescending(x => x.Count)
             .ThenBy(x => x.EventType)
-            .Take(15)
+            .Take(TopEventTypesLimit)
             .Select(x => new VolumeByTypeDto(x.EventType, x.Count))
             .ToListAsync(ct);
 
     [HttpGet("volume/hourly")]
-    public Task<List<VolumeHourlyDto>> VolumeHourly(CancellationToken ct) => QueryAsync(
+    [ProducesResponseType<List<VolumeHourlyDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<VolumeHourlyDto>>> VolumeHourly(CancellationToken ct) => await QueryAsync(
         $"""
         SELECT EXTRACT(HOUR FROM received_at_utc AT TIME ZONE '{Tz}')::int AS hour, count(*)::bigint
         FROM raw_event_logs WHERE NOT serialization_failed
@@ -192,20 +196,22 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         r => new VolumeHourlyDto(r.GetInt32(0), r.GetInt64(1)), ct);
 
     [HttpGet("people/top-messages")]
-    public Task<List<UserStatDto>> TopMessages(CancellationToken ct) =>
-        TopChatters().Take(20).ToListAsync(ct);
+    [ProducesResponseType<List<UserStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<UserStatDto>>> TopMessages(CancellationToken ct) => await
+        TopChatters().Take(LeaderboardSize).ToListAsync(ct);
 
     // Reactions GIVEN per user. LEFT-join semantics (a reactor with no stored user row keeps
     // a null username) are preserved by resolving the user via a correlated lookup on the
     // top 20 — bounded, index-backed, no whole-table join.
     [HttpGet("people/top-reactions-given")]
-    public Task<List<UserStatDto>> TopReactionsGiven(CancellationToken ct) =>
+    [ProducesResponseType<List<UserStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<UserStatDto>>> TopReactionsGiven(CancellationToken ct) => await
         db.ReactionEvents.AsNoTracking().WherePresent()
             .GroupBy(r => r.UserDiscordId)
             .Select(g => new { UserDiscordId = g.Key, Count = g.LongCount() })
             .OrderByDescending(x => x.Count)
             .ThenBy(x => x.UserDiscordId)
-            .Take(20)
+            .Take(LeaderboardSize)
             .Select(x => new UserStatDto(
                 db.Users.Where(u => u.DiscordId == x.UserDiscordId).Select(u => u.Username).FirstOrDefault(),
                 x.UserDiscordId,
@@ -216,20 +222,22 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // Reactions RECEIVED per author (reaction -> its message -> the message author). Inner
     // joins: only reactions on stored messages with a known author count.
     [HttpGet("people/top-reactions-received")]
-    public Task<List<UserStatDto>> TopReactionsReceived(CancellationToken ct) =>
+    [ProducesResponseType<List<UserStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<UserStatDto>>> TopReactionsReceived(CancellationToken ct) => await
         db.ReactionEvents.AsNoTracking().WherePresent()
             .Join(db.Messages.AsNoTracking(), r => r.MessageDiscordId, m => m.DiscordId, (r, m) => m.Author)
             .GroupBy(a => new { a.Username, a.DiscordId, a.AvatarHash })
             .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Count = g.LongCount() })
             .OrderByDescending(x => x.Count)
             .ThenBy(x => x.DiscordId)
-            .Take(20)
+            .Take(LeaderboardSize)
             .Select(x => new UserStatDto(x.Username, x.DiscordId, x.Count, x.AvatarHash))
             .ToListAsync(ct);
 
     // Open sessions (no following event) are excluded — surfaced in the UI.
     [HttpGet("people/voice-leaderboard")]
-    public Task<List<VoiceStatDto>> VoiceLeaderboard(CancellationToken ct) => QueryAsync(
+    [ProducesResponseType<List<VoiceStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<VoiceStatDto>>> VoiceLeaderboard(CancellationToken ct) => await QueryAsync(
         $"""
         SELECT u.username, v.user_discord_id,
                round(SUM({VoiceSegmentMinutes}))::bigint AS minutes,
@@ -241,36 +249,40 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         ) v
         LEFT JOIN users u ON u.discord_id = v.user_discord_id
         WHERE v.channel_discord_id_after IS NOT NULL AND v.next_ts IS NOT NULL
-        GROUP BY u.username, v.user_discord_id, u.avatar_hash ORDER BY minutes DESC, v.user_discord_id LIMIT 20
+        GROUP BY u.username, v.user_discord_id, u.avatar_hash ORDER BY minutes DESC, v.user_discord_id LIMIT {LeaderboardSize}
         """,
         r => new VoiceStatDto(NullableString(r, 0), Snowflake(r, 1), r.GetInt64(2), NullableString(r, 3)), ct);
 
     [HttpGet("places/channel-activity")]
-    public Task<List<ChannelActivityDto>> ChannelActivity(CancellationToken ct) => QueryAsync(
-        $"{ChannelActivitySql} 50",
+    [ProducesResponseType<List<ChannelActivityDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<ChannelActivityDto>>> ChannelActivity(CancellationToken ct) => await QueryAsync(
+        $"{ChannelActivitySql} {ChannelActivityLimit}",
         r => new ChannelActivityDto(r.GetString(0), Snowflake(r, 1), r.GetInt64(2), r.GetInt64(3)), ct);
 
     [HttpGet("behavior/top-emojis")]
-    public Task<List<EmojiStatDto>> TopEmojis(CancellationToken ct) => TopEmojisAsync(25, ct);
+    [ProducesResponseType<List<EmojiStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<EmojiStatDto>>> TopEmojis(CancellationToken ct) => await TopEmojisAsync(BehaviorListSize, ct);
 
     // Includes presence artifacts such as "Custom Status" and "Playing N/10" —
     // surfaced (not hidden) with a UI note.
     [HttpGet("behavior/top-activities")]
-    public Task<List<ActivityStatDto>> TopActivities(CancellationToken ct) =>
+    [ProducesResponseType<List<ActivityStatDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<ActivityStatDto>>> TopActivities(CancellationToken ct) => await
         db.Activities.AsNoTracking()
             .Where(a => a.Name != null)
             .GroupBy(a => a.Name)
             .Select(g => new { Name = g.Key!, Count = g.LongCount() })
             .OrderByDescending(x => x.Count)
             .ThenBy(x => x.Name)
-            .Take(25)
+            .Take(BehaviorListSize)
             .Select(x => new ActivityStatDto(x.Name, x.Count))
             .ToListAsync(ct);
 
     // Stays raw: buckets by CET day-of-week + hour via `AT TIME ZONE 'Europe/Warsaw'`, which
     // the Npgsql EF Core provider does not translate from LINQ.
     [HttpGet("behavior/heatmap")]
-    public Task<List<HeatmapCellDto>> Heatmap(CancellationToken ct) => QueryAsync(
+    [ProducesResponseType<List<HeatmapCellDto>>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<List<HeatmapCellDto>>> Heatmap(CancellationToken ct) => await QueryAsync(
         $"""
         SELECT EXTRACT(DOW FROM created_at_utc AT TIME ZONE '{Tz}')::int AS dow,
                EXTRACT(HOUR FROM created_at_utc AT TIME ZONE '{Tz}')::int AS hour,
@@ -280,6 +292,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         r => new HeatmapCellDto(r.GetInt32(0), r.GetInt32(1), r.GetInt64(2)), ct);
 
     [HttpGet("community")]
+    [ProducesResponseType<CommunityDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<CommunityDto>> Community(
         [FromQuery] string range = "week", CancellationToken ct = default)
     {
@@ -335,7 +349,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Value = g.LongCount() })
             .OrderByDescending(x => x.Value)
             .ThenBy(x => x.DiscordId)
-            .Take(6)
+            .Take(CommunityLeaderboardSize)
             .Select(x => new CommunityLeaderEntryDto(x.Username, x.DiscordId, x.AvatarHash, x.Value))
             .ToListAsync(ct);
 
@@ -345,7 +359,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Value = g.LongCount() })
             .OrderByDescending(x => x.Value)
             .ThenBy(x => x.DiscordId)
-            .Take(6)
+            .Take(CommunityLeaderboardSize)
             .Select(x => new CommunityLeaderEntryDto(x.Username, x.DiscordId, x.AvatarHash, x.Value))
             .ToListAsync(ct);
 
@@ -360,7 +374,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Value = g.LongCount() })
             .OrderByDescending(x => x.Value)
             .ThenBy(x => x.DiscordId)
-            .Take(6)
+            .Take(CommunityLeaderboardSize)
             .Select(x => new CommunityLeaderEntryDto(x.Username, x.DiscordId, x.AvatarHash, x.Value))
             .ToListAsync(ct);
 
@@ -376,7 +390,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             LEFT JOIN users u ON u.discord_id = v.user_discord_id
             WHERE v.channel_discord_id_after IS NOT NULL AND v.next_ts IS NOT NULL
               AND v.received_at_utc BETWEEN {Sql(curStart)} AND {Sql(curEnd)}
-            GROUP BY u.username, v.user_discord_id, u.avatar_hash ORDER BY 4 DESC, v.user_discord_id LIMIT 6
+            GROUP BY u.username, v.user_discord_id, u.avatar_hash ORDER BY 4 DESC, v.user_discord_id LIMIT {CommunityLeaderboardSize}
             """, ct);
 
         var leaderboards = new CommunityLeaderboardsDto(topChatters, memeLords, reactionsReceived, voice);
@@ -393,16 +407,17 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // activity name, and top-tracks excludes that placeholder until richer presence is
     // ingested.
     [HttpGet("spotify")]
-    public async Task<SpotifyDto> Spotify(CancellationToken ct)
+    [ProducesResponseType<SpotifyDto>(StatusCodes.Status200OK)]
+    public async Task<ActionResult<SpotifyDto>> Spotify(CancellationToken ct)
     {
         var nowPlayingRows = await db.Activities.AsNoTracking()
             .Where(a => a.ActivityType == 2 && a.IsActive)
             .OrderByDescending(a => a.LastSeenAtUtc)
             .ThenBy(a => a.Id)
-            .Take(5)
+            .Take(SpotifyListSize)
             .Select(a => new
             {
-                a.User!.DiscordId,
+                a.User.DiscordId,
                 a.User.Username,
                 a.User.AvatarHash,
                 a.SpotifySongTitle,
@@ -438,7 +453,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             })
             .OrderByDescending(x => x.Plays)
             .ThenBy(x => x.Track)
-            .Take(5)
+            .Take(SpotifyListSize)
             .ToListAsync(ct);
 
         var topTracks = topTrackRows
@@ -446,6 +461,34 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .ToList();
 
         return new SpotifyDto(nowPlaying, topTracks);
+    }
+
+    // Top message authors, ordered by count. Shared by the Overview tile (top 1) and the
+    // People endpoint (top 20); they differ only in row count. Same GROUP BY as the
+    // Community topChatters leaderboard.
+    private IQueryable<UserStatDto> TopChatters() =>
+        db.Messages.AsNoTracking()
+            .GroupBy(m => new { m.Author.Username, m.Author.DiscordId, m.Author.AvatarHash })
+            .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Count = g.LongCount() })
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.DiscordId)
+            .Select(x => new UserStatDto(x.Username, x.DiscordId, x.Count, x.AvatarHash));
+
+    // Most-used reaction emotes (Overview top 5 / Behavior top 25). IsCustom (custom emotes
+    // carry a snowflake id) is computed in memory after the grouped count.
+    private async Task<List<EmojiStatDto>> TopEmojisAsync(int limit, CancellationToken ct)
+    {
+        var rows = await db.ReactionEvents.AsNoTracking().WherePresent()
+            .GroupBy(r => new { r.EmoteName, r.EmoteDiscordId })
+            .Select(g => new { g.Key.EmoteName, g.Key.EmoteDiscordId, Count = g.LongCount() })
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.EmoteName)
+            .ThenBy(x => x.EmoteDiscordId)
+            .Take(limit)
+            .ToListAsync(ct);
+        return rows
+            .Select(x => new EmojiStatDto(x.EmoteName, x.EmoteDiscordId, x.EmoteDiscordId is > 0, x.Count))
+            .ToList();
     }
 
     private async Task<List<T>> QueryAsync<T>(string sql, Func<NpgsqlDataReader, T> map, CancellationToken ct)
@@ -554,25 +597,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         return await QueryAsync(sql, r => r.GetInt64(0), ct);
     }
 
-    // Voice minutes credited for one session segment [v.received_at_utc, v.next_ts),
-    // MINUS any overlap with a bot_downtime_intervals window (open intervals coalesced
-    // to now()). During an outage a "leave" can go unobserved, so the raw gap to the
-    // user's next event would otherwise count the whole blind window as voice time (the
-    // 2026-05 blackout would credit ~14k phantom minutes to anyone left in a channel).
-    // We SUBTRACT the downtime overlap rather than drop the segment, so a legitimate
-    // multi-hour call spanning a brief restart is preserved. Every voice query aliases
-    // the sessionized rows as `v`. Mirrors the downtime handling in OnlineMinutesMetricAsync.
-    private const string VoiceSegmentMinutes =
-        """
-        GREATEST(0, EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc)) - COALESCE((
-            SELECT SUM(EXTRACT(EPOCH FROM (
-                LEAST(v.next_ts, COALESCE(d.ended_at_utc, now()))
-              - GREATEST(v.received_at_utc, d.started_at_utc))))
-            FROM bot_downtime_intervals d
-            WHERE v.received_at_utc < COALESCE(d.ended_at_utc, now())
-              AND v.next_ts > d.started_at_utc), 0)) / 60.0
-        """;
-
     // Voice minutes: sessionize via LEAD() and count a segment when its start is inside
     // the window. Spark buckets segment minutes by the CET day of the segment start.
     // Stays raw: whole-guild LEAD() window sessionization — a LINQ version would pull all
@@ -587,7 +611,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             FROM voice_state_events
             """;
 
-        async Task<long> Sum(DateTime start, DateTime end) => await ScalarAsync(
+        async Task<long> SumAsync(DateTime start, DateTime end) => await ScalarAsync(
             $"""
             SELECT COALESCE(round(SUM({VoiceSegmentMinutes})), 0)::bigint
             FROM ({sessions}) v
@@ -595,8 +619,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
               AND v.received_at_utc BETWEEN {Sql(start)} AND {Sql(end)}
             """, ct);
 
-        var value = await Sum(curStart, curEnd);
-        long? prev = prevStart is null || prevEnd is null ? null : await Sum(prevStart.Value, prevEnd.Value);
+        var value = await SumAsync(curStart, curEnd);
+        long? prev = prevStart is null || prevEnd is null ? null : await SumAsync(prevStart.Value, prevEnd.Value);
 
         var spark = await VoiceSparkAsync(sessions, sparkDays, ct);
         return new CommunityMetricDto(value, prev, spark);
@@ -660,15 +684,15 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
               )
             """;
 
-        async Task<long> Sum(DateTime start, DateTime end) => await ScalarAsync(
+        async Task<long> SumAsync(DateTime start, DateTime end) => await ScalarAsync(
             $"""
             SELECT COALESCE(round(SUM(minutes)), 0)::bigint
             FROM ({segments}) seg
             WHERE seg.seg_start BETWEEN {Sql(start)} AND {Sql(end)}
             """, ct);
 
-        var value = await Sum(curStart, curEnd);
-        long? prev = prevStart is null || prevEnd is null ? null : await Sum(prevStart.Value, prevEnd.Value);
+        var value = await SumAsync(curStart, curEnd);
+        long? prev = prevStart is null || prevEnd is null ? null : await SumAsync(prevStart.Value, prevEnd.Value);
 
         var spark = await OnlineSparkAsync(segments, sparkDays, ct);
         return new CommunityMetricDto(value, prev, spark);

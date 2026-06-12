@@ -21,10 +21,6 @@ file sealed class GoodPayload
 
 public sealed class SerializeEventUnitTests
 {
-    // dbContext/logger are unused by SerializeEvent, so no DB needed here.
-    private static RawEventLogService NewService()
-        => new RawEventLogService(null!, NullLogger<RawEventLogService>.Instance);
-
     [Fact]
     public void SerializeEvent_WhenSuccessful_ReturnsJsonWithNoError()
     {
@@ -46,6 +42,10 @@ public sealed class SerializeEventUnitTests
         Assert.Contains(RawEventLogService.SerializationFailedMarker, result.Json);
         Assert.Contains(nameof(ThrowingPayload), result.Json);
     }
+
+    // dbContext/logger are unused by SerializeEvent, so no DB needed here.
+    private static RawEventLogService NewService()
+        => new RawEventLogService(null!, NullLogger<RawEventLogService>.Instance);
 }
 
 public sealed class RawEventLogPersistenceTests(PostgresFixture fixture)
@@ -74,7 +74,7 @@ public sealed class RawEventLogPersistenceTests(PostgresFixture fixture)
 
         await using var verify = NewContext();
         var row = await verify.RawEventLogs.SingleAsync(r => r.EventType == "ThrowingEvent");
-        Assert.True(row.SerializationFailed);
+        Assert.True(row.IsSerializationFailed);
         Assert.Contains(RawEventLogService.SerializationFailedMarker, row.EventJson);
     }
 
@@ -90,7 +90,7 @@ public sealed class RawEventLogPersistenceTests(PostgresFixture fixture)
 
         await using var verify = NewContext();
         var row = await verify.RawEventLogs.SingleAsync(r => r.EventType == "GoodEvent");
-        Assert.False(row.SerializationFailed);
+        Assert.False(row.IsSerializationFailed);
         Assert.DoesNotContain(RawEventLogService.SerializationFailedMarker, row.EventJson);
     }
 

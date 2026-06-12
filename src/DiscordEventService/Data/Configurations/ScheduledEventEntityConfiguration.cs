@@ -10,5 +10,9 @@ internal sealed class ScheduledEventEntityConfiguration : IEntityTypeConfigurati
     {
         builder.HasIndex(s => new { s.GuildDiscordId, s.EventTimestampUtc });
         builder.HasIndex(s => s.EventDiscordId);
+
+        // Properties carry the Utc suffix convention; the columns predate it.
+        builder.Property(s => s.ScheduledStartTimeUtc).HasColumnName("scheduled_start_time");
+        builder.Property(s => s.ScheduledEndTimeUtc).HasColumnName("scheduled_end_time");
     }
 }

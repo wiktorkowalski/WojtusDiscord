@@ -33,10 +33,10 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task TopMessages_RanksAuthorsByCount()
+    public async Task TopMessages_TwoAuthorsSeeded_RanksAuthorsByCount()
     {
         var controller = new StatsController(_db);
-        var top = await controller.TopMessages(default);
+        var top = (await controller.TopMessages(default)).Value!;
 
         Assert.Equal("alice", top[0].Username);
         Assert.Equal(2, top[0].Count);
@@ -45,10 +45,10 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task VoiceLeaderboard_SumsSessionMinutes()
+    public async Task VoiceLeaderboard_SeededSessions_SumsSessionMinutes()
     {
         var controller = new StatsController(_db);
-        var voice = await controller.VoiceLeaderboard(default);
+        var voice = (await controller.VoiceLeaderboard(default)).Value!;
 
         var alice = Assert.Single(voice);
         Assert.Equal(Alice, alice.UserDiscordId);
@@ -56,10 +56,10 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task TopEmojis_CountsAndFlagsCustom()
+    public async Task TopEmojis_CustomAndUnicodeReactions_CountsAndFlagsCustom()
     {
         var controller = new StatsController(_db);
-        var emojis = await controller.TopEmojis(default);
+        var emojis = (await controller.TopEmojis(default)).Value!;
 
         var thumbs = emojis.Single(e => e.EmoteName == "👍");
         Assert.Equal(2, thumbs.Count);
@@ -70,10 +70,10 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task ChannelActivity_CountsMessagesAndReactions()
+    public async Task ChannelActivity_SeededMessagesAndReactions_CountsBoth()
     {
         var controller = new StatsController(_db);
-        var channels = await controller.ChannelActivity(default);
+        var channels = (await controller.ChannelActivity(default)).Value!;
 
         var general = Assert.Single(channels);
         Assert.Equal("general", general.ChannelName);
@@ -82,10 +82,10 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task TopReactionsGiven_RanksReactorsByCount()
+    public async Task TopReactionsGiven_TwoReactorsSeeded_RanksReactorsByCount()
     {
         var controller = new StatsController(_db);
-        var given = await controller.TopReactionsGiven(default);
+        var given = (await controller.TopReactionsGiven(default)).Value!;
 
         var alice = Assert.Single(given);
         Assert.Equal(Alice, alice.UserDiscordId);
@@ -94,10 +94,10 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task TopReactionsReceived_RanksAuthorsByReactionsOnTheirMessages()
+    public async Task TopReactionsReceived_ReactionsOnAuthoredMessages_RanksAuthors()
     {
         var controller = new StatsController(_db);
-        var received = await controller.TopReactionsReceived(default);
+        var received = (await controller.TopReactionsReceived(default)).Value!;
 
         // All 3 reactions point at message 1 (alice's), so alice receives 3.
         var alice = Assert.Single(received);
@@ -106,10 +106,10 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task TopActivities_CountsByNameDescending()
+    public async Task TopActivities_SeededActivities_CountsByNameDescending()
     {
         var controller = new StatsController(_db);
-        var activities = await controller.TopActivities(default);
+        var activities = (await controller.TopActivities(default)).Value!;
 
         Assert.Equal("Visual Studio Code", activities[0].Name);
         Assert.Equal(2, activities[0].Count);
@@ -118,11 +118,11 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task Overview_AggregatesTotals()
+    public async Task Overview_SeededEvents_AggregatesTotals()
     {
         var controller = new StatsController(_db);
 
-        var o = await controller.Overview(default);
+        var o = (await controller.Overview(default)).Value!;
 
         Assert.Equal(3, o.TotalMessages);
         Assert.Equal(3, o.Messages.Total);
@@ -136,10 +136,10 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task VolumeByType_RanksEventTypes()
+    public async Task VolumeByType_MixedEventTypes_RanksByCount()
     {
         var controller = new StatsController(_db);
-        var volume = await controller.VolumeByType(default);
+        var volume = (await controller.VolumeByType(default)).Value!;
 
         Assert.Equal("MessageCreated", volume[0].EventType);
         Assert.Equal(2, volume[0].Count);

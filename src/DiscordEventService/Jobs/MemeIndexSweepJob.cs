@@ -16,7 +16,7 @@ internal sealed class MemeIndexSweepJob(
     IBackgroundJobClient backgroundJobClient,
     ILogger<MemeIndexSweepJob> logger)
 {
-    public async Task ExecuteAsync()
+    public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
         using var scope = scopeFactory.CreateScope();
         var memeOptions = scope.ServiceProvider.GetRequiredService<IOptions<MemeIndexOptions>>().Value;
@@ -39,12 +39,12 @@ internal sealed class MemeIndexSweepJob(
             .Join(db.Guilds.AsNoTracking().Where(g => g.LeftAtUtc == null),
                 c => c.GuildId, g => g.Id, (c, g) => g.DiscordId)
             .Distinct()
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         var inProgress = await db.BackfillCheckpoints.AsNoTracking()
             .Where(c => c.Type == BackfillType.MemeIndex && c.Status == BackfillStatus.InProgress)
             .Select(c => c.GuildDiscordId)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
         var inProgressSet = inProgress.ToHashSet();
 
         foreach (var guildId in guildIds)

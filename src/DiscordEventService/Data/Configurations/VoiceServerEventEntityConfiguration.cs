@@ -9,5 +9,7 @@ internal sealed class VoiceServerEventEntityConfiguration : IEntityTypeConfigura
     public void Configure(EntityTypeBuilder<VoiceServerEventEntity> builder)
     {
         builder.HasIndex(v => new { v.GuildDiscordId, v.EventTimestampUtc });
+
+        builder.Property(v => v.Endpoint).HasMaxLength(256);
     }
 }

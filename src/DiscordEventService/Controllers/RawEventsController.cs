@@ -14,6 +14,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
     private const int MaxPageSize = 200;
 
     [HttpGet("types")]
+    [ProducesResponseType<IReadOnlyList<RawEventTypeDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<IReadOnlyList<RawEventTypeDto>>> GetTypes(CancellationToken ct)
     {
         var grouped = await db.RawEventLogs.AsNoTracking()
@@ -27,6 +28,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
     }
 
     [HttpGet]
+    [ProducesResponseType<PagedResult<RawEventSummaryDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<PagedResult<RawEventSummaryDto>>> GetEvents(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = DefaultPageSize,
@@ -47,7 +49,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
             query = query.Where(r => r.ReceivedAtUtc >= sinceUtc);
         }
         if (failedOnly)
-            query = query.Where(r => r.SerializationFailed);
+            query = query.Where(r => r.IsSerializationFailed);
 
         var total = await query.LongCountAsync(ct);
         var items = await query
@@ -57,13 +59,15 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
             .Take(pageSize)
             .Select(r => new RawEventSummaryDto(
                 r.Id, r.EventType, r.GuildDiscordId, r.ChannelDiscordId, r.UserDiscordId,
-                r.ReceivedAtUtc, r.JsonSizeBytes, r.SerializationFailed))
+                r.ReceivedAtUtc, r.JsonSizeBytes, r.IsSerializationFailed))
             .ToListAsync(ct);
 
         return Ok(new PagedResult<RawEventSummaryDto>(items, total, page, pageSize));
     }
 
     [HttpGet("{id:guid}")]
+    [ProducesResponseType<RawEventDetailDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<RawEventDetailDto>> GetEvent(Guid id, CancellationToken ct)
     {
         var row = await db.RawEventLogs.AsNoTracking()
@@ -77,7 +81,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
                 r.UserDiscordId,
                 r.ReceivedAtUtc,
                 r.JsonSizeBytes,
-                r.SerializationFailed,
+                r.IsSerializationFailed,
                 r.CorrelationId,
                 r.EventJson,
             })
@@ -88,7 +92,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
 
         return Ok(new RawEventDetailDto(
             row.Id, row.EventType, row.GuildDiscordId, row.ChannelDiscordId, row.UserDiscordId,
-            row.ReceivedAtUtc, row.JsonSizeBytes, row.SerializationFailed, row.CorrelationId,
+            row.ReceivedAtUtc, row.JsonSizeBytes, row.IsSerializationFailed, row.CorrelationId,
             JsonPayload.Parse(row.EventJson)));
     }
 }

@@ -15,7 +15,7 @@ internal sealed class AutoModEventHandler(EventPipeline pipeline) :
     {
         if (e.Rule?.Guild is null) return;
 
-        await pipeline.Execute(e, "AutoModRuleCreated", nameof(AutoModEventHandler),
+        await pipeline.ExecuteAsync(e, "AutoModRuleCreated", nameof(AutoModEventHandler),
             e.Rule.Guild.Id, null, e.Rule.Creator?.Id, async ctx =>
             {
                 ctx.Db.AutoModEvents.Add(new AutoModEventEntity
@@ -38,7 +38,7 @@ internal sealed class AutoModEventHandler(EventPipeline pipeline) :
     {
         if (e.Rule?.Guild is null) return;
 
-        await pipeline.Execute(e, "AutoModRuleUpdated", nameof(AutoModEventHandler),
+        await pipeline.ExecuteAsync(e, "AutoModRuleUpdated", nameof(AutoModEventHandler),
             e.Rule.Guild.Id, null, e.Rule.Creator?.Id, async ctx =>
             {
                 ctx.Db.AutoModEvents.Add(new AutoModEventEntity
@@ -61,7 +61,7 @@ internal sealed class AutoModEventHandler(EventPipeline pipeline) :
     {
         if (e.Rule?.Guild is null) return;
 
-        await pipeline.Execute(e, "AutoModRuleDeleted", nameof(AutoModEventHandler),
+        await pipeline.ExecuteAsync(e, "AutoModRuleDeleted", nameof(AutoModEventHandler),
             e.Rule.Guild.Id, null, e.Rule.Creator?.Id, async ctx =>
             {
                 ctx.Db.AutoModEvents.Add(new AutoModEventEntity
@@ -82,7 +82,7 @@ internal sealed class AutoModEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, AutoModerationRuleExecutedEventArgs e)
     {
-        await pipeline.Execute(e, "AutoModActionExecuted", nameof(AutoModEventHandler),
+        await pipeline.ExecuteAsync(e, "AutoModActionExecuted", nameof(AutoModEventHandler),
             e.Rule.GuildId, e.Rule.ChannelId, e.Rule.UserId, async ctx =>
             {
                 // e.Rule is a DiscordAutoModerationActionExecution, not a rule definition.

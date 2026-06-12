@@ -10,15 +10,15 @@ internal abstract class BackfillJobBase
 {
     protected abstract BackfillType BackfillType { get; }
 
-    protected async Task RecordErrorAsync(DiscordDbContext db, BackfillCheckpointEntity checkpoint, Exception ex)
+    protected async Task RecordErrorAsync(DiscordDbContext db, BackfillCheckpointEntity checkpoint, Exception ex, CancellationToken cancellationToken)
     {
         checkpoint.ErrorCount++;
         checkpoint.LastError = $"{ex.GetType().Name}: {ex.Message}";
         checkpoint.LastErrorAtUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(cancellationToken);
     }
 
-    protected Task SaveProgressAsync(DiscordDbContext db, BackfillCheckpointEntity checkpoint) => db.SaveChangesAsync();
+    protected Task SaveProgressAsync(DiscordDbContext db, BackfillCheckpointEntity checkpoint, CancellationToken cancellationToken) => db.SaveChangesAsync(cancellationToken);
 
     // Drives the per-item resume-cursor loop shared by the history jobs (Messages, Reactions): skip to the
     // channel a genuinely-interrupted run stopped on (CurrentChannelId, reset to null by the executor after a
@@ -76,7 +76,7 @@ internal abstract class BackfillJobBase
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning(ex, "Backfill failed for item {ItemId}, continuing with next", keyOf(item));
-                await RecordErrorAsync(db, checkpoint, ex);
+                await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
             }
 
             // Reset the per-channel batch cursor AFTER the item, so the resume channel saw its saved

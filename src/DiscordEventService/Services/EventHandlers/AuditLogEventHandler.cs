@@ -10,7 +10,7 @@ internal sealed class AuditLogEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildAuditLogCreatedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildAuditLogCreated", nameof(AuditLogEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildAuditLogCreated", nameof(AuditLogEventHandler),
             e.Guild.Id, null, e.AuditLogEntry.UserResponsible?.Id, async ctx =>
             {
                 ctx.Db.AuditLogEvents.Add(new AuditLogEventEntity

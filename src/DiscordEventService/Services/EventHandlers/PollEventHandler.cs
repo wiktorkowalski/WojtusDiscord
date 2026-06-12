@@ -13,7 +13,7 @@ internal sealed class PollEventHandler(EventPipeline pipeline) :
         var update = e.PollVoteUpdate;
         if (update.Guild is null) return;
 
-        await pipeline.Execute(e, "MessagePollVoted", nameof(PollEventHandler),
+        await pipeline.ExecuteAsync(e, "MessagePollVoted", nameof(PollEventHandler),
             update.Guild.Id, update.Message?.ChannelId, update.User?.Id, async ctx =>
             {
                 ctx.Db.PollEvents.Add(new PollEventEntity

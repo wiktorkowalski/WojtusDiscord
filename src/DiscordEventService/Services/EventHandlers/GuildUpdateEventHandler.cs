@@ -10,7 +10,7 @@ internal sealed class GuildUpdateEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildUpdatedEvent", nameof(GuildUpdateEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildUpdatedEvent", nameof(GuildUpdateEventHandler),
             e.GuildAfter.Id, null, null, async ctx =>
             {
                 var guildEvent = new GuildEventEntity

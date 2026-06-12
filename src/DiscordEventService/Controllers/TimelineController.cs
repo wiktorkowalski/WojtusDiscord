@@ -18,6 +18,7 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
     private const int MaxPageSize = 200;
 
     [HttpGet]
+    [ProducesResponseType<TimelinePage>(StatusCodes.Status200OK)]
     public async Task<ActionResult<TimelinePage>> GetTimeline(
         [FromQuery] int pageSize = DefaultPageSize,
         [FromQuery] string? cursor = null,
@@ -73,7 +74,7 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
                 r.UserDiscordId,
                 r.ReceivedAtUtc,
                 r.JsonSizeBytes,
-                r.SerializationFailed,
+                r.IsSerializationFailed,
                 r.EventJson,
             })
             .ToListAsync(ct);
@@ -90,7 +91,7 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
             r.UserDiscordId,
             r.ReceivedAtUtc,
             r.JsonSizeBytes,
-            r.SerializationFailed,
+            r.IsSerializationFailed,
             JsonPayload.Parse(r.EventJson))).ToList();
 
         var nextCursor = hasMore && events.Count > 0

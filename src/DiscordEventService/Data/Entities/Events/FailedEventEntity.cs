@@ -1,17 +1,11 @@
-using System.ComponentModel.DataAnnotations;
-
 namespace DiscordEventService.Data.Entities.Events;
 
 public class FailedEventEntity
 {
     public Guid Id { get; set; }
 
-    [Required]
-    [MaxLength(100)]
     public string EventType { get; set; } = string.Empty;
 
-    [Required]
-    [MaxLength(200)]
     public string HandlerName { get; set; } = string.Empty;
 
     public ulong? GuildDiscordId { get; set; }
@@ -23,11 +17,8 @@ public class FailedEventEntity
     // Serialized event args retained for potential replay.
     public string? EventJson { get; set; }
 
-    [Required]
-    [MaxLength(500)]
     public string ExceptionType { get; set; } = string.Empty;
 
-    [Required]
     public string ExceptionMessage { get; set; } = string.Empty;
 
     public string? StackTrace { get; set; }

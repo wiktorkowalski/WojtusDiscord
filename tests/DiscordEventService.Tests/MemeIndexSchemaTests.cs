@@ -8,6 +8,9 @@ namespace DiscordEventService.Tests;
 
 public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
+    // Mirrors the production trigram threshold in MemeSearchService.
+    private const double TrigramSimilarityThreshold = 0.4;
+
     private DiscordDbContext _db = null!;
     private MessageEntity _liveMessage = null!;
     private MessageEntity _deletedMessage = null!;
@@ -103,7 +106,7 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
         await _db.SaveChangesAsync();
 
         // Accentless multi-word query must hit the accented OCR text ("działa").
-        var hits = await SearchByVector("dziala kod");
+        var hits = await SearchByVectorAsync("dziala kod");
 
         Assert.Equal([50L], hits);
     }
@@ -123,8 +126,8 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
             tags: ["postgres"]));
         await _db.SaveChangesAsync();
 
-        var forBaseForm = await SearchByTrigram("postgres");
-        var forInflected = await SearchByTrigram("postgresie");
+        var forBaseForm = await SearchByTrigramAsync("postgres");
+        var forInflected = await SearchByTrigramAsync("postgresie");
 
         Assert.Contains(60L, forBaseForm);
         Assert.Contains(61L, forInflected);
@@ -149,35 +152,40 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal([70UL], visible);
     }
 
-    private async Task<List<long>> SearchByVector(string query)
+    private async Task<List<long>> SearchByVectorAsync(string query)
     {
         await using var connection = new NpgsqlConnection(fixture.Container.GetConnectionString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
+        // Raw SQL: LINQ cannot express the custom public.f_unaccent function or
+        // websearch_to_tsquery; this pins the migration-created FTS schema.
         command.CommandText = """
             SELECT attachment_discord_id FROM meme_index
             WHERE search_vector @@ websearch_to_tsquery('simple', public.f_unaccent($1))
             ORDER BY attachment_discord_id
             """;
         command.Parameters.AddWithValue(query);
-        return await ReadIds(command);
+        return await ReadIdsAsync(command);
     }
 
-    private async Task<List<long>> SearchByTrigram(string query)
+    private async Task<List<long>> SearchByTrigramAsync(string query)
     {
         await using var connection = new NpgsqlConnection(fixture.Container.GetConnectionString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
+        // Raw SQL: LINQ cannot express the custom public.f_unaccent / word_similarity
+        // trigram functions; this pins the migration-created trigram schema.
         command.CommandText = """
             SELECT attachment_discord_id FROM meme_index
-            WHERE word_similarity(public.f_unaccent($1), search_text) >= 0.4
+            WHERE word_similarity(public.f_unaccent($1), search_text) >= $2
             ORDER BY attachment_discord_id
             """;
         command.Parameters.AddWithValue(query);
-        return await ReadIds(command);
+        command.Parameters.AddWithValue(TrigramSimilarityThreshold);
+        return await ReadIdsAsync(command);
     }
 
-    private static async Task<List<long>> ReadIds(NpgsqlCommand command)
+    private static async Task<List<long>> ReadIdsAsync(NpgsqlCommand command)
     {
         var ids = new List<long>();
         await using var reader = await command.ExecuteReaderAsync();

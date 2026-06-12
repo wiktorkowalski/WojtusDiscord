@@ -14,6 +14,8 @@ namespace DiscordEventService.Controllers;
 public sealed class GuildController(DiscordDbContext db) : ControllerBase
 {
     [HttpGet]
+    [ProducesResponseType<GuildDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<GuildDto>> Get(CancellationToken ct)
     {
         var guild = await db.Guilds.AsNoTracking()

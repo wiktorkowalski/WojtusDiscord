@@ -30,14 +30,14 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
         {
             UserId = args.User.Id,
             GuildId = guildId,
-            Before = args.PresenceBefore == null ? null : new
+            Before = args.PresenceBefore is null ? null : new
             {
                 Desktop = GetStatusValue(args.PresenceBefore.ClientStatus?.Desktop),
                 Mobile = GetStatusValue(args.PresenceBefore.ClientStatus?.Mobile),
                 Web = GetStatusValue(args.PresenceBefore.ClientStatus?.Web),
                 Activities = args.PresenceBefore.Activities?.Select(a => new { a.Name, Type = (int)a.ActivityType, a.StreamUrl })
             },
-            After = args.PresenceAfter == null ? null : new
+            After = args.PresenceAfter is null ? null : new
             {
                 Desktop = GetStatusValue(args.PresenceAfter.ClientStatus?.Desktop),
                 Mobile = GetStatusValue(args.PresenceAfter.ClientStatus?.Mobile),
@@ -46,7 +46,7 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
             }
         };
 
-        await pipeline.Execute(eventDto, "PresenceUpdated", nameof(PresenceEventHandler),
+        await pipeline.ExecuteAsync(eventDto, "PresenceUpdated", nameof(PresenceEventHandler),
             guildId, null, args.User.Id, async ctx =>
             {
                 // Presence row, the user upsert, and activity tracking are one logical event:
@@ -92,7 +92,7 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
 
                     if (userResult.IsSuccess)
                     {
-                        await UpdateActivityTracking(ctx.Db, userResult.Value, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, ctx.ReceivedAtUtc);
+                        await UpdateActivityTrackingAsync(ctx.Db, userResult.Value, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, ctx.ReceivedAtUtc);
                         await ctx.Db.SaveChangesAsync();
                     }
                     else
@@ -107,7 +107,7 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
             });
     }
 
-    private static async Task UpdateActivityTracking(
+    private static async Task UpdateActivityTrackingAsync(
         DiscordDbContext dbContext,
         Guid userGuid,
         IReadOnlyList<DiscordActivity>? activitiesBefore,
@@ -126,7 +126,7 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
                 .Where(a => a.UserId == userGuid && a.IsActive && a.Name == ended.Name && a.ActivityType == (int)ended.ActivityType)
                 .FirstOrDefaultAsync();
 
-            if (existingActivity != null)
+            if (existingActivity is not null)
             {
                 existingActivity.IsActive = false;
                 existingActivity.EndedAtUtc = now;
@@ -177,7 +177,7 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
 
     private static string? SerializeActivities(IReadOnlyList<DiscordActivity>? activities)
     {
-        if (activities == null || activities.Count == 0)
+        if (activities is null || activities.Count == 0)
             return null;
 
         var activityData = activities.Select(a => new
