@@ -48,8 +48,8 @@ public sealed class MessagesBackfillJob(
             await IterateWithCheckpointAsync(ctx.Db, ctx.Checkpoint, textChannels, c => c.Id,
                 async channel =>
                 {
-                    logger.LogInformation("Backfilling messages for channel {ChannelName} ({ChannelId}) in guild {GuildId}",
-                        channel.Name, channel.Id, guildId);
+                    logger.LogInformation("Backfilling messages for channel {ChannelName} ({ChannelId}) in guild {GuildId} from cursor {ResumeCursor}",
+                        channel.Name, channel.Id, guildId, ctx.Checkpoint.LastProcessedId?.ToString() ?? "start");
                     await BackfillChannelMessagesAsync(ctx.Db, userService, guildEntity, channel, ctx.Checkpoint, afterTimestampUtc, cancellationToken);
                 },
                 logger, cancellationToken);
@@ -76,12 +76,6 @@ public sealed class MessagesBackfillJob(
         var batchNum = 0;
         var totalInserted = 0;
         var exitReason = "unknown";
-
-        // #124 diagnostic: trace exactly why per-channel loops terminated at ~one batch
-        // in auto-startup runs but went deep when manually triggered.
-        logger.LogInformation(
-            "[bf-diag] Channel {ChannelName} ({ChannelId}) starting; initial beforeId={BeforeId}",
-            channel.Name, channel.Id, beforeId);
 
         while (hasMore)
         {
@@ -116,16 +110,18 @@ public sealed class MessagesBackfillJob(
 
             if (messages.Count == 0)
             {
-                logger.LogInformation(
-                    "[bf-diag] Channel {ChannelName} batch {BatchNum}: API returned 0 messages with beforeId={BeforeId} — terminating loop",
+                logger.LogDebug(
+                    "Channel {ChannelName} batch {BatchNum} returned no messages before cursor {BeforeId}; stopping",
                     channel.Name, batchNum, beforeId);
                 hasMore = false;
                 exitReason = "API returned 0";
                 break;
             }
 
-            logger.LogInformation(
-                "[bf-diag] Channel {ChannelName} batch {BatchNum}: got {Count} messages, newest={NewestId} ({NewestTs:O}), oldest={OldestId} ({OldestTs:O})",
+            // #124 diagnostic: per-batch trace of why per-channel loops terminated at ~one
+            // batch in auto-startup runs but went deep when manually triggered.
+            logger.LogDebug(
+                "Channel {ChannelName} batch {BatchNum} fetched {MessageCount} messages, newest {NewestMessageId} ({NewestTimestampUtc:O}), oldest {OldestMessageId} ({OldestTimestampUtc:O})",
                 channel.Name, batchNum, messages.Count,
                 messages.First().Id, messages.First().Timestamp.UtcDateTime,
                 messages.Last().Id, messages.Last().Timestamp.UtcDateTime);
@@ -154,7 +150,7 @@ public sealed class MessagesBackfillJob(
                         if (channelEntity is null || authorEntity is null)
                         {
                             logger.LogWarning(
-                                "Skipping backfill insert for message {MessageId}: channelEntity={ChannelPresent} authorEntity={AuthorPresent}",
+                                "Skipping backfill insert for message {MessageId}: channel resolved {ChannelPresent}, author resolved {AuthorPresent}",
                                 message.Id, channelEntity is not null, authorEntity is not null);
                             continue;
                         }
@@ -235,7 +231,7 @@ public sealed class MessagesBackfillJob(
         }
 
         logger.LogInformation(
-            "[bf-diag] Channel {ChannelName} ({ChannelId}) done: batches={BatchCount}, inserted={Inserted}, exit_reason={ExitReason}, final_beforeId={BeforeId}",
+            "Channel {ChannelName} ({ChannelId}) done after {BatchCount} batches: inserted {InsertedCount} messages, stopped because {ExitReason}, cursor at {BeforeId}",
             channel.Name, channel.Id, batchNum, totalInserted, exitReason, beforeId);
     }
 }

@@ -24,6 +24,7 @@ public class BackfillCheckpointEntity : ITimestamped
     public DateTime LastUpdatedUtc { get; set; }
 }
 
+// Persisted as int in the DB — values are a data contract; never renumber or strip explicit values.
 public enum BackfillType
 {
     Roles = 0,
@@ -39,6 +40,7 @@ public enum BackfillType
     MemeIndex = 7
 }
 
+// Persisted as int in the DB — values are a data contract; never renumber or strip explicit values.
 public enum BackfillStatus
 {
     Pending = 0,

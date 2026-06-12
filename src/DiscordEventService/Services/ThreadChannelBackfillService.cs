@@ -39,16 +39,16 @@ public class ThreadChannelBackfillService(
                 await channelUpsert.UpsertChannelAsync(live, thread.GuildId);
                 repaired++;
                 logger.LogInformation(
-                    "Repaired thread channel {DiscordId} via Discord API as {Type} (parent={ParentId})",
+                    "Repaired thread channel {ChannelId} via Discord API as {ChannelType} under parent {ParentChannelId}",
                     thread.DiscordId, live.Type, live.ParentId);
             }
             catch (NotFoundException)
             {
-                logger.LogDebug("Thread {DiscordId} 404 from Discord; leaving as-is", thread.DiscordId);
+                logger.LogDebug("Thread {ChannelId} 404 from Discord; leaving as-is", thread.DiscordId);
             }
             catch (UnauthorizedException)
             {
-                logger.LogDebug("Thread {DiscordId} 403 from Discord; leaving as-is", thread.DiscordId);
+                logger.LogDebug("Thread {ChannelId} 403 from Discord; leaving as-is", thread.DiscordId);
             }
         }
 

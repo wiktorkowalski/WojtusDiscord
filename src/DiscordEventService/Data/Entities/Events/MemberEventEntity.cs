@@ -1,5 +1,6 @@
 namespace DiscordEventService.Data.Entities.Events;
 
+// Persisted as int in the DB — values are a data contract; never renumber or strip explicit values.
 public enum MemberEventType
 {
     Joined = 0,

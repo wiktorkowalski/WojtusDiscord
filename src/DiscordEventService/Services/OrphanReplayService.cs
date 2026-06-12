@@ -33,7 +33,7 @@ public class OrphanReplayService(DiscordDbContext db, ILogger<OrphanReplayServic
 
             // Reconstruction not yet implemented — log so we can find the sample.
             logger.LogWarning(
-                "Non-stub GuildMemberUpdated orphan found: raw_event_log_id={Id} user={User} received={ReceivedAt}. JSON reconstruction not yet implemented.",
+                "Non-stub GuildMemberUpdated orphan {RawEventLogId} for user {UserId} received at {ReceivedAtUtc}; JSON reconstruction not yet implemented",
                 o.Id, o.UserDiscordId, o.ReceivedAtUtc);
             skipped++;
         }

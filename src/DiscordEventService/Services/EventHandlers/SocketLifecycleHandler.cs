@@ -38,7 +38,7 @@ public sealed class SocketLifecycleHandler(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to open downtime row on SocketClosed (code={CloseCode})", e.CloseCode);
+                logger.LogError(ex, "Failed to open downtime row on SocketClosed with close code {CloseCode}", e.CloseCode);
             }
         }
     }
@@ -110,7 +110,7 @@ public sealed class SocketLifecycleHandler(
                 if (gap < ReconnectGapThreshold)
                 {
                     logger.LogInformation(
-                        "GuildDownloadCompleted: gap {Gap:c} below threshold, running quick-sync only",
+                        "GuildDownloadCompleted: gap {GapDuration:c} below threshold, running quick-sync only",
                         gap);
                     foreach (var guildId in e.Guilds.Keys)
                         await quickSyncService.SyncAsync(guildId);
@@ -122,7 +122,7 @@ public sealed class SocketLifecycleHandler(
                 if (afterTimestamp < earliestAllowed)
                 {
                     logger.LogInformation(
-                        "Reconnect backfill window capped to {Window} (gap was {Gap:c}, capped from {Original:O} to {Capped:O})",
+                        "Reconnect backfill window capped to {Window} (gap was {GapDuration:c}, capped from {Original:O} to {Capped:O})",
                         MaxReconnectBackfillWindow, gap, afterTimestamp, earliestAllowed);
                     afterTimestamp = earliestAllowed;
                 }
@@ -145,7 +145,7 @@ public sealed class SocketLifecycleHandler(
                     }
 
                     logger.LogInformation(
-                        "Reconnect backfill enqueued for guild {GuildId} after gap {Gap:c} (afterTimestampUtc={After:O})",
+                        "Reconnect backfill enqueued for guild {GuildId} after gap {GapDuration:c}, backfilling from {AfterTimestampUtc:O}",
                         guildId, gap, afterTimestamp);
                     orchestrator.EnqueueBackfillFrom(guildId, afterTimestamp);
                 }

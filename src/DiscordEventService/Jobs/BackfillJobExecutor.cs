@@ -47,7 +47,7 @@ public sealed class BackfillJobExecutor(
             }
 
             await MarkCompletedAsync(db, checkpoint);
-            logger.LogInformation("{BackfillType} backfill completed for guild {GuildId}: {Count} processed",
+            logger.LogInformation("{BackfillType} backfill completed for guild {GuildId}: {ProcessedCount} processed",
                 type, guildId, checkpoint.ProcessedCount);
         }
         catch (OperationCanceledException ex)

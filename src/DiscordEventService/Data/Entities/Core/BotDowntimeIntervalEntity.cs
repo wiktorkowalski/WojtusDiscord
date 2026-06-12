@@ -14,6 +14,7 @@ public class BotDowntimeIntervalEntity : ITimestamped
     public DateTime LastUpdatedUtc { get; set; }
 }
 
+// Persisted as int in the DB — values are a data contract; never renumber or strip explicit values.
 public enum BotDowntimeType
 {
     GracefulShutdown = 0,
@@ -24,6 +25,7 @@ public enum BotDowntimeType
     Inferred = 5
 }
 
+// Persisted as int in the DB — values are a data contract; never renumber or strip explicit values.
 public enum BotDowntimeDetectionMethod
 {
     GracefulStop = 0,

@@ -36,7 +36,7 @@ public partial class MessageMentionsBackfillService(
             .Select(m => new { m.Id, m.Content })
             .ToListAsync(ct);
 
-        logger.LogInformation("Mention backfill: {Total} messages with content, {Skipped} already have mentions",
+        logger.LogInformation("Mention backfill starting: {MessageCount} messages with content, {SkippedCount} already have mentions",
             messages.Count, alreadyProcessed.Count);
 
         var scanned = messages.Count;
@@ -65,7 +65,7 @@ public partial class MessageMentionsBackfillService(
             mentionsCreated += mentions.Count;
         }
 
-        logger.LogInformation("Mention backfill done: {Processed} messages processed, {Created} mentions created",
+        logger.LogInformation("Mention backfill done: {ProcessedCount} messages processed, {MentionCount} mentions created",
             processed, mentionsCreated);
 
         return new Result(scanned, skipped, processed, mentionsCreated);

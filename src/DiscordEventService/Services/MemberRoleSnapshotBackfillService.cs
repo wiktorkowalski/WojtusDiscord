@@ -48,7 +48,7 @@ public class MemberRoleSnapshotBackfillService(
             })
             .ToListAsync(ct);
 
-        logger.LogInformation("Backfilling role snapshots from {Count} member events with role changes", events.Count);
+        logger.LogInformation("Backfilling role snapshots from {EventCount} member events with role changes", events.Count);
 
         foreach (var evt in events)
         {
@@ -56,7 +56,7 @@ public class MemberRoleSnapshotBackfillService(
 
             if (!memberLookup.TryGetValue((evt.UserDiscordId, evt.GuildDiscordId), out var memberId))
             {
-                logger.LogDebug("Skipping event {EventId}: member not found for User={User} Guild={Guild}",
+                logger.LogDebug("Skipping event {EventId}: member not found for user {UserId} in guild {GuildId}",
                     evt.Id, evt.UserDiscordId, evt.GuildDiscordId);
                 continue;
             }
@@ -105,7 +105,7 @@ public class MemberRoleSnapshotBackfillService(
             eventsProcessed++;
         }
 
-        logger.LogInformation("Event replay done: {Events} events, {Created} snapshots created, {Closed} closed",
+        logger.LogInformation("Event replay done: {EventCount} events, {CreatedCount} snapshots created, {ClosedCount} closed",
             eventsProcessed, created, closed);
 
         var seeded = await SeedCurrentRolesAsync(memberLookup, ct);
@@ -131,7 +131,7 @@ public class MemberRoleSnapshotBackfillService(
             }
             catch (Exception ex) when (ex is NotFoundException or UnauthorizedException)
             {
-                logger.LogWarning(ex, "Cannot fetch guild {Guild} for role seeding — skipping", guildDiscordId);
+                logger.LogWarning(ex, "Cannot fetch guild {GuildId} for role seeding — skipping", guildDiscordId);
                 continue;
             }
 
@@ -139,7 +139,7 @@ public class MemberRoleSnapshotBackfillService(
             await foreach (var member in guild.GetAllMembersAsync())
                 members.Add(member);
 
-            logger.LogInformation("Seeding current roles for {Count} members in guild {Guild}",
+            logger.LogInformation("Seeding current roles for {MemberCount} members in guild {GuildId}",
                 members.Count, guildDiscordId);
 
             foreach (var member in members)
@@ -176,7 +176,7 @@ public class MemberRoleSnapshotBackfillService(
             }
         }
 
-        logger.LogInformation("Current role seeding done: {Seeded} new snapshots", seeded);
+        logger.LogInformation("Current role seeding done: {SeededCount} new snapshots", seeded);
         return seeded;
     }
 }

@@ -34,7 +34,7 @@ public sealed class FkResolver(
             return ResolvedFks.Resolved(guild.Value, channel.Value, user.Value);
 
         ctx.Logger.LogError(
-            "Could not resolve required FKs ({LogContext}): guildResolved={GuildResolved} channelResolved={ChannelResolved} userResolved={UserResolved}; skipping insert",
+            "Could not resolve required FKs for {LogContext}: guild resolved {GuildResolved}, channel resolved {ChannelResolved}, user resolved {UserResolved}; skipping insert",
             logContext ?? "no context", guild.IsSuccess, channel.IsSuccess, user.IsSuccess);
         await ctx.RecordFailureAsync(new InvalidOperationException(
             $"Required FK not resolved ({logContext ?? "no context"}): guildResolved={guild.IsSuccess} channelResolved={channel.IsSuccess} userResolved={user.IsSuccess}"));
@@ -63,7 +63,7 @@ public sealed class FkResolver(
             return ResolvedUserFks.Resolved(guild.Value, user.Value);
 
         ctx.Logger.LogError(
-            "Could not resolve required FKs ({LogContext}): guildResolved={GuildResolved} userResolved={UserResolved}; skipping insert",
+            "Could not resolve required FKs for {LogContext}: guild resolved {GuildResolved}, user resolved {UserResolved}; skipping insert",
             logContext ?? "no context", guild.IsSuccess, user.IsSuccess);
         await ctx.RecordFailureAsync(new InvalidOperationException(
             $"Required FK not resolved ({logContext ?? "no context"}): guildResolved={guild.IsSuccess} userResolved={user.IsSuccess}"));

@@ -28,7 +28,7 @@ public class BootQuickSyncService(
         var (presenceSnapshots, activitiesInserted) = await SyncPresencesAsync(guild);
 
         logger.LogInformation(
-            "Boot quick-sync completed for guild {GuildId}: {Messages} messages, {Presences} presence snapshots, {Activities} new activities",
+            "Boot quick-sync completed for guild {GuildId}: {MessageCount} messages, {PresenceSnapshotCount} presence snapshots, {NewActivityCount} new activities",
             guildId, messagesInserted, presenceSnapshots, activitiesInserted);
     }
 
@@ -138,11 +138,11 @@ public class BootQuickSyncService(
             }
             catch (DSharpPlus.Exceptions.UnauthorizedException)
             {
-                logger.LogDebug("Quick-sync: no permission to read channel {ChannelId}, skipping", channel.Id);
+                logger.LogWarning("Quick-sync: no permission to read channel {ChannelId}, skipping", channel.Id);
             }
             catch (DSharpPlus.Exceptions.NotFoundException)
             {
-                logger.LogDebug("Quick-sync: channel {ChannelId} not found, skipping", channel.Id);
+                logger.LogWarning("Quick-sync: channel {ChannelId} not found, skipping", channel.Id);
             }
             catch (Exception ex)
             {

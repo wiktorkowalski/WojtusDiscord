@@ -42,7 +42,7 @@ public class PeriodicFullBackfillJob(
                 continue;
             }
 
-            logger.LogInformation("Periodic backfill enqueued for guild {GuildId} (window={Window}d, after={After:O})",
+            logger.LogInformation("Periodic backfill enqueued for guild {GuildId} covering the last {WindowDays} days, after {AfterTimestampUtc:O}",
                 guildId, BackfillWindow.TotalDays, afterTimestamp);
             orchestrator.EnqueueBackfillFrom(guildId, afterTimestamp);
         }

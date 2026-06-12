@@ -169,7 +169,7 @@ public sealed class MemberEventHandler(EventPipeline pipeline) :
 
         if (member is null)
         {
-            logger.LogWarning("Cannot maintain role snapshots: member not found for User={UserDiscordId} Guild={GuildDiscordId}",
+            logger.LogWarning("Cannot maintain role snapshots: member not found for user {UserDiscordId} in guild {GuildDiscordId}",
                 userDiscordId, guildDiscordId);
             return;
         }
@@ -198,7 +198,7 @@ public sealed class MemberEventHandler(EventPipeline pipeline) :
 
             if (closed == 0)
             {
-                logger.LogDebug("No open role snapshot to close: Member={MemberId} Role={RoleDiscordId}",
+                logger.LogDebug("No open role snapshot to close for member {MemberGuid} and role {RoleDiscordId}",
                     member.Id, roleId);
             }
         }

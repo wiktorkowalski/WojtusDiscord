@@ -54,7 +54,7 @@ public abstract class BackfillJobBase
             }
             else
             {
-                logger.LogWarning("Backfill resume cursor {ResumeId} not found in {Count} items, restarting from beginning",
+                logger.LogWarning("Backfill resume cursor {ResumeId} not found in {ItemCount} items, restarting from beginning",
                     resumeId, items.Count);
                 checkpoint.CurrentChannelId = null;
                 checkpoint.LastProcessedId = null;

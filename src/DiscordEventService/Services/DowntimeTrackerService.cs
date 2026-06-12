@@ -22,7 +22,7 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         if (existingOpen is not null)
         {
             logger.LogWarning(
-                "OpenDowntimeAsync({Type}/{Method}) skipped: open row Id={Id} Type={ExistingType} already exists",
+                "Skipped opening downtime row of type {DowntimeType} via {DetectionMethod}: open row {DowntimeId} with type {ExistingType} already exists",
                 type, method, existingOpen.Id, existingOpen.Type);
             return new OpenDowntimeResult(existingOpen.Id, existingOpen.Type, Created: false);
         }
@@ -39,7 +39,7 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         db.BotDowntimeIntervals.Add(row);
         await db.SaveChangesAsync();
         logger.LogInformation(
-            "Opened downtime row Id={Id} Type={Type} Method={Method}",
+            "Opened downtime row {DowntimeId} with type {DowntimeType} via {DetectionMethod}",
             row.Id, type, method);
         return new OpenDowntimeResult(row.Id, type, Created: true);
     }
@@ -62,9 +62,9 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
             .SetProperty(x => x.LastUpdatedUtc, endedAtUtc));
 
         if (affected > 1)
-            logger.LogWarning("Closed {Count} open downtime rows (expected at most 1)", affected);
+            logger.LogWarning("Closed {RowCount} open downtime rows (expected at most 1)", affected);
         else if (affected == 1)
-            logger.LogInformation("Closed open downtime row at {EndedAt:O} (filter={Filter})", endedAtUtc, onlyType?.ToString() ?? "any");
+            logger.LogInformation("Closed open downtime row at {EndedAtUtc:O} with type filter {TypeFilter}", endedAtUtc, onlyType?.ToString() ?? "any");
         return affected;
     }
 
@@ -134,7 +134,7 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
         db.BotDowntimeIntervals.Add(row);
         await db.SaveChangesAsync();
         logger.LogInformation(
-            "Inferred startup gap of {Gap:F0}s, row Id={Id}",
+            "Inferred startup gap of {GapSeconds:F0}s, opened downtime row {DowntimeId}",
             gap.TotalSeconds, row.Id);
         return row.Id;
     }

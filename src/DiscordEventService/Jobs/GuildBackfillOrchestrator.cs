@@ -17,7 +17,7 @@ public class GuildBackfillOrchestrator(
     private string EnqueueChain(ulong guildId, BackfillOptions options, DateTime? afterTimestampUtc)
     {
         logger.LogInformation(
-            "Starting backfill orchestration for guild {GuildId} with options: {@Options} afterTimestampUtc={AfterTimestamp:O}",
+            "Starting backfill orchestration for guild {GuildId} with options {@Options}, backfilling after {AfterTimestampUtc:O}",
             guildId, options, afterTimestampUtc);
 
         var rolesJobId = backgroundJobClient.Enqueue<RolesBackfillJob>(
