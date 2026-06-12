@@ -52,44 +52,58 @@ internal sealed class FailedEventService(DiscordDbContext db, ILogger<FailedEven
                 "CRITICAL: Failed to record event failure. Original error: {EventType} in {HandlerName} - {OriginalExceptionMessage}",
                 eventType, handlerName, exception.Message);
 
+            await WriteDeadLetterFallbackAsync(
+                eventType, handlerName, guildId, channelId, userId, eventJson, exception, ex);
+        }
+    }
+
+    private async Task WriteDeadLetterFallbackAsync(
+        string eventType,
+        string handlerName,
+        ulong? guildId,
+        ulong? channelId,
+        ulong? userId,
+        string? eventJson,
+        Exception exception,
+        Exception dbException)
+    {
+        try
+        {
+            var failedAtUtc = DateTime.UtcNow;
+            var logsDir = Path.Combine(env.ContentRootPath, "logs");
+            Directory.CreateDirectory(logsDir);
+            var path = Path.Combine(logsDir, $"dead-letter-fallback-{failedAtUtc:yyyy-MM-dd}.jsonl");
+            var record = new
+            {
+                failedAtUtc,
+                eventType,
+                handlerName,
+                guildId,
+                channelId,
+                userId,
+                exceptionType = exception.GetType().FullName,
+                exceptionMessage = exception.Message,
+                stackTrace = exception.StackTrace,
+                eventJson,
+                secondaryExceptionType = dbException.GetType().FullName,
+                secondaryExceptionMessage = dbException.Message
+            };
+            var line = JsonSerializer.Serialize(record);
+            await _fallbackFileLock.WaitAsync();
             try
             {
-                var failedAtUtc = DateTime.UtcNow;
-                var logsDir = Path.Combine(env.ContentRootPath, "logs");
-                Directory.CreateDirectory(logsDir);
-                var path = Path.Combine(logsDir, $"dead-letter-fallback-{failedAtUtc:yyyy-MM-dd}.jsonl");
-                var record = new
-                {
-                    failedAtUtc,
-                    eventType,
-                    handlerName,
-                    guildId,
-                    channelId,
-                    userId,
-                    exceptionType = exception.GetType().FullName,
-                    exceptionMessage = exception.Message,
-                    stackTrace = exception.StackTrace,
-                    eventJson,
-                    secondaryExceptionType = ex.GetType().FullName,
-                    secondaryExceptionMessage = ex.Message
-                };
-                var line = JsonSerializer.Serialize(record);
-                await _fallbackFileLock.WaitAsync();
-                try
-                {
-                    await File.AppendAllTextAsync(path, line + Environment.NewLine);
-                }
-                finally
-                {
-                    _fallbackFileLock.Release();
-                }
+                await File.AppendAllTextAsync(path, line + Environment.NewLine);
             }
-            catch (Exception fallbackEx)
+            finally
             {
-                logger.LogCritical(fallbackEx,
-                    "JSONL fallback also failed for {EventType} in {HandlerName}",
-                    eventType, handlerName);
+                _fallbackFileLock.Release();
             }
+        }
+        catch (Exception fallbackEx)
+        {
+            logger.LogCritical(fallbackEx,
+                "JSONL fallback also failed for {EventType} in {HandlerName}",
+                eventType, handlerName);
         }
     }
 

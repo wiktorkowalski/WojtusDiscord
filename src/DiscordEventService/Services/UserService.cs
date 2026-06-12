@@ -16,54 +16,63 @@ internal sealed class UserService(DiscordDbContext db, ILogger<UserService> logg
             .Select(u => new { u.Id, u.Username, u.GlobalName })
             .FirstOrDefaultAsync();
 
-        var usernameChanged = existing is not null && existing.Username != user.Username;
-        var globalNameChanged = existing is not null && existing.GlobalName != user.GlobalName;
+        if (existing is not null && (existing.Username != user.Username || existing.GlobalName != user.GlobalName))
+            return await UpdateUserWithNameHistoryAsync(user, existing.Username, existing.GlobalName, existing.Id);
 
-        // A name change is the only flow that issues a SECOND write (the history row) after
-        // updating the user. Do it as load-modify-save committed in a SINGLE SaveChanges so the
-        // update and its history row land atomically (one implicit transaction, auto-retried under
-        // EnableRetryOnFailure). This avoids an explicit transaction + ChangeTracker.Clear, which on
-        // this shared DbContext would drop pending rows of batch-staging callers (e.g. the backfill
-        // jobs upsert authors mid-batch while messages/reactions are staged for one SaveChanges).
-        if (existing is not null && (usernameChanged || globalNameChanged))
+        return await UpsertUserUnchangedAsync(user);
+    }
+
+    // A name change is the only flow that issues a SECOND write (the history row) after
+    // updating the user. Do it as load-modify-save committed in a SINGLE SaveChanges so the
+    // update and its history row land atomically (one implicit transaction, auto-retried under
+    // EnableRetryOnFailure). This avoids an explicit transaction + ChangeTracker.Clear, which on
+    // this shared DbContext would drop pending rows of batch-staging callers (e.g. the backfill
+    // jobs upsert authors mid-batch while messages/reactions are staged for one SaveChanges).
+    private async Task<UpsertResult<Guid>> UpdateUserWithNameHistoryAsync(
+        DiscordUser user, string? oldUsername, string? oldGlobalName, Guid existingId)
+    {
+        var usernameChanged = oldUsername != user.Username;
+        var globalNameChanged = oldGlobalName != user.GlobalName;
+
+        var entity = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == user.Id);
+        if (entity is null)
         {
-            var entity = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == user.Id);
-            if (entity is null)
-            {
-                logger.LogError("User upsert lost the row for user {UserId} after detecting a name change", user.Id);
-                return UpsertResult<Guid>.Failure($"User upsert lost the row for DiscordId={user.Id}");
-            }
-
-            entity.Username = user.Username;
-            entity.GlobalName = user.GlobalName;
-            entity.Discriminator = user.Discriminator;
-            entity.AvatarHash = user.AvatarHash;
-
-            db.UserNameHistory.Add(new UserNameHistoryEntity
-            {
-                UserId = existing.Id,
-                UsernameBefore = usernameChanged ? existing.Username : null,
-                UsernameAfter = usernameChanged ? user.Username : null,
-                GlobalNameBefore = globalNameChanged ? existing.GlobalName : null,
-                GlobalNameAfter = globalNameChanged ? user.GlobalName : null,
-                ChangedAtUtc = DateTime.UtcNow
-            });
-
-            await db.SaveChangesAsync();
-
-            logger.LogInformation(
-                "User name changed for {UserId}: username {OldUsername} → {NewUsername}, global name {OldGlobalName} → {NewGlobalName}",
-                user.Id,
-                usernameChanged ? existing.Username : "(unchanged)",
-                usernameChanged ? user.Username : "(unchanged)",
-                globalNameChanged ? existing.GlobalName : "(unchanged)",
-                globalNameChanged ? user.GlobalName : "(unchanged)");
-
-            return UpsertResult<Guid>.Success(existing.Id);
+            logger.LogError("User upsert lost the row for user {UserId} after detecting a name change", user.Id);
+            return UpsertResult<Guid>.Failure($"User upsert lost the row for DiscordId={user.Id}");
         }
 
-        // No name change (or a brand-new user): a single set-based upsert. One statement, race-safe
-        // insert-or-update, and — unlike SaveChanges — it never flushes a caller's staged entities.
+        entity.Username = user.Username;
+        entity.GlobalName = user.GlobalName;
+        entity.Discriminator = user.Discriminator;
+        entity.AvatarHash = user.AvatarHash;
+
+        db.UserNameHistory.Add(new UserNameHistoryEntity
+        {
+            UserId = existingId,
+            UsernameBefore = usernameChanged ? oldUsername : null,
+            UsernameAfter = usernameChanged ? user.Username : null,
+            GlobalNameBefore = globalNameChanged ? oldGlobalName : null,
+            GlobalNameAfter = globalNameChanged ? user.GlobalName : null,
+            ChangedAtUtc = DateTime.UtcNow
+        });
+
+        await db.SaveChangesAsync();
+
+        logger.LogInformation(
+            "User name changed for {UserId}: username {OldUsername} → {NewUsername}, global name {OldGlobalName} → {NewGlobalName}",
+            user.Id,
+            usernameChanged ? oldUsername : "(unchanged)",
+            usernameChanged ? user.Username : "(unchanged)",
+            globalNameChanged ? oldGlobalName : "(unchanged)",
+            globalNameChanged ? user.GlobalName : "(unchanged)");
+
+        return UpsertResult<Guid>.Success(existingId);
+    }
+
+    // No name change (or a brand-new user): a single set-based upsert. One statement, race-safe
+    // insert-or-update, and — unlike SaveChanges — it never flushes a caller's staged entities.
+    private async Task<UpsertResult<Guid>> UpsertUserUnchangedAsync(DiscordUser user)
+    {
         var id = await db.Users.UpsertAsync(
             u => u.DiscordId == user.Id,
             s => s
