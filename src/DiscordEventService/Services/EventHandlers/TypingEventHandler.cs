@@ -26,7 +26,7 @@ internal sealed class TypingEventHandler(EventPipeline pipeline, IMemoryCache ca
                     UserDiscordId = e.User.Id,
                     ChannelDiscordId = e.Channel.Id,
                     GuildDiscordId = e.Guild?.Id,
-                    StartedAt = e.StartedAt.UtcDateTime,
+                    StartedAtUtc = e.StartedAt.UtcDateTime,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
                     RawEventJson = ctx.RawJson
                 };

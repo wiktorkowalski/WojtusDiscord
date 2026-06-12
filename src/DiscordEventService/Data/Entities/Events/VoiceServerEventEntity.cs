@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations;
 
 namespace DiscordEventService.Data.Entities.Events;
 
@@ -7,7 +6,6 @@ public class VoiceServerEventEntity
     public Guid Id { get; set; }
     public ulong GuildDiscordId { get; set; }
 
-    [MaxLength(256)]
     public string? Endpoint { get; set; }
 
     // Note: We intentionally do NOT store the voice server token for security reasons

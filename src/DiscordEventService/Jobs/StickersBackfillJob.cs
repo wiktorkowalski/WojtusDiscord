@@ -9,6 +9,8 @@ internal sealed class StickersBackfillJob(
     DiscordClient discordClient,
     BackfillJobExecutor executor) : BackfillJobBase, IBackfillJob
 {
+    private const int SaveProgressInterval = 50;
+
     protected override BackfillType BackfillType => BackfillType.Stickers;
 
     public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
@@ -27,7 +29,7 @@ internal sealed class StickersBackfillJob(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var tags = sticker.Tags != null ? string.Join(",", sticker.Tags) : null;
+                var tags = sticker.Tags is not null ? string.Join(",", sticker.Tags) : null;
 
                 await ctx.Db.Stickers.UpsertAsync(
                     s => s.DiscordId == sticker.Id,
@@ -57,8 +59,8 @@ internal sealed class StickersBackfillJob(
 
                 ctx.Checkpoint.ProcessedCount++;
 
-                if (ctx.Checkpoint.ProcessedCount % 50 == 0)
-                    await SaveProgressAsync(ctx.Db, ctx.Checkpoint);
+                if (ctx.Checkpoint.ProcessedCount % SaveProgressInterval == 0)
+                    await SaveProgressAsync(ctx.Db, ctx.Checkpoint, cancellationToken);
             }
 
             return BackfillOutcome.Completed;

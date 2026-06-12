@@ -47,7 +47,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
             query = query.Where(r => r.ReceivedAtUtc >= sinceUtc);
         }
         if (failedOnly)
-            query = query.Where(r => r.SerializationFailed);
+            query = query.Where(r => r.IsSerializationFailed);
 
         var total = await query.LongCountAsync(ct);
         var items = await query
@@ -57,7 +57,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
             .Take(pageSize)
             .Select(r => new RawEventSummaryDto(
                 r.Id, r.EventType, r.GuildDiscordId, r.ChannelDiscordId, r.UserDiscordId,
-                r.ReceivedAtUtc, r.JsonSizeBytes, r.SerializationFailed))
+                r.ReceivedAtUtc, r.JsonSizeBytes, r.IsSerializationFailed))
             .ToListAsync(ct);
 
         return Ok(new PagedResult<RawEventSummaryDto>(items, total, page, pageSize));
@@ -77,7 +77,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
                 r.UserDiscordId,
                 r.ReceivedAtUtc,
                 r.JsonSizeBytes,
-                r.SerializationFailed,
+                r.IsSerializationFailed,
                 r.CorrelationId,
                 r.EventJson,
             })
@@ -88,7 +88,7 @@ public sealed class RawEventsController(DiscordDbContext db) : ControllerBase
 
         return Ok(new RawEventDetailDto(
             row.Id, row.EventType, row.GuildDiscordId, row.ChannelDiscordId, row.UserDiscordId,
-            row.ReceivedAtUtc, row.JsonSizeBytes, row.SerializationFailed, row.CorrelationId,
+            row.ReceivedAtUtc, row.JsonSizeBytes, row.IsSerializationFailed, row.CorrelationId,
             JsonPayload.Parse(row.EventJson)));
     }
 }

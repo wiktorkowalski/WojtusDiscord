@@ -13,17 +13,23 @@ public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : 
 {
     private static readonly TimeSpan InvisibilityTimeout = TimeSpan.FromSeconds(5);
 
+    // Tuned against InvisibilityTimeout: the job must outlive several invisibility
+    // windows, and the waits must cover fetch + (for fixed mode) one re-fetch.
+    private const int JobRuntimeMs = 12_000;
+    private static readonly TimeSpan FirstExecutionTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan RefetchTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan SettleWindow = TimeSpan.FromSeconds(16);
+    private static readonly TimeSpan PollDelay = TimeSpan.FromMilliseconds(100);
+
     [Fact]
     public async Task SlidingInvisibility_JobOutlivingTimeout_ExecutesExactlyOnce()
     {
         using var server = StartServer("hangfire_sliding", useSliding: true, out var storage);
 
-        new BackgroundJobClient(storage).Enqueue(() => SlowJobProbe.Run("sliding", 12_000));
+        new BackgroundJobClient(storage).Enqueue(() => SlowJobProbe.Run("sliding", JobRuntimeMs));
 
-        Assert.True(await WaitFor(() => SlowJobProbe.ExecutionCount("sliding") >= 1, TimeSpan.FromSeconds(10)));
-        // Cover the rest of the job's runtime plus two invisibility windows —
-        // the span where fixed mode demonstrably re-fetches.
-        await Task.Delay(TimeSpan.FromSeconds(16));
+        Assert.True(await WaitFor(() => SlowJobProbe.ExecutionCount("sliding") >= 1, FirstExecutionTimeout));
+        await Task.Delay(SettleWindow);
 
         Assert.Equal(1, SlowJobProbe.ExecutionCount("sliding"));
     }
@@ -35,10 +41,10 @@ public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : 
 
         try
         {
-            new BackgroundJobClient(storage).Enqueue(() => SlowJobProbe.Run("fixed", 12_000));
+            new BackgroundJobClient(storage).Enqueue(() => SlowJobProbe.Run("fixed", JobRuntimeMs));
 
             Assert.True(
-                await WaitFor(() => SlowJobProbe.ExecutionCount("fixed") >= 2, TimeSpan.FromSeconds(20)),
+                await WaitFor(() => SlowJobProbe.ExecutionCount("fixed") >= 2, RefetchTimeout),
                 "job outliving a fixed InvisibilityTimeout was expected to be re-fetched");
         }
         finally
@@ -75,7 +81,7 @@ public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : 
             if (condition())
                 return true;
 
-            await Task.Delay(100);
+            await Task.Delay(PollDelay);
         }
 
         return condition();

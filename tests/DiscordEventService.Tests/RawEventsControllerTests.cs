@@ -89,7 +89,7 @@ public sealed class RawEventsControllerTests(PostgresFixture fixture) : IClassFi
                 GuildDiscordId = 742554855180206203UL,
                 EventJson = "{\"sample\":true}",
                 JsonSizeBytes = 16,
-                SerializationFailed = failed,
+                IsSerializationFailed = failed,
                 ReceivedAtUtc = t.AddMinutes(i++),
             });
         }

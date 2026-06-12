@@ -233,7 +233,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     {
         await using var provider = BuildProvider(configured ? [ChannelDiscordId] : [], jobClient);
         using var scope = provider.CreateScope();
-        await scope.ServiceProvider.GetRequiredService<MemeIndexSweepJob>().ExecuteAsync();
+        await scope.ServiceProvider.GetRequiredService<MemeIndexSweepJob>().ExecuteAsync(CancellationToken.None);
     }
 
     private ServiceProvider BuildProvider(ulong[]? channelIds = null, IBackgroundJobClient? jobClient = null)

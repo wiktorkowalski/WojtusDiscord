@@ -13,6 +13,8 @@ internal sealed class ReactionsBackfillJob(
     BackfillJobExecutor executor,
     ILogger<ReactionsBackfillJob> logger) : BackfillJobBase, IBackfillJob
 {
+    private const int MessageBatchSize = 100;
+
     protected override BackfillType BackfillType => BackfillType.Reactions;
 
     private static readonly TimeSpan DelayBetweenBatches = TimeSpan.FromMilliseconds(200);
@@ -64,7 +66,6 @@ internal sealed class ReactionsBackfillJob(
         DateTime? afterTimestampUtc,
         CancellationToken cancellationToken)
     {
-        const int messageBatchSize = 100;
         var beforeId = checkpoint.LastProcessedId;
         var hasMore = true;
 
@@ -76,8 +77,8 @@ internal sealed class ReactionsBackfillJob(
             try
             {
                 var asyncMessages = beforeId.HasValue
-                    ? channel.GetMessagesBeforeAsync(beforeId.Value, messageBatchSize)
-                    : channel.GetMessagesAsync(messageBatchSize);
+                    ? channel.GetMessagesBeforeAsync(beforeId.Value, MessageBatchSize)
+                    : channel.GetMessagesAsync(MessageBatchSize);
 
                 messages = [];
                 await foreach (var msg in asyncMessages)
@@ -86,13 +87,13 @@ internal sealed class ReactionsBackfillJob(
             catch (DSharpPlus.Exceptions.UnauthorizedException ex)
             {
                 logger.LogWarning("No permission to read messages in channel {ChannelId}", channel.Id);
-                await RecordErrorAsync(db, checkpoint, ex);
+                await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
                 break;
             }
             catch (DSharpPlus.Exceptions.NotFoundException ex)
             {
                 logger.LogWarning("Channel {ChannelId} not found (may have been deleted)", channel.Id);
-                await RecordErrorAsync(db, checkpoint, ex);
+                await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
                 break;
             }
 
@@ -103,7 +104,7 @@ internal sealed class ReactionsBackfillJob(
             }
 
             var messagesWithReactions = messages
-                .Where(m => m.Reactions != null && m.Reactions.Count > 0)
+                .Where(m => m.Reactions is { Count: > 0 })
                 .ToList();
 
             foreach (var message in messagesWithReactions)
@@ -119,7 +120,7 @@ internal sealed class ReactionsBackfillJob(
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         logger.LogWarning(ex, "Failed to backfill reaction {Emoji} for message {MessageId}", reaction.Emoji.Name, message.Id);
-                        await RecordErrorAsync(db, checkpoint, ex);
+                        await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
                     }
                 }
             }

@@ -96,14 +96,14 @@ internal sealed class MessagesBackfillJob(
             catch (DSharpPlus.Exceptions.UnauthorizedException ex)
             {
                 logger.LogWarning("No permission to read messages in channel {ChannelId}", channel.Id);
-                await RecordErrorAsync(db, checkpoint, ex);
+                await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
                 exitReason = "UnauthorizedException";
                 break;
             }
             catch (DSharpPlus.Exceptions.NotFoundException ex)
             {
                 logger.LogWarning("Channel {ChannelId} not found (may have been deleted)", channel.Id);
-                await RecordErrorAsync(db, checkpoint, ex);
+                await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
                 exitReason = "NotFoundException";
                 break;
             }
@@ -207,7 +207,7 @@ internal sealed class MessagesBackfillJob(
                 catch (Exception ex)
                 {
                     logger.LogWarning(ex, "Failed to process message {MessageId}", message.Id);
-                    await RecordErrorAsync(db, checkpoint, ex);
+                    await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
                 }
             }
 

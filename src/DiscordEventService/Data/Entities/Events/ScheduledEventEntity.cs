@@ -25,8 +25,8 @@ public class ScheduledEventEntity
     public string? Description { get; set; }
     public int? Status { get; set; }
     public int? EntityType { get; set; }
-    public DateTime? ScheduledStartTime { get; set; }
-    public DateTime? ScheduledEndTime { get; set; }
+    public DateTime? ScheduledStartTimeUtc { get; set; }
+    public DateTime? ScheduledEndTimeUtc { get; set; }
 
     // For user add/remove events
     public ulong? UserDiscordId { get; set; }

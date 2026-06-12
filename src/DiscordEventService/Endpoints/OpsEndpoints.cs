@@ -1,5 +1,6 @@
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services;
+using Microsoft.AspNetCore.Mvc;
 
 namespace DiscordEventService.Endpoints;
 
@@ -59,12 +60,12 @@ internal static class OpsEndpoints
     }
 
     private static async Task<IResult> ReplayOrphans(
-        string event_type,
+        [FromQuery(Name = "event_type")] string eventType,
         OrphanReplayService svc,
         CancellationToken ct)
     {
-        if (!string.Equals(event_type, "GuildMemberUpdated", StringComparison.Ordinal))
-            return Results.BadRequest(new { error = $"event_type '{event_type}' not yet supported" });
+        if (!string.Equals(eventType, "GuildMemberUpdated", StringComparison.Ordinal))
+            return Results.BadRequest(new { error = $"event_type '{eventType}' not yet supported" });
 
         var result = await svc.ReplayMemberUpdateOrphansAsync(ct);
         return Results.Ok(result);

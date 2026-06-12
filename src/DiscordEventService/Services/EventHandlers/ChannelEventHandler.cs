@@ -23,20 +23,6 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
 
-                ChannelEventEntity NewChannelEvent() => new ChannelEventEntity
-                {
-                    ChannelDiscordId = e.Channel.Id,
-                    GuildDiscordId = e.Guild.Id,
-                    ChannelType = (int)e.Channel.Type,
-                    EventType = ChannelEventType.Created,
-                    NameAfter = e.Channel.Name,
-                    TopicAfter = e.Channel.Topic,
-                    PositionAfter = e.Channel.Position,
-                    EventTimestampUtc = ctx.ReceivedAtUtc,
-                    ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson,
-                };
-
                 // Upsert the channel (handles the 23505 race internally) before staging the event,
                 // then commit channel + event together. ExecutionStrategy is required because
                 // EnableRetryOnFailure is configured on the DbContext.
@@ -79,7 +65,19 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
                         },
                         c => c.Id);
 
-                    ctx.Db.ChannelEvents.Add(NewChannelEvent());
+                    ctx.Db.ChannelEvents.Add(new ChannelEventEntity
+                    {
+                        ChannelDiscordId = e.Channel.Id,
+                        GuildDiscordId = e.Guild.Id,
+                        ChannelType = (int)e.Channel.Type,
+                        EventType = ChannelEventType.Created,
+                        NameAfter = e.Channel.Name,
+                        TopicAfter = e.Channel.Topic,
+                        PositionAfter = e.Channel.Position,
+                        EventTimestampUtc = ctx.ReceivedAtUtc,
+                        ReceivedAtUtc = ctx.ReceivedAtUtc,
+                        RawEventJson = ctx.RawJson,
+                    });
                     await ctx.Db.SaveChangesAsync();
                     await tx.CommitAsync();
                 });
@@ -94,7 +92,7 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
                 var channelEntity = await ctx.Db.Channels
                     .FirstOrDefaultAsync(c => c.DiscordId == e.ChannelAfter.Id);
 
-                if (channelEntity != null)
+                if (channelEntity is not null)
                     UpdateChannelEntity(channelEntity, e.ChannelAfter);
 
                 var channelEvent = new ChannelEventEntity
@@ -139,7 +137,7 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
                 var channelEntity = await ctx.Db.Channels
                     .FirstOrDefaultAsync(c => c.DiscordId == e.Channel.Id);
 
-                if (channelEntity != null)
+                if (channelEntity is not null)
                 {
                     channelEntity.IsDeleted = true;
                     channelEntity.DeletedAtUtc = ctx.ReceivedAtUtc;

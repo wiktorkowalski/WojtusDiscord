@@ -64,15 +64,22 @@ builder.Services.AddOptions<MemeIndexOptions>()
 var connectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? throw new InvalidOperationException("ConnectionStrings:Postgres is required");
 
-// Database with connection resiliency and snake_case naming
-builder.Services.AddDbContext<DiscordDbContext>(options =>
-    options.UseNpgsql(
-        connectionString,
-        npgsqlOptions => npgsqlOptions.EnableRetryOnFailure(
-            maxRetryCount: 3,
-            maxRetryDelay: TimeSpan.FromSeconds(5),
-            errorCodesToAdd: null))
-    .UseSnakeCaseNamingConvention());
+// Database with connection resiliency and snake_case naming; registered identically
+// in the root container and the DSharpPlus child container.
+const int dbMaxRetryCount = 3;
+var dbMaxRetryDelay = TimeSpan.FromSeconds(5);
+
+void AddDiscordDbContext(IServiceCollection services) =>
+    services.AddDbContext<DiscordDbContext>(options =>
+        options.UseNpgsql(
+            connectionString,
+            npgsqlOptions => npgsqlOptions.EnableRetryOnFailure(
+                maxRetryCount: dbMaxRetryCount,
+                maxRetryDelay: dbMaxRetryDelay,
+                errorCodesToAdd: null))
+        .UseSnakeCaseNamingConvention());
+
+AddDiscordDbContext(builder.Services);
 
 // Discord Client with services configured for DI
 var discordToken = builder.Configuration.GetSection(DiscordOptions.SectionName).Get<DiscordOptions>()?.Token
@@ -89,14 +96,7 @@ builder.Services.AddSingleton(rootSp =>
     // containers + StartupValidator pick them up automatically).
     clientBuilder.ConfigureServices(services =>
     {
-        services.AddDbContext<DiscordDbContext>(options =>
-            options.UseNpgsql(
-                connectionString,
-                npgsqlOptions => npgsqlOptions.EnableRetryOnFailure(
-                    maxRetryCount: 3,
-                    maxRetryDelay: TimeSpan.FromSeconds(5),
-                    errorCodesToAdd: null))
-            .UseSnakeCaseNamingConvention());
+        AddDiscordDbContext(services);
 
         services.AddSingleton<IHostEnvironment>(builder.Environment);
         services.AddSingleton<EventPipeline>();
@@ -204,22 +204,26 @@ builder.Services.AddHttpClient();
 builder.Services.AddScoped<HealthCheckJob>();
 
 // Meme indexing (#219): OpenRouter vision calls + Discord CDN image downloads.
+var openRouterTimeout = TimeSpan.FromMinutes(2);
+var memeDownloadTimeout = TimeSpan.FromMinutes(1);
+var urlRefreshTimeout = TimeSpan.FromSeconds(30);
+
 builder.Services.AddHttpClient(OpenRouterClient.HttpClientName)
     .ConfigureHttpClient((sp, client) =>
     {
         var openRouter = sp.GetRequiredService<IOptions<OpenRouterOptions>>().Value;
         client.BaseAddress = new Uri(openRouter.BaseUrl.TrimEnd('/') + "/");
-        client.Timeout = TimeSpan.FromMinutes(2);
+        client.Timeout = openRouterTimeout;
     });
 
 builder.Services.AddHttpClient(MemeBenchmarkJob.DownloadHttpClientName)
-    .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromMinutes(1));
+    .ConfigureHttpClient(client => client.Timeout = memeDownloadTimeout);
 
 builder.Services.AddHttpClient(AttachmentUrlRefreshService.HttpClientName)
     .ConfigureHttpClient(client =>
     {
         client.BaseAddress = new Uri("https://discord.com/api/v10/");
-        client.Timeout = TimeSpan.FromSeconds(30);
+        client.Timeout = urlRefreshTimeout;
     });
 
 builder.Services.AddScoped<OpenRouterClient>();
@@ -238,6 +242,9 @@ builder.Services.AddScoped<MemeIndexSweepJob>();
 // the timeout only governs how fast a genuinely crashed worker's job is
 // re-picked. Sliding requires the storage background processes — incompatible
 // with BackgroundJobServerOptions.IsLightweightServer.
+var hangfireInvisibilityTimeout = TimeSpan.FromMinutes(15);
+const int hangfireWorkerCount = 2;
+
 builder.Services.AddHangfire(config => config
     .SetDataCompatibilityLevel(CompatibilityLevel.Version_180)
     .UseSimpleAssemblyNameTypeSerializer()
@@ -247,12 +254,12 @@ builder.Services.AddHangfire(config => config
         new Hangfire.PostgreSql.PostgreSqlStorageOptions
         {
             UseSlidingInvisibilityTimeout = true,
-            InvisibilityTimeout = TimeSpan.FromMinutes(15)
+            InvisibilityTimeout = hangfireInvisibilityTimeout
         }));
 
 builder.Services.AddHangfireServer(options =>
 {
-    options.WorkerCount = 2;
+    options.WorkerCount = hangfireWorkerCount;
     options.Queues = ["backfill", "default"];
 });
 
@@ -318,7 +325,8 @@ RecurringJob.AddOrUpdate<PeriodicFullBackfillJob>(
 
 RecurringJob.AddOrUpdate<HealthCheckJob>(
     "health-check",
-    j => j.ExecuteAsync(),
+    // Hangfire swaps CancellationToken.None for the real shutdown token at execution.
+    j => j.ExecuteAsync(CancellationToken.None),
     "*/5 * * * *"); // Every 5 minutes
 
 // Weekly meme-index healing sweep (#222) — indexes attachments the live
@@ -327,7 +335,7 @@ RecurringJob.AddOrUpdate<HealthCheckJob>(
 // recovers are already in the DB. No-op while meme indexing is unconfigured.
 RecurringJob.AddOrUpdate<MemeIndexSweepJob>(
     "meme-index-sweep",
-    j => j.ExecuteAsync(),
+    j => j.ExecuteAsync(CancellationToken.None),
     "0 5 * * 0"); // Sundays 05:00 UTC
 
 app.MapBackfillEndpoints();

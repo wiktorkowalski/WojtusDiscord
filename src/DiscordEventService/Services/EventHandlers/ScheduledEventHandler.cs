@@ -35,8 +35,8 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
                     Description = e.Event.Description,
                     Status = (int)e.Event.Status,
                     EntityType = (int)e.Event.Type,
-                    ScheduledStartTime = e.Event.StartTime.UtcDateTime,
-                    ScheduledEndTime = e.Event.EndTime?.UtcDateTime,
+                    ScheduledStartTimeUtc = e.Event.StartTime.UtcDateTime,
+                    ScheduledEndTimeUtc = e.Event.EndTime?.UtcDateTime,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
                     RawEventJson = ctx.RawJson
@@ -64,8 +64,8 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
                     Description = e.EventAfter.Description,
                     Status = (int)e.EventAfter.Status,
                     EntityType = (int)e.EventAfter.Type,
-                    ScheduledStartTime = e.EventAfter.StartTime.UtcDateTime,
-                    ScheduledEndTime = e.EventAfter.EndTime?.UtcDateTime,
+                    ScheduledStartTimeUtc = e.EventAfter.StartTime.UtcDateTime,
+                    ScheduledEndTimeUtc = e.EventAfter.EndTime?.UtcDateTime,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
                     RawEventJson = ctx.RawJson
@@ -194,7 +194,7 @@ internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
             : null;
 
         var existing = await db.GuildScheduledEvents.FirstOrDefaultAsync(s => s.DiscordId == evt.Id);
-        if (existing == null)
+        if (existing is null)
         {
             existing = new GuildScheduledEventEntity { DiscordId = evt.Id };
             db.GuildScheduledEvents.Add(existing);

@@ -69,14 +69,14 @@ public sealed class HealthCheckEventRatioTests(PostgresFixture fixture)
             NullLogger<HealthCheckJob>.Instance);
 
         // Runs 1 & 2: drop detected but below the consecutive-run threshold -> stays silent.
-        await job.ExecuteAsync();
-        await job.ExecuteAsync();
+        await job.ExecuteAsync(CancellationToken.None);
+        await job.ExecuteAsync(CancellationToken.None);
         Assert.Empty(handler.Bodies);
 
         // Run 3: streak reaches 3 -> alert fires. MessageCreated has an identical baseline/recent
         // profile to the voice type, so its presence proves the collapse *would* trip an alert —
         // the voice type's absence is therefore solely due to the exclusion list, not quiet data.
-        await job.ExecuteAsync();
+        await job.ExecuteAsync(CancellationToken.None);
         var body = Assert.Single(handler.Bodies);
         Assert.Contains("MessageCreated", body);
         Assert.Contains("1 event type(s)", body);     // exactly one type reported...

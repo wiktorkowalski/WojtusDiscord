@@ -73,7 +73,7 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
                 r.UserDiscordId,
                 r.ReceivedAtUtc,
                 r.JsonSizeBytes,
-                r.SerializationFailed,
+                r.IsSerializationFailed,
                 r.EventJson,
             })
             .ToListAsync(ct);
@@ -90,7 +90,7 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
             r.UserDiscordId,
             r.ReceivedAtUtc,
             r.JsonSizeBytes,
-            r.SerializationFailed,
+            r.IsSerializationFailed,
             JsonPayload.Parse(r.EventJson))).ToList();
 
         var nextCursor = hasMore && events.Count > 0

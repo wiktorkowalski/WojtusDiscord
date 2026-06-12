@@ -153,7 +153,7 @@ internal static class UuidV7Extensions
         foreach (var entityType in modelBuilder.Model.GetEntityTypes())
         {
             var idProperty = entityType.FindProperty("Id");
-            if (idProperty != null && idProperty.ClrType == typeof(Guid))
+            if (idProperty is not null && idProperty.ClrType == typeof(Guid))
                 idProperty.SetDefaultValueSql("uuidv7()");
         }
     }

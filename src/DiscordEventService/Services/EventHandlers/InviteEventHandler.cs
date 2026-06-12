@@ -23,7 +23,7 @@ internal sealed class InviteEventHandler(EventPipeline pipeline) :
                 var guildResult = await guildUpsert.UpsertGuildAsync(e.Guild);
                 var channelResult = await channelUpsert.UpsertChannelAsync(e.Channel, guildResult.Value);
                 Guid? inviterGuid = null;
-                if (e.Invite.Inviter != null)
+                if (e.Invite.Inviter is not null)
                 {
                     var inviterResult = await userService.UpsertUserAsync(e.Invite.Inviter);
                     inviterGuid = inviterResult.IsSuccess ? inviterResult.Value : null;
@@ -31,7 +31,7 @@ internal sealed class InviteEventHandler(EventPipeline pipeline) :
 
                 var invite = e.Invite;
                 var inviteEntity = await ctx.Db.Invites.FirstOrDefaultAsync(i => i.Code == invite.Code);
-                if (inviteEntity == null)
+                if (inviteEntity is null)
                 {
                     inviteEntity = new InviteEntity { Code = invite.Code };
                     ctx.Db.Invites.Add(inviteEntity);

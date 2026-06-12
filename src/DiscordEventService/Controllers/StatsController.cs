@@ -26,6 +26,15 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // the query uses one, e.g. $"... r.{ReactionPresentSql}".
     private const string ReactionPresentSql = "event_type IN (0, 4)";
 
+    // List-size tuning knobs for the dashboard endpoints.
+    private const int OverviewTopEmojis = 5;
+    private const int TopEventTypesLimit = 15;
+    private const int LeaderboardSize = 20;
+    private const int BehaviorListSize = 25;
+    private const int CommunityLeaderboardSize = 6;
+    private const int ChannelActivityLimit = 50;
+    private const int SpotifyListSize = 5;
+
     // Shared query bodies: the home Overview tile and the dedicated Stats endpoint run
     // the same aggregation with a different LIMIT, so each is defined once (append the
     // limit at the call site) to keep the two in sync.
@@ -149,7 +158,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             """,
             r => new DailyPointDto(r.GetString(0), r.GetInt64(1)), ct);
 
-        var topEmojis = await TopEmojisAsync(5, ct);
+        var topEmojis = await TopEmojisAsync(OverviewTopEmojis, ct);
 
         return new OverviewDto(
             messages.Total, reactions.Total, counts.Events, voiceMinutes,
@@ -173,12 +182,12 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     [HttpGet("volume/by-type")]
     public Task<List<VolumeByTypeDto>> VolumeByType(CancellationToken ct) =>
         db.RawEventLogs.AsNoTracking()
-            .Where(e => !e.SerializationFailed)
+            .Where(e => !e.IsSerializationFailed)
             .GroupBy(e => e.EventType)
             .Select(g => new { EventType = g.Key, Count = g.LongCount() })
             .OrderByDescending(x => x.Count)
             .ThenBy(x => x.EventType)
-            .Take(15)
+            .Take(TopEventTypesLimit)
             .Select(x => new VolumeByTypeDto(x.EventType, x.Count))
             .ToListAsync(ct);
 
@@ -193,7 +202,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
 
     [HttpGet("people/top-messages")]
     public Task<List<UserStatDto>> TopMessages(CancellationToken ct) =>
-        TopChatters().Take(20).ToListAsync(ct);
+        TopChatters().Take(LeaderboardSize).ToListAsync(ct);
 
     // Reactions GIVEN per user. LEFT-join semantics (a reactor with no stored user row keeps
     // a null username) are preserved by resolving the user via a correlated lookup on the
@@ -205,7 +214,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(g => new { UserDiscordId = g.Key, Count = g.LongCount() })
             .OrderByDescending(x => x.Count)
             .ThenBy(x => x.UserDiscordId)
-            .Take(20)
+            .Take(LeaderboardSize)
             .Select(x => new UserStatDto(
                 db.Users.Where(u => u.DiscordId == x.UserDiscordId).Select(u => u.Username).FirstOrDefault(),
                 x.UserDiscordId,
@@ -223,7 +232,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Count = g.LongCount() })
             .OrderByDescending(x => x.Count)
             .ThenBy(x => x.DiscordId)
-            .Take(20)
+            .Take(LeaderboardSize)
             .Select(x => new UserStatDto(x.Username, x.DiscordId, x.Count, x.AvatarHash))
             .ToListAsync(ct);
 
@@ -241,17 +250,17 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         ) v
         LEFT JOIN users u ON u.discord_id = v.user_discord_id
         WHERE v.channel_discord_id_after IS NOT NULL AND v.next_ts IS NOT NULL
-        GROUP BY u.username, v.user_discord_id, u.avatar_hash ORDER BY minutes DESC, v.user_discord_id LIMIT 20
+        GROUP BY u.username, v.user_discord_id, u.avatar_hash ORDER BY minutes DESC, v.user_discord_id LIMIT {LeaderboardSize}
         """,
         r => new VoiceStatDto(NullableString(r, 0), Snowflake(r, 1), r.GetInt64(2), NullableString(r, 3)), ct);
 
     [HttpGet("places/channel-activity")]
     public Task<List<ChannelActivityDto>> ChannelActivity(CancellationToken ct) => QueryAsync(
-        $"{ChannelActivitySql} 50",
+        $"{ChannelActivitySql} {ChannelActivityLimit}",
         r => new ChannelActivityDto(r.GetString(0), Snowflake(r, 1), r.GetInt64(2), r.GetInt64(3)), ct);
 
     [HttpGet("behavior/top-emojis")]
-    public Task<List<EmojiStatDto>> TopEmojis(CancellationToken ct) => TopEmojisAsync(25, ct);
+    public Task<List<EmojiStatDto>> TopEmojis(CancellationToken ct) => TopEmojisAsync(BehaviorListSize, ct);
 
     // Includes presence artifacts such as "Custom Status" and "Playing N/10" —
     // surfaced (not hidden) with a UI note.
@@ -263,7 +272,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(g => new { Name = g.Key!, Count = g.LongCount() })
             .OrderByDescending(x => x.Count)
             .ThenBy(x => x.Name)
-            .Take(25)
+            .Take(BehaviorListSize)
             .Select(x => new ActivityStatDto(x.Name, x.Count))
             .ToListAsync(ct);
 
@@ -335,7 +344,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Value = g.LongCount() })
             .OrderByDescending(x => x.Value)
             .ThenBy(x => x.DiscordId)
-            .Take(6)
+            .Take(CommunityLeaderboardSize)
             .Select(x => new CommunityLeaderEntryDto(x.Username, x.DiscordId, x.AvatarHash, x.Value))
             .ToListAsync(ct);
 
@@ -345,7 +354,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Value = g.LongCount() })
             .OrderByDescending(x => x.Value)
             .ThenBy(x => x.DiscordId)
-            .Take(6)
+            .Take(CommunityLeaderboardSize)
             .Select(x => new CommunityLeaderEntryDto(x.Username, x.DiscordId, x.AvatarHash, x.Value))
             .ToListAsync(ct);
 
@@ -360,7 +369,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Select(g => new { g.Key.Username, g.Key.DiscordId, g.Key.AvatarHash, Value = g.LongCount() })
             .OrderByDescending(x => x.Value)
             .ThenBy(x => x.DiscordId)
-            .Take(6)
+            .Take(CommunityLeaderboardSize)
             .Select(x => new CommunityLeaderEntryDto(x.Username, x.DiscordId, x.AvatarHash, x.Value))
             .ToListAsync(ct);
 
@@ -376,7 +385,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             LEFT JOIN users u ON u.discord_id = v.user_discord_id
             WHERE v.channel_discord_id_after IS NOT NULL AND v.next_ts IS NOT NULL
               AND v.received_at_utc BETWEEN {Sql(curStart)} AND {Sql(curEnd)}
-            GROUP BY u.username, v.user_discord_id, u.avatar_hash ORDER BY 4 DESC, v.user_discord_id LIMIT 6
+            GROUP BY u.username, v.user_discord_id, u.avatar_hash ORDER BY 4 DESC, v.user_discord_id LIMIT {CommunityLeaderboardSize}
             """, ct);
 
         var leaderboards = new CommunityLeaderboardsDto(topChatters, memeLords, reactionsReceived, voice);
@@ -399,7 +408,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .Where(a => a.ActivityType == 2 && a.IsActive)
             .OrderByDescending(a => a.LastSeenAtUtc)
             .ThenBy(a => a.Id)
-            .Take(5)
+            .Take(SpotifyListSize)
             .Select(a => new
             {
                 a.User!.DiscordId,
@@ -438,7 +447,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             })
             .OrderByDescending(x => x.Plays)
             .ThenBy(x => x.Track)
-            .Take(5)
+            .Take(SpotifyListSize)
             .ToListAsync(ct);
 
         var topTracks = topTrackRows

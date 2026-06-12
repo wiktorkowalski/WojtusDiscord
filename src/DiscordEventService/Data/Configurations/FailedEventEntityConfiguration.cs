@@ -13,5 +13,9 @@ internal sealed class FailedEventEntityConfiguration : IEntityTypeConfiguration<
         builder.HasIndex(f => new { f.IsResolved, f.FailedAtUtc });
         builder.HasIndex(f => f.EventType);
         builder.HasIndex(f => f.GuildDiscordId);
+
+        builder.Property(f => f.EventType).HasMaxLength(100);
+        builder.Property(f => f.HandlerName).HasMaxLength(200);
+        builder.Property(f => f.ExceptionType).HasMaxLength(500);
     }
 }

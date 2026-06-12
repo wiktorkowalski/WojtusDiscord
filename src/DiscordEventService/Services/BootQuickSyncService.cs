@@ -13,6 +13,9 @@ internal sealed class BootQuickSyncService(
     DiscordClient discordClient,
     ILogger<BootQuickSyncService> logger)
 {
+    // Per-channel recent-message fetch depth for the boot quick-sync.
+    private const int RecentMessagesPerChannel = 50;
+
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -46,7 +49,7 @@ internal sealed class BootQuickSyncService(
             try
             {
                 List<DiscordMessage> messages = [];
-                await foreach (var msg in channel.GetMessagesAsync(50))
+                await foreach (var msg in channel.GetMessagesAsync(RecentMessagesPerChannel))
                     messages.Add(msg);
 
                 if (messages.Count == 0) continue;
@@ -250,7 +253,7 @@ internal sealed class BootQuickSyncService(
 
     private static string? SerializeActivities(IReadOnlyList<DiscordActivity>? activities)
     {
-        if (activities == null || activities.Count == 0)
+        if (activities is null || activities.Count == 0)
             return null;
 
         var activityData = activities.Select(a => new

@@ -31,7 +31,7 @@ internal sealed class BanEventHandler(EventPipeline pipeline) :
                     var existingBan = await ctx.Db.Bans
                         .FirstOrDefaultAsync(b => b.GuildId == guildGuid && b.UserId == userGuid && b.IsActive);
 
-                    if (existingBan == null)
+                    if (existingBan is null)
                     {
                         ctx.Db.Bans.Add(new BanEntity
                         {

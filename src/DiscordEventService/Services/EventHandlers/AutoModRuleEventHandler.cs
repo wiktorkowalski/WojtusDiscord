@@ -47,7 +47,7 @@ internal sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
                     EventType = (int)e.Rule.EventType,
                     TriggerType = (int)e.Rule.TriggerType,
                     IsEnabled = e.Rule.IsEnabled,
-                    ActionsJson = e.Rule.Actions != null ? JsonSerializer.Serialize(e.Rule.Actions) : null,
+                    ActionsJson = e.Rule.Actions is not null ? JsonSerializer.Serialize(e.Rule.Actions) : null,
                 });
 
                 ctx.Db.AutoModRuleEvents.Add(new AutoModRuleEventEntity

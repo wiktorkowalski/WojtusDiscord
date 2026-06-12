@@ -47,24 +47,6 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
                 var channelId = fks.ChannelId;
                 var authorId = fks.UserId;
 
-                MessageEventEntity NewMessageEvent() => new MessageEventEntity
-                {
-                    MessageDiscordId = e.Message.Id,
-                    ChannelDiscordId = e.Channel.Id,
-                    AuthorDiscordId = e.Author.Id,
-                    GuildDiscordId = e.Guild.Id,
-                    EventType = MessageEventType.Created,
-                    Content = NormalizeContent(e.Message.Content),
-                    HasAttachments = e.Message.Attachments.Count > 0,
-                    HasEmbeds = e.Message.Embeds.Count > 0,
-                    ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
-                    AttachmentsJson = attachmentsJson,
-                    EmbedsJson = embedsJson,
-                    EventTimestampUtc = e.Message.Timestamp.UtcDateTime,
-                    ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson,
-                };
-
                 // Wrap message + event + mentions in one transaction so they commit atomically.
                 // ExecutionStrategy is required because EnableRetryOnFailure is configured on the
                 // DbContext. MessageCreated is insert-or-ignore: a duplicate carries identical
@@ -97,7 +79,23 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
                         });
 
                     var messageId = messageEntity!.Id;
-                    ctx.Db.MessageEvents.Add(NewMessageEvent());
+                    ctx.Db.MessageEvents.Add(new MessageEventEntity
+                    {
+                        MessageDiscordId = e.Message.Id,
+                        ChannelDiscordId = e.Channel.Id,
+                        AuthorDiscordId = e.Author.Id,
+                        GuildDiscordId = e.Guild.Id,
+                        EventType = MessageEventType.Created,
+                        Content = NormalizeContent(e.Message.Content),
+                        HasAttachments = e.Message.Attachments.Count > 0,
+                        HasEmbeds = e.Message.Embeds.Count > 0,
+                        ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
+                        AttachmentsJson = attachmentsJson,
+                        EmbedsJson = embedsJson,
+                        EventTimestampUtc = e.Message.Timestamp.UtcDateTime,
+                        ReceivedAtUtc = ctx.ReceivedAtUtc,
+                        RawEventJson = ctx.RawJson,
+                    });
                     await ctx.Db.SaveChangesAsync();
 
                     await ExtractAndSaveMentionsAsync(ctx.Db, messageId, e.Message);

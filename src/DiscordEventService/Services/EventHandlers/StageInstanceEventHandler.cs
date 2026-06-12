@@ -71,7 +71,7 @@ internal sealed class StageInstanceEventHandler(EventPipeline pipeline) :
                     EventType = StageInstanceEventType.Updated,
                     TopicBefore = e.StageInstanceBefore?.Topic,
                     TopicAfter = e.StageInstanceAfter.Topic,
-                    PrivacyLevelBefore = e.StageInstanceBefore != null ? (int)e.StageInstanceBefore.PrivacyLevel : null,
+                    PrivacyLevelBefore = e.StageInstanceBefore is not null ? (int)e.StageInstanceBefore.PrivacyLevel : null,
                     PrivacyLevelAfter = (int)e.StageInstanceAfter.PrivacyLevel,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,

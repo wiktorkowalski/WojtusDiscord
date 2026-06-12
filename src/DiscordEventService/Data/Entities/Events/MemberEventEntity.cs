@@ -21,8 +21,8 @@ public class MemberEventEntity
     public string? RolesAddedJson { get; set; }
     public string? RolesRemovedJson { get; set; }
     public DateTime? TimeoutUntilUtc { get; set; }
-    public DateTime? PremiumSinceBefore { get; set; }
-    public DateTime? PremiumSinceAfter { get; set; }
+    public DateTime? PremiumSinceBeforeUtc { get; set; }
+    public DateTime? PremiumSinceAfterUtc { get; set; }
     public string? GuildAvatarHashBefore { get; set; }
     public string? GuildAvatarHashAfter { get; set; }
     public bool? IsPendingBefore { get; set; }

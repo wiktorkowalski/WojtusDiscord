@@ -7,7 +7,7 @@ public class TypingEventEntity
     public ulong ChannelDiscordId { get; set; }
     public ulong? GuildDiscordId { get; set; }
 
-    public DateTime StartedAt { get; set; }
+    public DateTime StartedAtUtc { get; set; }
     public DateTime ReceivedAtUtc { get; set; }
 
     // Raw serialized event args from DSharpPlus for debugging

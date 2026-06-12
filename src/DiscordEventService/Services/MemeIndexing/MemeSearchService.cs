@@ -43,6 +43,8 @@ public sealed class MemeSearchService(DiscordDbContext db)
         var guild = (long)guildId;
         var indexed = (int)MemeIndexStatus.Indexed;
 
+        // Stays raw: the custom public.f_unaccent function and the setweight ts_rank
+        // + word_similarity blend have no EF LINQ translation.
         // Column names are snake_case: the EFCore.NamingConventions plugin
         // applies to SqlQuery DTOs too, so MemeSearchRow.Score binds to
         // "score", MessageCreatedAtUtc to "message_created_at_utc", etc.

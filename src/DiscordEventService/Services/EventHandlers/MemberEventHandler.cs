@@ -126,8 +126,8 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
                                 ? JsonSerializer.Serialize(rolesRemoved)
                                 : null,
                             TimeoutUntilUtc = e.CommunicationDisabledUntilAfter?.UtcDateTime,
-                            PremiumSinceBefore = premiumBefore?.UtcDateTime,
-                            PremiumSinceAfter = premiumAfter?.UtcDateTime,
+                            PremiumSinceBeforeUtc = premiumBefore?.UtcDateTime,
+                            PremiumSinceAfterUtc = premiumAfter?.UtcDateTime,
                             GuildAvatarHashBefore = e.GuildAvatarHashBefore,
                             GuildAvatarHashAfter = e.GuildAvatarHashAfter,
                             IsPendingBefore = e.PendingBefore,

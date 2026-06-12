@@ -22,18 +22,6 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
 
-                RoleEventEntity NewRoleEvent() => new RoleEventEntity
-                {
-                    RoleDiscordId = e.Role.Id,
-                    GuildDiscordId = e.Guild.Id,
-                    EventType = RoleEventType.Created,
-                    NameAfter = e.Role.Name,
-                    ColorAfter = e.Role.Color.Value,
-                    EventTimestampUtc = ctx.ReceivedAtUtc,
-                    ReceivedAtUtc = ctx.ReceivedAtUtc,
-                    RawEventJson = ctx.RawJson
-                };
-
                 var permissions = long.TryParse(e.Role.Permissions.ToString(), out var perm) ? perm : 0;
 
                 // Upsert the role (handles the 23505 race internally) before staging the event,
@@ -74,7 +62,17 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
                         },
                         r => r.Id);
 
-                    ctx.Db.RoleEvents.Add(NewRoleEvent());
+                    ctx.Db.RoleEvents.Add(new RoleEventEntity
+                    {
+                        RoleDiscordId = e.Role.Id,
+                        GuildDiscordId = e.Guild.Id,
+                        EventType = RoleEventType.Created,
+                        NameAfter = e.Role.Name,
+                        ColorAfter = e.Role.Color.Value,
+                        EventTimestampUtc = ctx.ReceivedAtUtc,
+                        ReceivedAtUtc = ctx.ReceivedAtUtc,
+                        RawEventJson = ctx.RawJson,
+                    });
                     await ctx.Db.SaveChangesAsync();
                     await tx.CommitAsync();
                 });
@@ -89,7 +87,7 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
                 var roleEntity = await ctx.Db.Roles
                     .FirstOrDefaultAsync(r => r.DiscordId == e.RoleAfter.Id);
 
-                if (roleEntity != null)
+                if (roleEntity is not null)
                     UpdateRoleEntity(roleEntity, e.RoleAfter);
 
                 var roleEvent = new RoleEventEntity
@@ -127,7 +125,7 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
                 var roleEntity = await ctx.Db.Roles
                     .FirstOrDefaultAsync(r => r.DiscordId == e.Role.Id);
 
-                if (roleEntity != null)
+                if (roleEntity is not null)
                 {
                     roleEntity.IsDeleted = true;
                     roleEntity.DeletedAtUtc = ctx.ReceivedAtUtc;

@@ -34,7 +34,7 @@ internal sealed class EmojiEventHandler(EventPipeline pipeline) :
                     var existing = await ctx.Db.Emotes
                         .Where(em => em.DiscordId == emoji.Id)
                         .FirstOrDefaultAsync();
-                    if (existing == null)
+                    if (existing is null)
                     {
                         ctx.Db.Emotes.Add(new EmoteEntity
                         {

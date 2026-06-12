@@ -70,7 +70,7 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
                 var existingGuild = await ctx.Db.Guilds
                     .Where(g => g.DiscordId == e.GuildAfter.Id)
                     .FirstOrDefaultAsync();
-                if (existingGuild != null)
+                if (existingGuild is not null)
                 {
                     existingGuild.Name = e.GuildAfter.Name;
                     existingGuild.IconHash = e.GuildAfter.IconHash;
@@ -89,7 +89,7 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
                 var existingGuild = await ctx.Db.Guilds
                     .Where(g => g.DiscordId == e.Guild.Id)
                     .FirstOrDefaultAsync();
-                if (existingGuild != null)
+                if (existingGuild is not null)
                 {
                     existingGuild.LeftAtUtc = ctx.ReceivedAtUtc;
                     await ctx.Db.SaveChangesAsync();

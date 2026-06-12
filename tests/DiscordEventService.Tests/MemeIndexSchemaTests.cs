@@ -8,6 +8,9 @@ namespace DiscordEventService.Tests;
 
 public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
+    // Mirrors the production trigram threshold in MemeSearchService.
+    private const double TrigramSimilarityThreshold = 0.4;
+
     private DiscordDbContext _db = null!;
     private MessageEntity _liveMessage = null!;
     private MessageEntity _deletedMessage = null!;
@@ -154,6 +157,8 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
         await using var connection = new NpgsqlConnection(fixture.Container.GetConnectionString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
+        // Raw SQL: LINQ cannot express the custom public.f_unaccent function or
+        // websearch_to_tsquery; this pins the migration-created FTS schema.
         command.CommandText = """
             SELECT attachment_discord_id FROM meme_index
             WHERE search_vector @@ websearch_to_tsquery('simple', public.f_unaccent($1))
@@ -168,12 +173,15 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
         await using var connection = new NpgsqlConnection(fixture.Container.GetConnectionString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
+        // Raw SQL: LINQ cannot express the custom public.f_unaccent / word_similarity
+        // trigram functions; this pins the migration-created trigram schema.
         command.CommandText = """
             SELECT attachment_discord_id FROM meme_index
-            WHERE word_similarity(public.f_unaccent($1), search_text) >= 0.4
+            WHERE word_similarity(public.f_unaccent($1), search_text) >= $2
             ORDER BY attachment_discord_id
             """;
         command.Parameters.AddWithValue(query);
+        command.Parameters.AddWithValue(TrigramSimilarityThreshold);
         return await ReadIds(command);
     }
 

@@ -16,6 +16,21 @@ internal sealed class ActivityEntityConfiguration : IEntityTypeConfiguration<Act
         builder.Property(a => a.SpotifyArtistsJson).HasColumnType("jsonb");
         builder.Property(a => a.ButtonsJson).HasColumnType("jsonb");
 
+        builder.Property(a => a.Name).HasMaxLength(256);
+        builder.Property(a => a.Details).HasMaxLength(1024);
+        builder.Property(a => a.State).HasMaxLength(1024);
+        builder.Property(a => a.LargeImageUrl).HasMaxLength(512);
+        builder.Property(a => a.LargeImageText).HasMaxLength(256);
+        builder.Property(a => a.SmallImageUrl).HasMaxLength(512);
+        builder.Property(a => a.SmallImageText).HasMaxLength(256);
+        builder.Property(a => a.PartyId).HasMaxLength(256);
+        builder.Property(a => a.SpotifyTrackId).HasMaxLength(256);
+        builder.Property(a => a.SpotifyAlbumArtUrl).HasMaxLength(512);
+        builder.Property(a => a.SpotifyAlbumTitle).HasMaxLength(256);
+        builder.Property(a => a.SpotifySongTitle).HasMaxLength(256);
+        builder.Property(a => a.StreamUrl).HasMaxLength(512);
+        builder.Property(a => a.CustomStatusEmojiName).HasMaxLength(256);
+
         builder.HasOne(a => a.User).WithMany(u => u.Activities)
             .HasForeignKey(a => a.UserId).OnDelete(DeleteBehavior.NoAction);
         builder.HasOne(a => a.Guild).WithMany(g => g.Activities)
