@@ -26,7 +26,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessageCreated", nameof(MessageEventHandler),
+        await pipeline.ExecuteAsync(e, "MessageCreated", nameof(MessageEventHandler),
             e.Guild.Id, e.Channel.Id, e.Author.Id, async ctx =>
             {
                 var attachmentsJson = e.Message.Attachments.Count > 0
@@ -110,7 +110,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessageUpdated", nameof(MessageEventHandler),
+        await pipeline.ExecuteAsync(e, "MessageUpdated", nameof(MessageEventHandler),
             e.Guild.Id, e.Channel.Id, e.Author?.Id, async ctx =>
             {
                 var attachmentsJson = e.Message.Attachments.Count > 0
@@ -225,7 +225,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessageDeleted", nameof(MessageEventHandler),
+        await pipeline.ExecuteAsync(e, "MessageDeleted", nameof(MessageEventHandler),
             e.Guild.Id, e.Channel.Id, e.Message.Author?.Id, async ctx =>
             {
                 await ctx.Db.Messages
@@ -255,7 +255,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessagesBulkDeleted", nameof(MessageEventHandler),
+        await pipeline.ExecuteAsync(e, "MessagesBulkDeleted", nameof(MessageEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 var messageIds = e.Messages.Select(m => m.Id).ToList();

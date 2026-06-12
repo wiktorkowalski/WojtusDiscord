@@ -14,7 +14,7 @@ internal sealed class IntegrationEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, IntegrationCreatedEventArgs e)
     {
-        await pipeline.Execute(e, "IntegrationCreated", nameof(IntegrationEventHandler),
+        await pipeline.ExecuteAsync(e, "IntegrationCreated", nameof(IntegrationEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
@@ -48,7 +48,7 @@ internal sealed class IntegrationEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, IntegrationUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "IntegrationUpdated", nameof(IntegrationEventHandler),
+        await pipeline.ExecuteAsync(e, "IntegrationUpdated", nameof(IntegrationEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 await ctx.Db.Integrations
@@ -76,7 +76,7 @@ internal sealed class IntegrationEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, IntegrationDeletedEventArgs e)
     {
-        await pipeline.Execute(e, "IntegrationDeleted", nameof(IntegrationEventHandler),
+        await pipeline.ExecuteAsync(e, "IntegrationDeleted", nameof(IntegrationEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 await ctx.Db.Integrations

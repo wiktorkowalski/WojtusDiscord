@@ -10,7 +10,7 @@ internal sealed class VoiceServerEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, VoiceServerUpdatedEventArgs args)
     {
-        await pipeline.Execute(args, "VoiceServerUpdated", nameof(VoiceServerEventHandler),
+        await pipeline.ExecuteAsync(args, "VoiceServerUpdated", nameof(VoiceServerEventHandler),
             args.Guild.Id, null, null, async ctx =>
             {
                 ctx.Db.VoiceServerEvents.Add(new VoiceServerEventEntity

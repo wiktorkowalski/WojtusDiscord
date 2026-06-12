@@ -18,7 +18,7 @@ internal sealed class TypingEventHandler(EventPipeline pipeline, IMemoryCache ca
             return;
         cache.Set(cacheKey, true, ThrottleWindow);
 
-        await pipeline.Execute(e, "TypingStarted", nameof(TypingEventHandler),
+        await pipeline.ExecuteAsync(e, "TypingStarted", nameof(TypingEventHandler),
             e.Guild?.Id ?? 0, e.Channel.Id, e.User.Id, async ctx =>
             {
                 var entity = new TypingEventEntity

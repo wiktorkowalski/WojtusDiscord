@@ -10,35 +10,35 @@ internal static class OpsEndpoints
     {
         var group = app.MapGroup("/api/ops");
 
-        group.MapPost("/downtime/start", StartDowntime)
-            .WithName("StartDowntime")
+        group.MapPost("/downtime/start", StartDowntimeAsync)
+            .WithName("StartDowntimeAsync")
             .Produces<DowntimeStartResponse>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest);
 
-        group.MapPost("/replay-orphans", ReplayOrphans)
-            .WithName("ReplayOrphans")
+        group.MapPost("/replay-orphans", ReplayOrphansAsync)
+            .WithName("ReplayOrphansAsync")
             .Produces<OrphanReplayResult>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest);
 
-        group.MapPost("/backfill-thread-channels", BackfillThreadChannels)
-            .WithName("BackfillThreadChannels")
+        group.MapPost("/backfill-thread-channels", BackfillThreadChannelsAsync)
+            .WithName("BackfillThreadChannelsAsync")
             .Produces<ThreadChannelBackfillService.Result>(StatusCodes.Status200OK);
 
-        group.MapPost("/backfill-role-snapshots", BackfillRoleSnapshots)
-            .WithName("BackfillRoleSnapshots")
+        group.MapPost("/backfill-role-snapshots", BackfillRoleSnapshotsAsync)
+            .WithName("BackfillRoleSnapshotsAsync")
             .Produces<MemberRoleSnapshotBackfillService.Result>(StatusCodes.Status200OK);
 
-        group.MapPost("/backfill-message-mentions", BackfillMessageMentions)
-            .WithName("BackfillMessageMentions")
+        group.MapPost("/backfill-message-mentions", BackfillMessageMentionsAsync)
+            .WithName("BackfillMessageMentionsAsync")
             .Produces<MessageMentionsBackfillService.Result>(StatusCodes.Status200OK);
 
-        group.MapPost("/failed-events/{id:guid}/resolve", ResolveFailedEvent)
-            .WithName("ResolveFailedEvent")
+        group.MapPost("/failed-events/{id:guid}/resolve", ResolveFailedEventAsync)
+            .WithName("ResolveFailedEventAsync")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status404NotFound);
     }
 
-    private static async Task<IResult> StartDowntime(
+    private static async Task<IResult> StartDowntimeAsync(
         BotDowntimeType type,
         string? reason,
         DowntimeTrackerService tracker)
@@ -59,7 +59,7 @@ internal static class OpsEndpoints
         });
     }
 
-    private static async Task<IResult> ReplayOrphans(
+    private static async Task<IResult> ReplayOrphansAsync(
         [FromQuery(Name = "event_type")] string eventType,
         OrphanReplayService svc,
         CancellationToken ct)
@@ -71,7 +71,7 @@ internal static class OpsEndpoints
         return Results.Ok(result);
     }
 
-    private static async Task<IResult> BackfillThreadChannels(
+    private static async Task<IResult> BackfillThreadChannelsAsync(
         ThreadChannelBackfillService svc,
         CancellationToken ct)
     {
@@ -79,7 +79,7 @@ internal static class OpsEndpoints
         return Results.Ok(result);
     }
 
-    private static async Task<IResult> BackfillRoleSnapshots(
+    private static async Task<IResult> BackfillRoleSnapshotsAsync(
         MemberRoleSnapshotBackfillService svc,
         CancellationToken ct)
     {
@@ -87,7 +87,7 @@ internal static class OpsEndpoints
         return Results.Ok(result);
     }
 
-    private static async Task<IResult> BackfillMessageMentions(
+    private static async Task<IResult> BackfillMessageMentionsAsync(
         MessageMentionsBackfillService svc,
         CancellationToken ct)
     {
@@ -97,7 +97,7 @@ internal static class OpsEndpoints
 
     // Acknowledge/resolve a dead-letter row so the HealthCheckJob alert can clear by explicit
     // action. A 0-row update (unknown id or already resolved) is a clean 404, not a 500.
-    private static async Task<IResult> ResolveFailedEvent(
+    private static async Task<IResult> ResolveFailedEventAsync(
         Guid id,
         string? notes,
         FailedEventService svc,

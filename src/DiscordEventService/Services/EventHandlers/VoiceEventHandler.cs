@@ -12,7 +12,7 @@ internal sealed class VoiceEventHandler(EventPipeline pipeline) :
     {
         var eventType = DetermineEventType(args);
 
-        await pipeline.Execute(args, "VoiceStateUpdated", nameof(VoiceEventHandler),
+        await pipeline.ExecuteAsync(args, "VoiceStateUpdated", nameof(VoiceEventHandler),
             args.Guild.Id, args.After?.Channel?.Id, args.User.Id, async ctx =>
             {
                 ctx.Db.VoiceStateEvents.Add(new VoiceStateEventEntity

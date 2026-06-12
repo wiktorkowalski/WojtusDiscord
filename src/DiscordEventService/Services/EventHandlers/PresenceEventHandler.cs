@@ -46,7 +46,7 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
             }
         };
 
-        await pipeline.Execute(eventDto, "PresenceUpdated", nameof(PresenceEventHandler),
+        await pipeline.ExecuteAsync(eventDto, "PresenceUpdated", nameof(PresenceEventHandler),
             guildId, null, args.User.Id, async ctx =>
             {
                 // Presence row, the user upsert, and activity tracking are one logical event:
@@ -92,7 +92,7 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
 
                     if (userResult.IsSuccess)
                     {
-                        await UpdateActivityTracking(ctx.Db, userResult.Value, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, ctx.ReceivedAtUtc);
+                        await UpdateActivityTrackingAsync(ctx.Db, userResult.Value, args.PresenceBefore?.Activities, args.PresenceAfter?.Activities, ctx.ReceivedAtUtc);
                         await ctx.Db.SaveChangesAsync();
                     }
                     else
@@ -107,7 +107,7 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
             });
     }
 
-    private static async Task UpdateActivityTracking(
+    private static async Task UpdateActivityTrackingAsync(
         DiscordDbContext dbContext,
         Guid userGuid,
         IReadOnlyList<DiscordActivity>? activitiesBefore,

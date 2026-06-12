@@ -106,7 +106,7 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
         await _db.SaveChangesAsync();
 
         // Accentless multi-word query must hit the accented OCR text ("działa").
-        var hits = await SearchByVector("dziala kod");
+        var hits = await SearchByVectorAsync("dziala kod");
 
         Assert.Equal([50L], hits);
     }
@@ -126,8 +126,8 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
             tags: ["postgres"]));
         await _db.SaveChangesAsync();
 
-        var forBaseForm = await SearchByTrigram("postgres");
-        var forInflected = await SearchByTrigram("postgresie");
+        var forBaseForm = await SearchByTrigramAsync("postgres");
+        var forInflected = await SearchByTrigramAsync("postgresie");
 
         Assert.Contains(60L, forBaseForm);
         Assert.Contains(61L, forInflected);
@@ -152,7 +152,7 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal([70UL], visible);
     }
 
-    private async Task<List<long>> SearchByVector(string query)
+    private async Task<List<long>> SearchByVectorAsync(string query)
     {
         await using var connection = new NpgsqlConnection(fixture.Container.GetConnectionString());
         await connection.OpenAsync();
@@ -165,10 +165,10 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
             ORDER BY attachment_discord_id
             """;
         command.Parameters.AddWithValue(query);
-        return await ReadIds(command);
+        return await ReadIdsAsync(command);
     }
 
-    private async Task<List<long>> SearchByTrigram(string query)
+    private async Task<List<long>> SearchByTrigramAsync(string query)
     {
         await using var connection = new NpgsqlConnection(fixture.Container.GetConnectionString());
         await connection.OpenAsync();
@@ -182,10 +182,10 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
             """;
         command.Parameters.AddWithValue(query);
         command.Parameters.AddWithValue(TrigramSimilarityThreshold);
-        return await ReadIds(command);
+        return await ReadIdsAsync(command);
     }
 
-    private static async Task<List<long>> ReadIds(NpgsqlCommand command)
+    private static async Task<List<long>> ReadIdsAsync(NpgsqlCommand command)
     {
         var ids = new List<long>();
         await using var reader = await command.ExecuteReaderAsync();

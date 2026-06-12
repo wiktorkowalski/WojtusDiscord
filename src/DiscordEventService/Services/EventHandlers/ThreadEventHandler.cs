@@ -15,7 +15,7 @@ internal sealed class ThreadEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, ThreadCreatedEventArgs e)
     {
-        await pipeline.Execute(e, "ThreadCreated", nameof(ThreadEventHandler),
+        await pipeline.ExecuteAsync(e, "ThreadCreated", nameof(ThreadEventHandler),
             e.Guild.Id, e.Thread.Id, e.Thread.CreatorId, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
@@ -51,7 +51,7 @@ internal sealed class ThreadEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ThreadUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "ThreadUpdated", nameof(ThreadEventHandler),
+        await pipeline.ExecuteAsync(e, "ThreadUpdated", nameof(ThreadEventHandler),
             e.Guild.Id, e.ThreadAfter.Id, e.ThreadAfter.CreatorId, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
@@ -81,7 +81,7 @@ internal sealed class ThreadEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ThreadDeletedEventArgs e)
     {
-        await pipeline.Execute(e, "ThreadDeleted", nameof(ThreadEventHandler),
+        await pipeline.ExecuteAsync(e, "ThreadDeleted", nameof(ThreadEventHandler),
             e.Guild.Id, e.Thread.Id, e.Thread.CreatorId, async ctx =>
             {
                 var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
@@ -108,7 +108,7 @@ internal sealed class ThreadEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ThreadMembersUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "ThreadMembersUpdated", nameof(ThreadEventHandler),
+        await pipeline.ExecuteAsync(e, "ThreadMembersUpdated", nameof(ThreadEventHandler),
             e.Guild.Id, e.Thread.Id, null, async ctx =>
             {
                 string? membersAddedJson = null;

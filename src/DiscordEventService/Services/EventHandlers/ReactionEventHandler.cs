@@ -15,7 +15,7 @@ internal sealed class ReactionEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessageReactionAdded", nameof(ReactionEventHandler),
+        await pipeline.ExecuteAsync(e, "MessageReactionAdded", nameof(ReactionEventHandler),
             e.Guild.Id, e.Channel.Id, e.User.Id, async ctx =>
             {
                 var reactionEvent = new ReactionEventEntity
@@ -43,7 +43,7 @@ internal sealed class ReactionEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessageReactionRemoved", nameof(ReactionEventHandler),
+        await pipeline.ExecuteAsync(e, "MessageReactionRemoved", nameof(ReactionEventHandler),
             e.Guild.Id, e.Channel.Id, e.User.Id, async ctx =>
             {
                 var reactionEvent = new ReactionEventEntity
@@ -71,7 +71,7 @@ internal sealed class ReactionEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessageReactionsCleared", nameof(ReactionEventHandler),
+        await pipeline.ExecuteAsync(e, "MessageReactionsCleared", nameof(ReactionEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 var reactionEvent = new ReactionEventEntity
@@ -99,7 +99,7 @@ internal sealed class ReactionEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "MessageReactionRemovedEmoji", nameof(ReactionEventHandler),
+        await pipeline.ExecuteAsync(e, "MessageReactionRemovedEmoji", nameof(ReactionEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 var reactionEvent = new ReactionEventEntity

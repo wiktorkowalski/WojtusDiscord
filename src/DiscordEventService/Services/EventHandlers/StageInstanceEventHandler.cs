@@ -14,7 +14,7 @@ internal sealed class StageInstanceEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, StageInstanceCreatedEventArgs e)
     {
-        await pipeline.Execute(e, "StageInstanceCreated", nameof(StageInstanceEventHandler),
+        await pipeline.ExecuteAsync(e, "StageInstanceCreated", nameof(StageInstanceEventHandler),
             e.StageInstance.GuildId, e.StageInstance.ChannelId, null, async ctx =>
             {
                 var guildGuid = await ctx.Db.Guilds
@@ -54,7 +54,7 @@ internal sealed class StageInstanceEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, StageInstanceUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "StageInstanceUpdated", nameof(StageInstanceEventHandler),
+        await pipeline.ExecuteAsync(e, "StageInstanceUpdated", nameof(StageInstanceEventHandler),
             e.StageInstanceAfter.GuildId, e.StageInstanceAfter.ChannelId, null, async ctx =>
             {
                 await ctx.Db.StageInstances
@@ -84,7 +84,7 @@ internal sealed class StageInstanceEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, StageInstanceDeletedEventArgs e)
     {
-        await pipeline.Execute(e, "StageInstanceDeleted", nameof(StageInstanceEventHandler),
+        await pipeline.ExecuteAsync(e, "StageInstanceDeleted", nameof(StageInstanceEventHandler),
             e.StageInstance.GuildId, e.StageInstance.ChannelId, null, async ctx =>
             {
                 await ctx.Db.StageInstances

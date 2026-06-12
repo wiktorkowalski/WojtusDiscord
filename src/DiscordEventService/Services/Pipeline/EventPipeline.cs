@@ -4,7 +4,7 @@ namespace DiscordEventService.Services.Pipeline;
 
 internal sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFactory loggerFactory)
 {
-    public async Task Execute<TEventArgs>(
+    public async Task ExecuteAsync<TEventArgs>(
         TEventArgs e,
         string eventType,
         string handlerName,

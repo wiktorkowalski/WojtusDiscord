@@ -12,7 +12,7 @@ internal sealed class PinEventHandler(EventPipeline pipeline) :
     {
         if (e.Guild is null) return;
 
-        await pipeline.Execute(e, "ChannelPinsUpdated", nameof(PinEventHandler),
+        await pipeline.ExecuteAsync(e, "ChannelPinsUpdated", nameof(PinEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 ctx.Db.PinEvents.Add(new PinEventEntity

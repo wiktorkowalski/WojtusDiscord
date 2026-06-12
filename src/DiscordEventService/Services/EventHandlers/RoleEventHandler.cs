@@ -16,7 +16,7 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildRoleCreatedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildRoleCreated", nameof(RoleEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildRoleCreated", nameof(RoleEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
@@ -81,7 +81,7 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, GuildRoleUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildRoleUpdated", nameof(RoleEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildRoleUpdated", nameof(RoleEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 var roleEntity = await ctx.Db.Roles
@@ -119,7 +119,7 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, GuildRoleDeletedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildRoleDeleted", nameof(RoleEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildRoleDeleted", nameof(RoleEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 var roleEntity = await ctx.Db.Roles

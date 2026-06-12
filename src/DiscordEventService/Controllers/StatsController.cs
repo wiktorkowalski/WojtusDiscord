@@ -596,7 +596,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             FROM voice_state_events
             """;
 
-        async Task<long> Sum(DateTime start, DateTime end) => await ScalarAsync(
+        async Task<long> SumAsync(DateTime start, DateTime end) => await ScalarAsync(
             $"""
             SELECT COALESCE(round(SUM({VoiceSegmentMinutes})), 0)::bigint
             FROM ({sessions}) v
@@ -604,8 +604,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
               AND v.received_at_utc BETWEEN {Sql(start)} AND {Sql(end)}
             """, ct);
 
-        var value = await Sum(curStart, curEnd);
-        long? prev = prevStart is null || prevEnd is null ? null : await Sum(prevStart.Value, prevEnd.Value);
+        var value = await SumAsync(curStart, curEnd);
+        long? prev = prevStart is null || prevEnd is null ? null : await SumAsync(prevStart.Value, prevEnd.Value);
 
         var spark = await VoiceSparkAsync(sessions, sparkDays, ct);
         return new CommunityMetricDto(value, prev, spark);
@@ -669,15 +669,15 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
               )
             """;
 
-        async Task<long> Sum(DateTime start, DateTime end) => await ScalarAsync(
+        async Task<long> SumAsync(DateTime start, DateTime end) => await ScalarAsync(
             $"""
             SELECT COALESCE(round(SUM(minutes)), 0)::bigint
             FROM ({segments}) seg
             WHERE seg.seg_start BETWEEN {Sql(start)} AND {Sql(end)}
             """, ct);
 
-        var value = await Sum(curStart, curEnd);
-        long? prev = prevStart is null || prevEnd is null ? null : await Sum(prevStart.Value, prevEnd.Value);
+        var value = await SumAsync(curStart, curEnd);
+        long? prev = prevStart is null || prevEnd is null ? null : await SumAsync(prevStart.Value, prevEnd.Value);
 
         var spark = await OnlineSparkAsync(segments, sparkDays, ct);
         return new CommunityMetricDto(value, prev, spark);

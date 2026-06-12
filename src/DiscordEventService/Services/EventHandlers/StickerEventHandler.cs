@@ -13,7 +13,7 @@ internal sealed class StickerEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildStickersUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildStickersUpdated", nameof(StickerEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildStickersUpdated", nameof(StickerEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();

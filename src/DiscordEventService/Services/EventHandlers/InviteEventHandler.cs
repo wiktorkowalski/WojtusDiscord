@@ -13,7 +13,7 @@ internal sealed class InviteEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, InviteCreatedEventArgs e)
     {
-        await pipeline.Execute(e, "InviteCreated", nameof(InviteEventHandler),
+        await pipeline.ExecuteAsync(e, "InviteCreated", nameof(InviteEventHandler),
             e.Guild.Id, e.Channel.Id, e.Invite.Inviter?.Id, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
@@ -75,7 +75,7 @@ internal sealed class InviteEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, InviteDeletedEventArgs e)
     {
-        await pipeline.Execute(e, "InviteDeleted", nameof(InviteEventHandler),
+        await pipeline.ExecuteAsync(e, "InviteDeleted", nameof(InviteEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 await ctx.Db.Invites

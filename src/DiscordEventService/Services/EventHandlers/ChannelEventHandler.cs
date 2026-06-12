@@ -17,7 +17,7 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, ChannelCreatedEventArgs e)
     {
-        await pipeline.Execute(e, "ChannelCreated", nameof(ChannelEventHandler),
+        await pipeline.ExecuteAsync(e, "ChannelCreated", nameof(ChannelEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
@@ -86,7 +86,7 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "ChannelUpdated", nameof(ChannelEventHandler),
+        await pipeline.ExecuteAsync(e, "ChannelUpdated", nameof(ChannelEventHandler),
             e.ChannelAfter.Guild.Id, e.ChannelAfter.Id, null, async ctx =>
             {
                 var channelEntity = await ctx.Db.Channels
@@ -131,7 +131,7 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelDeletedEventArgs e)
     {
-        await pipeline.Execute(e, "ChannelDeleted", nameof(ChannelEventHandler),
+        await pipeline.ExecuteAsync(e, "ChannelDeleted", nameof(ChannelEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
                 var channelEntity = await ctx.Db.Channels
@@ -163,7 +163,7 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ChannelPinsUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "ChannelPinsUpdatedChannel", nameof(ChannelEventHandler),
+        await pipeline.ExecuteAsync(e, "ChannelPinsUpdatedChannel", nameof(ChannelEventHandler),
             e.Guild?.Id ?? 0, e.Channel.Id, null, async ctx =>
             {
                 ctx.Db.ChannelEvents.Add(new ChannelEventEntity

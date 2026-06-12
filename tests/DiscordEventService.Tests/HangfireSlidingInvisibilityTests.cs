@@ -28,7 +28,7 @@ public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : 
 
         new BackgroundJobClient(storage).Enqueue(() => SlowJobProbe.Run("sliding", JobRuntimeMs));
 
-        Assert.True(await WaitFor(() => SlowJobProbe.ExecutionCount("sliding") >= 1, FirstExecutionTimeout));
+        Assert.True(await WaitForAsync(() => SlowJobProbe.ExecutionCount("sliding") >= 1, FirstExecutionTimeout));
         await Task.Delay(SettleWindow);
 
         Assert.Equal(1, SlowJobProbe.ExecutionCount("sliding"));
@@ -44,7 +44,7 @@ public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : 
             new BackgroundJobClient(storage).Enqueue(() => SlowJobProbe.Run("fixed", JobRuntimeMs));
 
             Assert.True(
-                await WaitFor(() => SlowJobProbe.ExecutionCount("fixed") >= 2, RefetchTimeout),
+                await WaitForAsync(() => SlowJobProbe.ExecutionCount("fixed") >= 2, RefetchTimeout),
                 "job outliving a fixed InvisibilityTimeout was expected to be re-fetched");
         }
         finally
@@ -73,7 +73,7 @@ public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : 
             storage);
     }
 
-    private static async Task<bool> WaitFor(Func<bool> condition, TimeSpan timeout)
+    private static async Task<bool> WaitForAsync(Func<bool> condition, TimeSpan timeout)
     {
         var stopwatch = Stopwatch.StartNew();
         while (stopwatch.Elapsed < timeout)

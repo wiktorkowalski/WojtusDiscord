@@ -17,7 +17,7 @@ internal sealed class ThreadSyncHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, ThreadListSyncedEventArgs args)
     {
-        await pipeline.Execute(args, "ThreadListSynced", nameof(ThreadSyncHandler),
+        await pipeline.ExecuteAsync(args, "ThreadListSynced", nameof(ThreadSyncHandler),
             args.Guild.Id, null, null, async ctx =>
             {
                 ctx.Db.ThreadSyncEvents.Add(new ThreadSyncEventEntity

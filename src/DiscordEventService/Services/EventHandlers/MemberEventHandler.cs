@@ -18,7 +18,7 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildMemberAddedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildMemberAdded", nameof(MemberEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildMemberAdded", nameof(MemberEventHandler),
             e.Guild.Id, null, e.Member.Id, async ctx =>
             {
                 var userService = ctx.Services.GetRequiredService<UserService>();
@@ -44,7 +44,7 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, GuildMemberRemovedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildMemberRemoved", nameof(MemberEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildMemberRemoved", nameof(MemberEventHandler),
             e.Guild.Id, null, e.Member.Id, async ctx =>
             {
                 ctx.Db.MemberEvents.Add(new MemberEventEntity
@@ -67,7 +67,7 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, GuildMemberUpdatedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildMemberUpdated", nameof(MemberEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildMemberUpdated", nameof(MemberEventHandler),
             e.Guild.Id, null, e.Member.Id, async ctx =>
             {
                 var userService = ctx.Services.GetRequiredService<UserService>();
@@ -206,7 +206,7 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, GuildBanAddedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildBanAddedMember", nameof(MemberEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildBanAddedMember", nameof(MemberEventHandler),
             e.Guild.Id, null, e.Member.Id, async ctx =>
             {
                 var userService = ctx.Services.GetRequiredService<UserService>();
@@ -228,7 +228,7 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
 
     public async Task HandleEventAsync(DiscordClient sender, GuildBanRemovedEventArgs e)
     {
-        await pipeline.Execute(e, "GuildBanRemovedMember", nameof(MemberEventHandler),
+        await pipeline.ExecuteAsync(e, "GuildBanRemovedMember", nameof(MemberEventHandler),
             e.Guild.Id, null, e.Member.Id, async ctx =>
             {
                 var userService = ctx.Services.GetRequiredService<UserService>();
