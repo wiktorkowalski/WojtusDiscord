@@ -73,31 +73,11 @@ internal sealed class ReactionsBackfillJob(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            List<DiscordMessage> messages;
-            try
-            {
-                var asyncMessages = beforeId.HasValue
-                    ? channel.GetMessagesBeforeAsync(beforeId.Value, MessageBatchSize)
-                    : channel.GetMessagesAsync(MessageBatchSize);
-
-                messages = [];
-                await foreach (var msg in asyncMessages)
-                    messages.Add(msg);
-            }
-            catch (DSharpPlus.Exceptions.UnauthorizedException ex)
-            {
-                logger.LogWarning("No permission to read messages in channel {ChannelId}", channel.Id);
-                await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
+            var (messages, fetchFailure) = await FetchMessageBatchAsync(db, channel, checkpoint, beforeId, MessageBatchSize, logger, cancellationToken);
+            if (fetchFailure is not null)
                 break;
-            }
-            catch (DSharpPlus.Exceptions.NotFoundException ex)
-            {
-                logger.LogWarning("Channel {ChannelId} not found (may have been deleted)", channel.Id);
-                await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
-                break;
-            }
 
-            if (messages.Count == 0)
+            if (messages!.Count == 0)
             {
                 hasMore = false;
                 break;

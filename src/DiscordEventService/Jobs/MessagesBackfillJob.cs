@@ -83,33 +83,14 @@ internal sealed class MessagesBackfillJob(
             cancellationToken.ThrowIfCancellationRequested();
             batchNum++;
 
-            List<DiscordMessage> messages;
-            try
+            var (messages, fetchFailure) = await FetchMessageBatchAsync(db, channel, checkpoint, beforeId, BatchSize, logger, cancellationToken);
+            if (fetchFailure is not null)
             {
-                var asyncMessages = beforeId.HasValue
-                    ? channel.GetMessagesBeforeAsync(beforeId.Value, BatchSize)
-                    : channel.GetMessagesAsync(BatchSize);
-
-                messages = [];
-                await foreach (var msg in asyncMessages)
-                    messages.Add(msg);
-            }
-            catch (DSharpPlus.Exceptions.UnauthorizedException ex)
-            {
-                logger.LogWarning("No permission to read messages in channel {ChannelId}", channel.Id);
-                await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
-                exitReason = "UnauthorizedException";
-                break;
-            }
-            catch (DSharpPlus.Exceptions.NotFoundException ex)
-            {
-                logger.LogWarning("Channel {ChannelId} not found (may have been deleted)", channel.Id);
-                await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
-                exitReason = "NotFoundException";
+                exitReason = fetchFailure;
                 break;
             }
 
-            if (messages.Count == 0)
+            if (messages!.Count == 0)
             {
                 logger.LogDebug(
                     "Channel {ChannelName} batch {BatchNum} returned no messages before cursor {BeforeId}; stopping",
@@ -131,76 +112,8 @@ internal sealed class MessagesBackfillJob(
             {
                 try
                 {
-                    if (message.Author is null)
+                    if (await TryInsertBackfilledMessageAsync(db, userService, message, channelEntity, guildEntity, channel, cancellationToken))
                     {
-                        logger.LogDebug("Message {MessageId} has null author, skipping", message.Id);
-                        continue;
-                    }
-
-                    await userService.UpsertUserAsync(message.Author);
-
-                    var authorEntity = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == message.Author.Id, cancellationToken);
-
-                    var exists = await db.Messages.AnyAsync(m => m.DiscordId == message.Id, cancellationToken);
-                    if (!exists)
-                    {
-                        // §P2.6: MessageEntity.ChannelId/GuildId/AuthorId are NOT NULL. Skip
-                        // if any required FK row hasn't been backfilled yet — next run of
-                        // the corresponding backfill job + the next MessagesBackfillJob will
-                        // pick it up.
-                        if (channelEntity is null || authorEntity is null)
-                        {
-                            logger.LogWarning(
-                                "Skipping backfill insert for message {MessageId}: channel resolved {ChannelPresent}, author resolved {AuthorPresent}",
-                                message.Id, channelEntity is not null, authorEntity is not null);
-                            continue;
-                        }
-                        var attachmentsJson = message.Attachments.Count > 0
-                            ? JsonSerializer.Serialize(message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
-                            : null;
-                        var embedsJson = message.Embeds.Count > 0
-                            ? JsonSerializer.Serialize(message.Embeds)
-                            : null;
-
-                        db.Messages.Add(new MessageEntity
-                        {
-                            DiscordId = message.Id,
-                            ChannelId = channelEntity.Id,
-                            GuildId = guildEntity.Id,
-                            AuthorId = authorEntity.Id,
-                            Content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
-                            ReplyToDiscordId = message.ReferencedMessage?.Id,
-                            HasAttachments = message.Attachments.Count > 0,
-                            HasEmbeds = message.Embeds.Count > 0,
-                            AttachmentsJson = attachmentsJson,
-                            EmbedsJson = embedsJson,
-                            Flags = (int)(message.Flags ?? 0),
-                            CreatedAtUtc = message.Timestamp.UtcDateTime,
-                            EditedAtUtc = message.EditedTimestamp?.UtcDateTime
-                        });
-
-                        // Symmetric provenance marker: every backfilled message gets a
-                        // message_events row with EventType=Backfilled. Mirrors
-                        // ReactionsBackfillJob's ReactionEventType.Backfilled pattern.
-                        // RawEventJson is null because backfill came via REST, not gateway.
-                        db.MessageEvents.Add(new MessageEventEntity
-                        {
-                            MessageDiscordId = message.Id,
-                            ChannelDiscordId = channel.Id,
-                            AuthorDiscordId = message.Author.Id,
-                            GuildDiscordId = guildEntity.DiscordId,
-                            EventType = MessageEventType.Backfilled,
-                            Content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
-                            HasAttachments = message.Attachments.Count > 0,
-                            HasEmbeds = message.Embeds.Count > 0,
-                            ReplyToMessageDiscordId = message.ReferencedMessage?.Id,
-                            AttachmentsJson = attachmentsJson,
-                            EmbedsJson = embedsJson,
-                            EventTimestampUtc = message.Timestamp.UtcDateTime,
-                            ReceivedAtUtc = DateTime.UtcNow,
-                            RawEventJson = null
-                        });
-
                         checkpoint.ProcessedCount++;
                         totalInserted++;
                     }
@@ -235,4 +148,102 @@ internal sealed class MessagesBackfillJob(
             "Channel {ChannelName} ({ChannelId}) done after {BatchCount} batches: inserted {InsertedCount} messages, stopped because {ExitReason}, cursor at {BeforeId}",
             channel.Name, channel.Id, batchNum, totalInserted, exitReason, beforeId);
     }
+
+    private async Task<bool> TryInsertBackfilledMessageAsync(
+        DiscordDbContext db,
+        UserService userService,
+        DiscordMessage message,
+        ChannelEntity? channelEntity,
+        GuildEntity guildEntity,
+        DiscordChannel channel,
+        CancellationToken cancellationToken)
+    {
+        if (message.Author is null)
+        {
+            logger.LogDebug("Message {MessageId} has null author, skipping", message.Id);
+            return false;
+        }
+
+        await userService.UpsertUserAsync(message.Author);
+
+        var authorEntity = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == message.Author.Id, cancellationToken);
+
+        var exists = await db.Messages.AnyAsync(m => m.DiscordId == message.Id, cancellationToken);
+        if (exists) return false;
+
+        // §P2.6: MessageEntity.ChannelId/GuildId/AuthorId are NOT NULL. Skip
+        // if any required FK row hasn't been backfilled yet — next run of
+        // the corresponding backfill job + the next MessagesBackfillJob will
+        // pick it up.
+        if (channelEntity is null || authorEntity is null)
+        {
+            logger.LogWarning(
+                "Skipping backfill insert for message {MessageId}: channel resolved {ChannelPresent}, author resolved {AuthorPresent}",
+                message.Id, channelEntity is not null, authorEntity is not null);
+            return false;
+        }
+
+        var attachmentsJson = message.Attachments.Count > 0
+            ? JsonSerializer.Serialize(message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
+            : null;
+        var embedsJson = message.Embeds.Count > 0
+            ? JsonSerializer.Serialize(message.Embeds)
+            : null;
+
+        db.Messages.Add(BuildBackfilledMessage(message, channelEntity, guildEntity, authorEntity, attachmentsJson, embedsJson));
+
+        // Symmetric provenance marker: every backfilled message gets a
+        // message_events row with EventType=Backfilled. Mirrors
+        // ReactionsBackfillJob's ReactionEventType.Backfilled pattern.
+        // RawEventJson is null because backfill came via REST, not gateway.
+        db.MessageEvents.Add(BuildBackfilledMessageEvent(message, channel, guildEntity, attachmentsJson, embedsJson));
+
+        return true;
+    }
+
+    private static MessageEntity BuildBackfilledMessage(
+        DiscordMessage message,
+        ChannelEntity channelEntity,
+        GuildEntity guildEntity,
+        UserEntity authorEntity,
+        string? attachmentsJson,
+        string? embedsJson) => new MessageEntity
+        {
+            DiscordId = message.Id,
+            ChannelId = channelEntity.Id,
+            GuildId = guildEntity.Id,
+            AuthorId = authorEntity.Id,
+            Content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
+            ReplyToDiscordId = message.ReferencedMessage?.Id,
+            HasAttachments = message.Attachments.Count > 0,
+            HasEmbeds = message.Embeds.Count > 0,
+            AttachmentsJson = attachmentsJson,
+            EmbedsJson = embedsJson,
+            Flags = (int)(message.Flags ?? 0),
+            CreatedAtUtc = message.Timestamp.UtcDateTime,
+            EditedAtUtc = message.EditedTimestamp?.UtcDateTime
+        };
+
+    private static MessageEventEntity BuildBackfilledMessageEvent(
+        DiscordMessage message,
+        DiscordChannel channel,
+        GuildEntity guildEntity,
+        string? attachmentsJson,
+        string? embedsJson) => new MessageEventEntity
+        {
+            MessageDiscordId = message.Id,
+            ChannelDiscordId = channel.Id,
+            AuthorDiscordId = message.Author!.Id,
+            GuildDiscordId = guildEntity.DiscordId,
+            EventType = MessageEventType.Backfilled,
+            Content = string.IsNullOrEmpty(message.Content) ? null : message.Content,
+            HasAttachments = message.Attachments.Count > 0,
+            HasEmbeds = message.Embeds.Count > 0,
+            ReplyToMessageDiscordId = message.ReferencedMessage?.Id,
+            AttachmentsJson = attachmentsJson,
+            EmbedsJson = embedsJson,
+            EventTimestampUtc = message.Timestamp.UtcDateTime,
+            ReceivedAtUtc = DateTime.UtcNow,
+            RawEventJson = null
+        };
 }

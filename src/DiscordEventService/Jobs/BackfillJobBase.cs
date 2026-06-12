@@ -20,6 +20,44 @@ internal abstract class BackfillJobBase
 
     protected Task SaveProgressAsync(DiscordDbContext db, BackfillCheckpointEntity checkpoint, CancellationToken cancellationToken) => db.SaveChangesAsync(cancellationToken);
 
+    // Fetches one REST batch of messages scrolling backwards from beforeId. Returns the
+    // batch, or a non-null failure reason when the channel is unreadable (no permission /
+    // deleted) and the per-channel loop should stop.
+    protected async Task<(List<DSharpPlus.Entities.DiscordMessage>? Messages, string? FailureReason)> FetchMessageBatchAsync(
+        DiscordDbContext db,
+        DSharpPlus.Entities.DiscordChannel channel,
+        BackfillCheckpointEntity checkpoint,
+        ulong? beforeId,
+        int batchSize,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var asyncMessages = beforeId.HasValue
+                ? channel.GetMessagesBeforeAsync(beforeId.Value, batchSize)
+                : channel.GetMessagesAsync(batchSize);
+
+            List<DSharpPlus.Entities.DiscordMessage> messages = [];
+            await foreach (var msg in asyncMessages)
+                messages.Add(msg);
+
+            return (messages, null);
+        }
+        catch (DSharpPlus.Exceptions.UnauthorizedException ex)
+        {
+            logger.LogWarning("No permission to read messages in channel {ChannelId}", channel.Id);
+            await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
+            return (null, "UnauthorizedException");
+        }
+        catch (DSharpPlus.Exceptions.NotFoundException ex)
+        {
+            logger.LogWarning("Channel {ChannelId} not found (may have been deleted)", channel.Id);
+            await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
+            return (null, "NotFoundException");
+        }
+    }
+
     // Drives the per-item resume-cursor loop shared by the history jobs (Messages, Reactions): skip to the
     // channel a genuinely-interrupted run stopped on (CurrentChannelId, reset to null by the executor after a
     // terminal run), then walk the rest, clearing the per-channel batch cursor (LastProcessedId) only AFTER an

@@ -158,53 +158,11 @@ internal sealed class HealthCheckJob(
             .Where(r => r.ReceivedAtUtc > recentStart)
             .GroupBy(r => r.EventType)
             .Select(g => new { EventType = g.Key, Count = g.Count() })
-            .ToDictionaryAsync(g => g.EventType, g => g.Count);
+            .ToDictionaryAsync(g => g.EventType, g => g.Count, cancellationToken);
 
-        // Baseline = the same wall-clock window on each of the previous N days, so
-        // Discord's day/night activity cycle doesn't read as a drop (voice events
-        // legitimately fall to 0 overnight). Whole-day offsets keep this comparison
-        // independent of the database session timezone.
-        var baselineTotals = new Dictionary<string, int>();
-        for (var dayOffset = 1; dayOffset <= opts.EventRatioBaselineDays; dayOffset++)
-        {
-            var windowStart = recentStart.AddDays(-dayOffset);
-            var windowEnd = now.AddDays(-dayOffset);
-            var counts = await db.RawEventLogs
-                .Where(r => r.ReceivedAtUtc > windowStart && r.ReceivedAtUtc <= windowEnd)
-                .GroupBy(r => r.EventType)
-                .Select(g => new { EventType = g.Key, Count = g.Count() })
-                .ToListAsync(cancellationToken);
-            foreach (var c in counts)
-                baselineTotals[c.EventType] = baselineTotals.GetValueOrDefault(c.EventType) + c.Count;
-        }
-
-        var excluded = new HashSet<string>(opts.EventRatioExcludedEventTypes, StringComparer.OrdinalIgnoreCase);
-
-        var dropped = baselineTotals
-            .Where(b => !excluded.Contains(b.Key))
-            .Select(b => new { EventType = b.Key, ExpectedInWindow = (double)b.Value / opts.EventRatioBaselineDays })
-            .Where(b => b.ExpectedInWindow >= opts.EventRatioMinWindowBaseline)
-            .Where(b => recent.GetValueOrDefault(b.EventType, 0) < b.ExpectedInWindow * opts.EventRatioDropThreshold)
-            .ToList();
-
-        // A drop must persist across EventRatioConsecutiveRuns consecutive runs before it
-        // alerts; types that recover have their streak cleared. Only "confirmed" types are
-        // eligible — debounces transient lulls on a low-traffic server.
-        var droppedTypes = dropped.Select(d => d.EventType).ToHashSet();
-        List<string> confirmedTypes;
-        lock (_lock)
-        {
-            foreach (var key in _eventRatioDropStreaks.Keys.Where(k => !droppedTypes.Contains(k)).ToList())
-                _eventRatioDropStreaks.Remove(key);
-
-            foreach (var type in droppedTypes)
-                _eventRatioDropStreaks[type] = _eventRatioDropStreaks.GetValueOrDefault(type) + 1;
-
-            confirmedTypes = _eventRatioDropStreaks
-                .Where(kvp => kvp.Value >= opts.EventRatioConsecutiveRuns)
-                .Select(kvp => kvp.Key)
-                .ToList();
-        }
+        var baselineTotals = await ComputeBaselineTotalsAsync(db, opts, recentStart, now, cancellationToken);
+        var dropped = FindDroppedEventTypes(recent, baselineTotals, opts);
+        var confirmedTypes = ConfirmDropStreaks(dropped.Select(d => d.EventType).ToHashSet(), opts);
 
         var confirmed = dropped.Where(d => confirmedTypes.Contains(d.EventType)).ToList();
         if (confirmed.Count == 0)
@@ -257,4 +215,62 @@ internal sealed class HealthCheckJob(
             return false;
         }
     }
+
+    // Baseline = the same wall-clock window on each of the previous N days, so
+    // Discord's day/night activity cycle doesn't read as a drop (voice events
+    // legitimately fall to 0 overnight). Whole-day offsets keep this comparison
+    // independent of the database session timezone.
+    private static async Task<Dictionary<string, int>> ComputeBaselineTotalsAsync(
+        DiscordDbContext db, HealthCheckOptions opts, DateTime recentStart, DateTime now, CancellationToken cancellationToken)
+    {
+        var baselineTotals = new Dictionary<string, int>();
+        for (var dayOffset = 1; dayOffset <= opts.EventRatioBaselineDays; dayOffset++)
+        {
+            var windowStart = recentStart.AddDays(-dayOffset);
+            var windowEnd = now.AddDays(-dayOffset);
+            var counts = await db.RawEventLogs
+                .Where(r => r.ReceivedAtUtc > windowStart && r.ReceivedAtUtc <= windowEnd)
+                .GroupBy(r => r.EventType)
+                .Select(g => new { EventType = g.Key, Count = g.Count() })
+                .ToListAsync(cancellationToken);
+            foreach (var c in counts)
+                baselineTotals[c.EventType] = baselineTotals.GetValueOrDefault(c.EventType) + c.Count;
+        }
+
+        return baselineTotals;
+    }
+
+    private static List<(string EventType, double ExpectedInWindow)> FindDroppedEventTypes(
+        Dictionary<string, int> recent, Dictionary<string, int> baselineTotals, HealthCheckOptions opts)
+    {
+        var excluded = new HashSet<string>(opts.EventRatioExcludedEventTypes, StringComparer.OrdinalIgnoreCase);
+
+        return baselineTotals
+            .Where(b => !excluded.Contains(b.Key))
+            .Select(b => (EventType: b.Key, ExpectedInWindow: (double)b.Value / opts.EventRatioBaselineDays))
+            .Where(b => b.ExpectedInWindow >= opts.EventRatioMinWindowBaseline)
+            .Where(b => recent.GetValueOrDefault(b.EventType, 0) < b.ExpectedInWindow * opts.EventRatioDropThreshold)
+            .ToList();
+    }
+
+    // A drop must persist across EventRatioConsecutiveRuns consecutive runs before it
+    // alerts; types that recover have their streak cleared. Only "confirmed" types are
+    // eligible — debounces transient lulls on a low-traffic server.
+    private static List<string> ConfirmDropStreaks(HashSet<string> droppedTypes, HealthCheckOptions opts)
+    {
+        lock (_lock)
+        {
+            foreach (var key in _eventRatioDropStreaks.Keys.Where(k => !droppedTypes.Contains(k)).ToList())
+                _eventRatioDropStreaks.Remove(key);
+
+            foreach (var type in droppedTypes)
+                _eventRatioDropStreaks[type] = _eventRatioDropStreaks.GetValueOrDefault(type) + 1;
+
+            return _eventRatioDropStreaks
+                .Where(kvp => kvp.Value >= opts.EventRatioConsecutiveRuns)
+                .Select(kvp => kvp.Key)
+                .ToList();
+        }
+    }
+
 }
