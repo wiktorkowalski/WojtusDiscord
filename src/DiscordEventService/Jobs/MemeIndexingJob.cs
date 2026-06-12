@@ -53,15 +53,7 @@ internal sealed class MemeIndexingJob(
             .OrderBy(c => c.AttachmentDiscordId)
             .ToList();
 
-        // Terminal rows stay untouched — relevant when Hangfire retries this
-        // job after a crash that landed between attachments.
-        var attachmentIds = candidates.Select(c => c.AttachmentDiscordId).ToList();
-        var terminal = await db.MemeIndex
-            .Where(m => attachmentIds.Contains(m.AttachmentDiscordId)
-                        && (m.Status == MemeIndexStatus.Indexed || m.Status == MemeIndexStatus.Skipped))
-            .Select(m => m.AttachmentDiscordId)
-            .ToListAsync(cancellationToken);
-        var pending = candidates.Where(c => !terminal.Contains(c.AttachmentDiscordId)).ToList();
+        var pending = await FilterTerminalAsync(db, candidates, cancellationToken);
 
         if (pending.Count == 0)
         {
@@ -137,34 +129,7 @@ internal sealed class MemeIndexingJob(
                 guildId, pending.Count, openRouterOptions.Model);
 
             var counters = new MemeIndexRunCounters();
-
-            var position = 0;
-            foreach (var batch in pending.Chunk(UrlRefreshBatchSize))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var freshUrls = await urlRefreshService.RefreshAsync(
-                    batch.Select(b => b.StoredUrl).ToList(), cancellationToken);
-
-                foreach (var item in batch)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    var row = await indexer.GetOrCreateRowAsync(ctx.Db, item, cancellationToken);
-                    await indexer.ProcessOneAsync(ctx.Db, row, item, freshUrls, counters, cancellationToken);
-
-                    position++;
-                    ctx.Checkpoint.ProcessedCount++;
-                    // Advance the resume cursor only once a message's LAST pending
-                    // attachment is done — a mid-message cursor would skip siblings.
-                    var lastOfMessage = position == pending.Count
-                        || pending[position].MessageDiscordId != item.MessageDiscordId;
-                    if (lastOfMessage)
-                        ctx.Checkpoint.LastProcessedId = item.MessageDiscordId;
-
-                    await SaveProgressAsync(ctx.Db, ctx.Checkpoint, cancellationToken);
-                }
-            }
+            await ProcessPendingBatchesAsync(ctx, indexer, urlRefreshService, pending, counters, cancellationToken);
 
             logger.LogInformation(
                 "Meme indexing finished for guild {GuildId}: {Indexed} indexed, {Deduped} deduped, {Skipped} skipped, {Failed} failed; " +
@@ -226,4 +191,56 @@ internal sealed class MemeIndexingJob(
 
         return pending;
     }
+
+    // Terminal rows stay untouched — relevant when Hangfire retries this
+    // job after a crash that landed between attachments.
+    private static async Task<List<MemeSampleItem>> FilterTerminalAsync(
+        DiscordDbContext db, List<MemeSampleItem> candidates, CancellationToken cancellationToken)
+    {
+        var attachmentIds = candidates.Select(c => c.AttachmentDiscordId).ToList();
+        var terminal = await db.MemeIndex
+            .Where(m => attachmentIds.Contains(m.AttachmentDiscordId)
+                        && (m.Status == MemeIndexStatus.Indexed || m.Status == MemeIndexStatus.Skipped))
+            .Select(m => m.AttachmentDiscordId)
+            .ToListAsync(cancellationToken);
+        return candidates.Where(c => !terminal.Contains(c.AttachmentDiscordId)).ToList();
+    }
+
+    private async Task ProcessPendingBatchesAsync(
+        BackfillContext ctx,
+        MemeAttachmentIndexer indexer,
+        AttachmentUrlRefreshService urlRefreshService,
+        List<MemeSampleItem> pending,
+        MemeIndexRunCounters counters,
+        CancellationToken cancellationToken)
+    {
+        var position = 0;
+        foreach (var batch in pending.Chunk(UrlRefreshBatchSize))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var freshUrls = await urlRefreshService.RefreshAsync(
+                batch.Select(b => b.StoredUrl).ToList(), cancellationToken);
+
+            foreach (var item in batch)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var row = await indexer.GetOrCreateRowAsync(ctx.Db, item, cancellationToken);
+                await indexer.ProcessOneAsync(ctx.Db, row, item, freshUrls, counters, cancellationToken);
+
+                position++;
+                ctx.Checkpoint.ProcessedCount++;
+                // Advance the resume cursor only once a message's LAST pending
+                // attachment is done — a mid-message cursor would skip siblings.
+                var lastOfMessage = position == pending.Count
+                    || pending[position].MessageDiscordId != item.MessageDiscordId;
+                if (lastOfMessage)
+                    ctx.Checkpoint.LastProcessedId = item.MessageDiscordId;
+
+                await SaveProgressAsync(ctx.Db, ctx.Checkpoint, cancellationToken);
+            }
+        }
+    }
+
 }
