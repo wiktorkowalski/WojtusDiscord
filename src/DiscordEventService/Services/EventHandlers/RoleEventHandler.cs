@@ -35,44 +35,9 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
                     ctx.Db.ChangeTracker.Clear();
                     await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                    await ctx.Db.Roles.UpsertAsync(
-                        r => r.DiscordId == e.Role.Id,
-                        s => s
-                            .SetProperty(r => r.Name, e.Role.Name)
-                            .SetProperty(r => r.Color, e.Role.Color.Value)
-                            .SetProperty(r => r.IsHoisted, e.Role.IsHoisted)
-                            .SetProperty(r => r.Position, e.Role.Position)
-                            .SetProperty(r => r.Permissions, permissions)
-                            .SetProperty(r => r.IsManaged, e.Role.IsManaged)
-                            .SetProperty(r => r.IsMentionable, e.Role.IsMentionable)
-                            .SetProperty(r => r.IsDeleted, false)
-                            .SetProperty(r => r.DeletedAtUtc, (DateTime?)null),
-                        () => new RoleEntity
-                        {
-                            DiscordId = e.Role.Id,
-                            GuildId = guildGuid,
-                            Name = e.Role.Name,
-                            Color = e.Role.Color.Value,
-                            IsHoisted = e.Role.IsHoisted,
-                            Position = e.Role.Position,
-                            Permissions = permissions,
-                            IsManaged = e.Role.IsManaged,
-                            IsMentionable = e.Role.IsMentionable,
-                            IsDeleted = false
-                        },
-                        r => r.Id);
+                    await UpsertCreatedRoleAsync(ctx, e.Role, guildGuid, permissions);
 
-                    ctx.Db.RoleEvents.Add(new RoleEventEntity
-                    {
-                        RoleDiscordId = e.Role.Id,
-                        GuildDiscordId = e.Guild.Id,
-                        EventType = RoleEventType.Created,
-                        NameAfter = e.Role.Name,
-                        ColorAfter = e.Role.Color.Value,
-                        EventTimestampUtc = ctx.ReceivedAtUtc,
-                        ReceivedAtUtc = ctx.ReceivedAtUtc,
-                        RawEventJson = ctx.RawJson,
-                    });
+                    ctx.Db.RoleEvents.Add(BuildRoleCreatedEvent(e, ctx));
                     await ctx.Db.SaveChangesAsync();
                     await tx.CommitAsync();
                 });
@@ -159,4 +124,47 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
         entity.IsDeleted = false;
         entity.DeletedAtUtc = null;
     }
+
+    private static async Task UpsertCreatedRoleAsync(EventContext ctx, DiscordRole role, Guid guildGuid, long permissions)
+    {
+        await ctx.Db.Roles.UpsertAsync(
+            r => r.DiscordId == role.Id,
+            s => s
+                .SetProperty(r => r.Name, role.Name)
+                .SetProperty(r => r.Color, role.Color.Value)
+                .SetProperty(r => r.IsHoisted, role.IsHoisted)
+                .SetProperty(r => r.Position, role.Position)
+                .SetProperty(r => r.Permissions, permissions)
+                .SetProperty(r => r.IsManaged, role.IsManaged)
+                .SetProperty(r => r.IsMentionable, role.IsMentionable)
+                .SetProperty(r => r.IsDeleted, false)
+                .SetProperty(r => r.DeletedAtUtc, (DateTime?)null),
+            () => new RoleEntity
+            {
+                DiscordId = role.Id,
+                GuildId = guildGuid,
+                Name = role.Name,
+                Color = role.Color.Value,
+                IsHoisted = role.IsHoisted,
+                Position = role.Position,
+                Permissions = permissions,
+                IsManaged = role.IsManaged,
+                IsMentionable = role.IsMentionable,
+                IsDeleted = false
+            },
+            r => r.Id);
+    }
+
+    private static RoleEventEntity BuildRoleCreatedEvent(GuildRoleCreatedEventArgs e, EventContext ctx) => new RoleEventEntity
+    {
+        RoleDiscordId = e.Role.Id,
+        GuildDiscordId = e.Guild.Id,
+        EventType = RoleEventType.Created,
+        NameAfter = e.Role.Name,
+        ColorAfter = e.Role.Color.Value,
+        EventTimestampUtc = ctx.ReceivedAtUtc,
+        ReceivedAtUtc = ctx.ReceivedAtUtc,
+        RawEventJson = ctx.RawJson,
+    };
+
 }

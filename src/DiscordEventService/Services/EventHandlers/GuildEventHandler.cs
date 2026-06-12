@@ -99,6 +99,12 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
 
     private static async Task UpsertChannelsAndRolesAsync(DiscordDbContext db, ILogger logger, DiscordGuild guild, Guid guildGuid)
     {
+        await UpsertGuildChannelsAsync(db, logger, guild, guildGuid);
+        await UpsertGuildRolesAsync(db, guild, guildGuid);
+    }
+
+    private static async Task UpsertGuildChannelsAsync(DiscordDbContext db, ILogger logger, DiscordGuild guild, Guid guildGuid)
+    {
         // Per-entity upsert: each channel/role goes through the shared primitive, which absorbs
         // the 23505 race a concurrent GuildCreate could otherwise cause in a batched insert.
         foreach (var channel in guild.Channels.Values)
@@ -135,7 +141,10 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
                 },
                 c => c.Id);
         }
+    }
 
+    private static async Task UpsertGuildRolesAsync(DiscordDbContext db, DiscordGuild guild, Guid guildGuid)
+    {
         foreach (var role in guild.Roles.Values)
         {
             var permissions = long.TryParse(role.Permissions.ToString(), out var p) ? p : 0;

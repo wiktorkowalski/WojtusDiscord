@@ -34,50 +34,9 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
                     ctx.Db.ChangeTracker.Clear();
                     await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                    await ctx.Db.Channels.UpsertAsync(
-                        c => c.DiscordId == e.Channel.Id,
-                        s => s
-                            .SetProperty(c => c.Name, e.Channel.Name)
-                            .SetProperty(c => c.Type, (ChannelType)e.Channel.Type)
-                            .SetProperty(c => c.Topic, e.Channel.Topic)
-                            .SetProperty(c => c.Position, e.Channel.Position)
-                            .SetProperty(c => c.ParentDiscordId, e.Channel.ParentId)
-                            .SetProperty(c => c.Bitrate, e.Channel.Bitrate)
-                            .SetProperty(c => c.UserLimit, e.Channel.UserLimit)
-                            .SetProperty(c => c.RateLimitPerUser, e.Channel.PerUserRateLimit)
-                            .SetProperty(c => c.IsNsfw, e.Channel.IsNSFW)
-                            .SetProperty(c => c.IsDeleted, false)
-                            .SetProperty(c => c.DeletedAtUtc, (DateTime?)null),
-                        () => new ChannelEntity
-                        {
-                            DiscordId = e.Channel.Id,
-                            GuildId = guildGuid,
-                            Name = e.Channel.Name,
-                            Type = (ChannelType)e.Channel.Type,
-                            Topic = e.Channel.Topic,
-                            Position = e.Channel.Position,
-                            ParentDiscordId = e.Channel.ParentId,
-                            Bitrate = e.Channel.Bitrate,
-                            UserLimit = e.Channel.UserLimit,
-                            RateLimitPerUser = e.Channel.PerUserRateLimit,
-                            IsNsfw = e.Channel.IsNSFW,
-                            IsDeleted = false,
-                        },
-                        c => c.Id);
+                    await UpsertCreatedChannelAsync(ctx, e.Channel, guildGuid);
 
-                    ctx.Db.ChannelEvents.Add(new ChannelEventEntity
-                    {
-                        ChannelDiscordId = e.Channel.Id,
-                        GuildDiscordId = e.Guild.Id,
-                        ChannelType = (int)e.Channel.Type,
-                        EventType = ChannelEventType.Created,
-                        NameAfter = e.Channel.Name,
-                        TopicAfter = e.Channel.Topic,
-                        PositionAfter = e.Channel.Position,
-                        EventTimestampUtc = ctx.ReceivedAtUtc,
-                        ReceivedAtUtc = ctx.ReceivedAtUtc,
-                        RawEventJson = ctx.RawJson,
-                    });
+                    ctx.Db.ChannelEvents.Add(BuildChannelCreatedEvent(e, ctx));
                     await ctx.Db.SaveChangesAsync();
                     await tx.CommitAsync();
                 });
@@ -195,4 +154,53 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
         entity.IsDeleted = false;
         entity.DeletedAtUtc = null;
     }
+
+    private static async Task UpsertCreatedChannelAsync(EventContext ctx, DiscordChannel channel, Guid guildGuid)
+    {
+        await ctx.Db.Channels.UpsertAsync(
+            c => c.DiscordId == channel.Id,
+            s => s
+                .SetProperty(c => c.Name, channel.Name)
+                .SetProperty(c => c.Type, (ChannelType)channel.Type)
+                .SetProperty(c => c.Topic, channel.Topic)
+                .SetProperty(c => c.Position, channel.Position)
+                .SetProperty(c => c.ParentDiscordId, channel.ParentId)
+                .SetProperty(c => c.Bitrate, channel.Bitrate)
+                .SetProperty(c => c.UserLimit, channel.UserLimit)
+                .SetProperty(c => c.RateLimitPerUser, channel.PerUserRateLimit)
+                .SetProperty(c => c.IsNsfw, channel.IsNSFW)
+                .SetProperty(c => c.IsDeleted, false)
+                .SetProperty(c => c.DeletedAtUtc, (DateTime?)null),
+            () => new ChannelEntity
+            {
+                DiscordId = channel.Id,
+                GuildId = guildGuid,
+                Name = channel.Name,
+                Type = (ChannelType)channel.Type,
+                Topic = channel.Topic,
+                Position = channel.Position,
+                ParentDiscordId = channel.ParentId,
+                Bitrate = channel.Bitrate,
+                UserLimit = channel.UserLimit,
+                RateLimitPerUser = channel.PerUserRateLimit,
+                IsNsfw = channel.IsNSFW,
+                IsDeleted = false,
+            },
+            c => c.Id);
+    }
+
+    private static ChannelEventEntity BuildChannelCreatedEvent(ChannelCreatedEventArgs e, EventContext ctx) => new ChannelEventEntity
+    {
+        ChannelDiscordId = e.Channel.Id,
+        GuildDiscordId = e.Guild.Id,
+        ChannelType = (int)e.Channel.Type,
+        EventType = ChannelEventType.Created,
+        NameAfter = e.Channel.Name,
+        TopicAfter = e.Channel.Topic,
+        PositionAfter = e.Channel.Position,
+        EventTimestampUtc = ctx.ReceivedAtUtc,
+        ReceivedAtUtc = ctx.ReceivedAtUtc,
+        RawEventJson = ctx.RawJson,
+    };
+
 }
