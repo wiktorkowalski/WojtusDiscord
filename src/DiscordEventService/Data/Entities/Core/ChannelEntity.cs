@@ -25,6 +25,8 @@ public class ChannelEntity : ITimestamped
     public GuildEntity Guild { get; set; } = null!;
 }
 
+// Values mirror Discord's API channel-type ints and are persisted as int in the DB —
+// a data contract on both sides; never renumber or strip explicit values (they are non-sequential).
 public enum ChannelType
 {
     // Sentinel for Discord-side types we don't yet model. Direct casts

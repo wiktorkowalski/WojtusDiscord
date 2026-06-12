@@ -1,5 +1,6 @@
 namespace DiscordEventService.Data.Entities.Core;
 
+// Persisted as int in the DB — values are a data contract; never renumber or strip explicit values.
 public enum MessageMentionType
 {
     User = 0,
