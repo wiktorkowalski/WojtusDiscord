@@ -1,17 +1,12 @@
-using DiscordEventService.Commands;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Endpoints;
 using DiscordEventService.Infrastructure;
 using DiscordEventService.Jobs;
 using DiscordEventService.Services;
-using DiscordEventService.Services.EventHandlers;
 using DiscordEventService.Services.MemeIndexing;
-using DiscordEventService.Services.Pipeline;
 using DotNetEnv;
 using DSharpPlus;
-using DSharpPlus.Commands;
-using DSharpPlus.Commands.Processors.SlashCommands;
 using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
@@ -81,87 +76,9 @@ void AddDiscordDbContext(IServiceCollection services) =>
 
 AddDiscordDbContext(builder.Services);
 
-// Discord Client with services configured for DI
-var discordToken = builder.Configuration.GetSection(DiscordOptions.SectionName).Get<DiscordOptions>()?.Token
-    ?? throw new InvalidOperationException("Discord:Token is required");
-var commandGuildId = builder.Configuration.GetSection(DiscordOptions.SectionName).Get<DiscordOptions>()?.CommandGuildId;
-
-builder.Services.AddSingleton(rootSp =>
-{
-    var clientBuilder = DiscordClientBuilder.CreateDefault(discordToken, DiscordIntents.All);
-
-    // Register ASP.NET Core services in DSharpPlus's DI container. Services event
-    // handlers share with the root container come from AddCoreServices(); add new
-    // shared services to CoreServiceRegistration.CoreServiceTypes (one line, both
-    // containers + StartupValidator pick them up automatically).
-    clientBuilder.ConfigureServices(services =>
-    {
-        AddDiscordDbContext(services);
-
-        services.AddSingleton<IHostEnvironment>(builder.Environment);
-        services.AddSingleton<EventPipeline>();
-        services.AddCoreServices();
-        // #222: MessageEventHandler's live meme-index hook reads the configured
-        // meme channels; root-container option bindings aren't visible here.
-        services.AddOptions<MemeIndexOptions>()
-            .Bind(builder.Configuration.GetSection(MemeIndexOptions.SectionName));
-        // IBackgroundJobClient forwards to the root container's registration.
-        // Hangfire registers IBackgroundJobClient as Transient with DI-based
-        // JobStorage resolution; using `new BackgroundJobClient()` directly
-        // would read JobStorage.Current (a static set by AddHangfireServer's
-        // HostedService at app.Run() time), which is null at validator time
-        // post-Build but pre-Run. Forwarding resolves through Hangfire's
-        // DI-aware factory which works at any time after Build.
-        services.AddSingleton<IBackgroundJobClient>(_ => rootSp.GetRequiredService<IBackgroundJobClient>());
-        services.AddMemoryCache();
-    });
-
-    clientBuilder.ConfigureEventHandlers(b => b
-        .AddEventHandlers<MessageEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<ReactionEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<PollEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<PinEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<VoiceEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<VoiceServerEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<PresenceEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<MemberEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<BanEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<GuildMembersChunkHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<GuildEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<GuildUpdateEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<EmojiEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<StickerEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<ChannelEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<RoleEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<ThreadEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<ThreadSyncHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<StageInstanceEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<ScheduledEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<AutoModEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<AutoModRuleEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<InviteEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<TypingEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<WebhookEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<IntegrationEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<AuditLogEventHandler>(ServiceLifetime.Scoped)
-        .AddEventHandlers<SocketLifecycleHandler>(ServiceLifetime.Scoped)
-    );
-
-    // #224: the bot's first user-facing command. Slash-only (no text-prefix
-    // processor — the bot must keep ignoring message content), guild-scoped
-    // registration so it shows up instantly. Without Discord:CommandGuildId
-    // the commands subsystem isn't wired at all (pure passive logger).
-    if (commandGuildId is { } commandGuild)
-    {
-        clientBuilder.UseCommands((_, extension) =>
-        {
-            extension.AddProcessor(new SlashCommandProcessor());
-            extension.AddCommands([typeof(MemeCommand)], commandGuild);
-        }, new CommandsConfiguration { RegisterDefaultCommandProcessors = false });
-    }
-
-    return clientBuilder.Build();
-});
+// Discord Client with services configured for DI: child container, event-handler
+// roster and slash commands live in DiscordClientRegistration.
+builder.Services.AddDiscordClient(builder.Configuration, builder.Environment, AddDiscordDbContext);
 
 // Order is load-bearing: DiscordHostedService.StartAsync runs InferStartupGapAsync
 // (against the stale last_heartbeat_utc) before HeartbeatBackgroundService can write
