@@ -72,33 +72,7 @@ internal sealed class SocketLifecycleHandler(
             // reconnect) hit SessionResumed instead and don't reach here.
             try
             {
-                // Ready can fire without a preceding Resumed (session invalidated).
-                await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow, onlyType: BotDowntimeType.GatewayDisconnect);
-
-                // The just-closed downtime row's StartedAtUtc is the authoritative
-                // gap start. Reading heartbeats or raw_event_logs here would race
-                // the post-reconnect data — by now AllShardsConnected is true, the
-                // 5s heartbeat may already have written an IsGatewayConnected=true
-                // row, and DSharpPlus has started dispatching events. Both signals
-                // would show fresh timestamps that mask the real gap.
-                //
-                // The closed row covers every downtime classification:
-                // SocketClosed wrote a GatewayDisconnect (in-process session
-                // invalidation); StopAsync wrote a GracefulShutdown/Deploy
-                // (bot restart); InferStartupGapAsync wrote an Inferred
-                // (hard crash / power loss).
-                var mostRecentGapStart = await db.BotDowntimeIntervals
-                    .Where(x => x.EndedAtUtc != null)
-                    .OrderByDescending(x => x.EndedAtUtc)
-                    .Select(x => (DateTime?)x.StartedAtUtc)
-                    .FirstOrDefaultAsync();
-
-                // Fall back to the heartbeat-based heuristic only when no downtime
-                // row exists at all (very first run, no prior shutdown). The
-                // IsGatewayConnected==true filter inside GetLastAliveAtUtcAsync
-                // keeps this conservative even in the fallback case.
-                var lastAlive = mostRecentGapStart
-                    ?? (await tracker.GetLastAliveAtUtcAsync()).LastAliveUtc;
+                var lastAlive = await ResolveGapStartAsync();
                 if (lastAlive is null)
                 {
                     logger.LogInformation("GuildDownloadCompleted: no prior signal, skipping backfill (first run)");
@@ -117,43 +91,83 @@ internal sealed class SocketLifecycleHandler(
                     return;
                 }
 
-                var earliestAllowed = now - MaxReconnectBackfillWindow;
-                var afterTimestamp = lastAlive.Value - ReconnectBackfillBuffer;
-                if (afterTimestamp < earliestAllowed)
-                {
-                    logger.LogInformation(
-                        "Reconnect backfill window capped to {Window} (gap was {GapDuration:c}, capped from {Original:O} to {Capped:O})",
-                        MaxReconnectBackfillWindow, gap, afterTimestamp, earliestAllowed);
-                    afterTimestamp = earliestAllowed;
-                }
-
-                var inProgressGuilds = await db.BackfillCheckpoints
-                    .Where(c => c.Status == BackfillStatus.InProgress)
-                    .Select(c => c.GuildDiscordId)
-                    .Distinct()
-                    .ToListAsync();
-                var inProgressSet = inProgressGuilds.ToHashSet();
-
-                foreach (var guildId in e.Guilds.Keys)
-                {
-                    if (inProgressSet.Contains(guildId))
-                    {
-                        logger.LogInformation(
-                            "Reconnect backfill skipped for guild {GuildId}: backfill already in progress",
-                            guildId);
-                        continue;
-                    }
-
-                    logger.LogInformation(
-                        "Reconnect backfill enqueued for guild {GuildId} after gap {GapDuration:c}, backfilling from {AfterTimestampUtc:O}",
-                        guildId, gap, afterTimestamp);
-                    orchestrator.EnqueueBackfillFrom(guildId, afterTimestamp);
-                }
+                await EnqueueReconnectBackfillsAsync(e.Guilds.Keys, lastAlive.Value, now, gap);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to enqueue reconnect backfill on GuildDownloadCompleted");
             }
+        }
+    }
+
+    private async Task<DateTime?> ResolveGapStartAsync()
+    {
+        // Ready can fire without a preceding Resumed (session invalidated).
+        await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow, onlyType: BotDowntimeType.GatewayDisconnect);
+
+        // The just-closed downtime row's StartedAtUtc is the authoritative
+        // gap start. Reading heartbeats or raw_event_logs here would race
+        // the post-reconnect data — by now AllShardsConnected is true, the
+        // 5s heartbeat may already have written an IsGatewayConnected=true
+        // row, and DSharpPlus has started dispatching events. Both signals
+        // would show fresh timestamps that mask the real gap.
+        //
+        // The closed row covers every downtime classification:
+        // SocketClosed wrote a GatewayDisconnect (in-process session
+        // invalidation); StopAsync wrote a GracefulShutdown/Deploy
+        // (bot restart); InferStartupGapAsync wrote an Inferred
+        // (hard crash / power loss).
+        var mostRecentGapStart = await db.BotDowntimeIntervals
+            .Where(x => x.EndedAtUtc != null)
+            .OrderByDescending(x => x.EndedAtUtc)
+            .Select(x => (DateTime?)x.StartedAtUtc)
+            .FirstOrDefaultAsync();
+
+        // Fall back to the heartbeat-based heuristic only when no downtime
+        // row exists at all (very first run, no prior shutdown). The
+        // IsGatewayConnected==true filter inside GetLastAliveAtUtcAsync
+        // keeps this conservative even in the fallback case.
+        return mostRecentGapStart
+            ?? (await tracker.GetLastAliveAtUtcAsync()).LastAliveUtc;
+    }
+
+    private async Task EnqueueReconnectBackfillsAsync(
+        IEnumerable<ulong> guildIds,
+        DateTime lastAlive,
+        DateTime now,
+        TimeSpan gap)
+    {
+        var earliestAllowed = now - MaxReconnectBackfillWindow;
+        var afterTimestamp = lastAlive - ReconnectBackfillBuffer;
+        if (afterTimestamp < earliestAllowed)
+        {
+            logger.LogInformation(
+                "Reconnect backfill window capped to {Window} (gap was {GapDuration:c}, capped from {Original:O} to {Capped:O})",
+                MaxReconnectBackfillWindow, gap, afterTimestamp, earliestAllowed);
+            afterTimestamp = earliestAllowed;
+        }
+
+        var inProgressGuilds = await db.BackfillCheckpoints
+            .Where(c => c.Status == BackfillStatus.InProgress)
+            .Select(c => c.GuildDiscordId)
+            .Distinct()
+            .ToListAsync();
+        var inProgressSet = inProgressGuilds.ToHashSet();
+
+        foreach (var guildId in guildIds)
+        {
+            if (inProgressSet.Contains(guildId))
+            {
+                logger.LogInformation(
+                    "Reconnect backfill skipped for guild {GuildId}: backfill already in progress",
+                    guildId);
+                continue;
+            }
+
+            logger.LogInformation(
+                "Reconnect backfill enqueued for guild {GuildId} after gap {GapDuration:c}, backfilling from {AfterTimestampUtc:O}",
+                guildId, gap, afterTimestamp);
+            orchestrator.EnqueueBackfillFrom(guildId, afterTimestamp);
         }
     }
 }

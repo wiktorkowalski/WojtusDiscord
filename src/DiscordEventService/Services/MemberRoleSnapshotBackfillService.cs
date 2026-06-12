@@ -61,47 +61,11 @@ internal sealed class MemberRoleSnapshotBackfillService(
                 continue;
             }
 
-            var rolesAdded = evt.RolesAddedJson is not null
-                ? JsonSerializer.Deserialize<List<ulong>>(evt.RolesAddedJson) ?? []
-                : [];
-            var rolesRemoved = evt.RolesRemovedJson is not null
-                ? JsonSerializer.Deserialize<List<ulong>>(evt.RolesRemovedJson) ?? []
-                : [];
+            var (eventCreated, eventClosed) = await ReplayRoleChangeEventAsync(
+                memberId, evt.Id, evt.RolesAddedJson, evt.RolesRemovedJson, evt.EventTimestampUtc, ct);
 
-            var openRoles = (await db.MemberRoleSnapshots
-                .Where(s => s.MemberId == memberId && s.RevokedAtUtc == null)
-                .Select(s => s.RoleDiscordId)
-                .ToListAsync(ct))
-                .ToHashSet();
-
-            foreach (var roleId in rolesAdded)
-            {
-                if (openRoles.Contains(roleId))
-                    continue;
-
-                // Insert-or-ignore: the openRoles pre-check skips known duplicates; this guards
-                // the rare race where a live event inserts the same open snapshot concurrently.
-                var (_, inserted) = await db.MemberRoleSnapshots.GetOrInsertAsync(
-                    s => s.MemberId == memberId && s.RoleDiscordId == roleId && s.RevokedAtUtc == null,
-                    () => new MemberRoleSnapshotEntity
-                    {
-                        MemberId = memberId,
-                        RoleDiscordId = roleId,
-                        GrantedAtUtc = evt.EventTimestampUtc,
-                        SourceEventId = evt.Id
-                    },
-                    ct);
-                if (inserted) created++;
-            }
-
-            foreach (var roleId in rolesRemoved)
-            {
-                var closedCount = await db.MemberRoleSnapshots
-                    .Where(s => s.MemberId == memberId && s.RoleDiscordId == roleId && s.RevokedAtUtc == null)
-                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.RevokedAtUtc, evt.EventTimestampUtc), ct);
-                closed += closedCount;
-            }
-
+            created += eventCreated;
+            closed += eventClosed;
             eventsProcessed++;
         }
 
@@ -111,6 +75,60 @@ internal sealed class MemberRoleSnapshotBackfillService(
         var seeded = await SeedCurrentRolesAsync(memberLookup, ct);
 
         return new Result(eventsProcessed, created, closed, seeded);
+    }
+
+    private async Task<(int Created, int Closed)> ReplayRoleChangeEventAsync(
+        Guid memberId,
+        Guid eventId,
+        string? rolesAddedJson,
+        string? rolesRemovedJson,
+        DateTime eventTimestampUtc,
+        CancellationToken ct)
+    {
+        var created = 0;
+        var closed = 0;
+
+        var rolesAdded = rolesAddedJson is not null
+            ? JsonSerializer.Deserialize<List<ulong>>(rolesAddedJson) ?? []
+            : [];
+        var rolesRemoved = rolesRemovedJson is not null
+            ? JsonSerializer.Deserialize<List<ulong>>(rolesRemovedJson) ?? []
+            : [];
+
+        var openRoles = (await db.MemberRoleSnapshots
+            .Where(s => s.MemberId == memberId && s.RevokedAtUtc == null)
+            .Select(s => s.RoleDiscordId)
+            .ToListAsync(ct))
+            .ToHashSet();
+
+        foreach (var roleId in rolesAdded)
+        {
+            if (openRoles.Contains(roleId))
+                continue;
+
+            // Insert-or-ignore: the openRoles pre-check skips known duplicates; this guards
+            // the rare race where a live event inserts the same open snapshot concurrently.
+            var (_, inserted) = await db.MemberRoleSnapshots.GetOrInsertAsync(
+                s => s.MemberId == memberId && s.RoleDiscordId == roleId && s.RevokedAtUtc == null,
+                () => new MemberRoleSnapshotEntity
+                {
+                    MemberId = memberId,
+                    RoleDiscordId = roleId,
+                    GrantedAtUtc = eventTimestampUtc,
+                    SourceEventId = eventId
+                },
+                ct);
+            if (inserted) created++;
+        }
+
+        foreach (var roleId in rolesRemoved)
+        {
+            closed += await db.MemberRoleSnapshots
+                .Where(s => s.MemberId == memberId && s.RoleDiscordId == roleId && s.RevokedAtUtc == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.RevokedAtUtc, eventTimestampUtc), ct);
+        }
+
+        return (created, closed);
     }
 
     private async Task<int> SeedCurrentRolesAsync(
@@ -123,60 +141,70 @@ internal sealed class MemberRoleSnapshotBackfillService(
         foreach (var guildDiscordId in guildIds)
         {
             ct.ThrowIfCancellationRequested();
-
-            DSharpPlus.Entities.DiscordGuild guild;
-            try
-            {
-                guild = await discordClient.GetGuildAsync(guildDiscordId);
-            }
-            catch (Exception ex) when (ex is NotFoundException or UnauthorizedException)
-            {
-                logger.LogWarning(ex, "Cannot fetch guild {GuildId} for role seeding — skipping", guildDiscordId);
-                continue;
-            }
-
-            var members = new List<DSharpPlus.Entities.DiscordMember>();
-            await foreach (var member in guild.GetAllMembersAsync())
-                members.Add(member);
-
-            logger.LogInformation("Seeding current roles for {MemberCount} members in guild {GuildId}",
-                members.Count, guildDiscordId);
-
-            foreach (var member in members)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                if (!memberLookup.TryGetValue((member.Id, guildDiscordId), out var memberId))
-                    continue;
-
-                var openRolesForMember = (await db.MemberRoleSnapshots
-                    .Where(s => s.MemberId == memberId && s.RevokedAtUtc == null)
-                    .Select(s => s.RoleDiscordId)
-                    .ToListAsync(ct))
-                    .ToHashSet();
-
-                foreach (var role in member.Roles)
-                {
-                    if (openRolesForMember.Contains(role.Id))
-                        continue;
-
-                    // Insert-or-ignore: openRolesForMember pre-check skips known duplicates; this
-                    // guards the rare race where a live event inserts the same snapshot concurrently.
-                    var (_, inserted) = await db.MemberRoleSnapshots.GetOrInsertAsync(
-                        s => s.MemberId == memberId && s.RoleDiscordId == role.Id && s.RevokedAtUtc == null,
-                        () => new MemberRoleSnapshotEntity
-                        {
-                            MemberId = memberId,
-                            RoleDiscordId = role.Id,
-                            GrantedAtUtc = DateTime.UtcNow
-                        },
-                        ct);
-                    if (inserted) seeded++;
-                }
-            }
+            seeded += await SeedGuildRolesAsync(guildDiscordId, memberLookup, ct);
         }
 
         logger.LogInformation("Current role seeding done: {SeededCount} new snapshots", seeded);
+        return seeded;
+    }
+
+    private async Task<int> SeedGuildRolesAsync(
+        ulong guildDiscordId,
+        Dictionary<(ulong UserDiscordId, ulong GuildDiscordId), Guid> memberLookup,
+        CancellationToken ct)
+    {
+        DSharpPlus.Entities.DiscordGuild guild;
+        try
+        {
+            guild = await discordClient.GetGuildAsync(guildDiscordId);
+        }
+        catch (Exception ex) when (ex is NotFoundException or UnauthorizedException)
+        {
+            logger.LogWarning(ex, "Cannot fetch guild {GuildId} for role seeding — skipping", guildDiscordId);
+            return 0;
+        }
+
+        var members = new List<DSharpPlus.Entities.DiscordMember>();
+        await foreach (var member in guild.GetAllMembersAsync())
+            members.Add(member);
+
+        logger.LogInformation("Seeding current roles for {MemberCount} members in guild {GuildId}",
+            members.Count, guildDiscordId);
+
+        var seeded = 0;
+        foreach (var member in members)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!memberLookup.TryGetValue((member.Id, guildDiscordId), out var memberId))
+                continue;
+
+            var openRolesForMember = (await db.MemberRoleSnapshots
+                .Where(s => s.MemberId == memberId && s.RevokedAtUtc == null)
+                .Select(s => s.RoleDiscordId)
+                .ToListAsync(ct))
+                .ToHashSet();
+
+            foreach (var role in member.Roles)
+            {
+                if (openRolesForMember.Contains(role.Id))
+                    continue;
+
+                // Insert-or-ignore: openRolesForMember pre-check skips known duplicates; this
+                // guards the rare race where a live event inserts the same snapshot concurrently.
+                var (_, inserted) = await db.MemberRoleSnapshots.GetOrInsertAsync(
+                    s => s.MemberId == memberId && s.RoleDiscordId == role.Id && s.RevokedAtUtc == null,
+                    () => new MemberRoleSnapshotEntity
+                    {
+                        MemberId = memberId,
+                        RoleDiscordId = role.Id,
+                        GrantedAtUtc = DateTime.UtcNow
+                    },
+                    ct);
+                if (inserted) seeded++;
+            }
+        }
+
         return seeded;
     }
 }
