@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class StageInstanceEventHandler(EventPipeline pipeline) :
+internal sealed class StageInstanceEventHandler(EventPipeline pipeline) :
     IEventHandler<StageInstanceCreatedEventArgs>,
     IEventHandler<StageInstanceUpdatedEventArgs>,
     IEventHandler<StageInstanceDeletedEventArgs>

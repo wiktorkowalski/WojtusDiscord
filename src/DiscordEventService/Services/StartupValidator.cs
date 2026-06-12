@@ -7,7 +7,7 @@ namespace DiscordEventService.Services;
 
 // Missing child-container registrations otherwise surface only at runtime when a handler
 // fires — sometimes hours after deploy, often only logged at Error inside a catch block.
-public static class StartupValidator
+internal static class StartupValidator
 {
     // Services event handlers resolve via scopeFactory.CreateScope().
     // Constructor-injected transitive dependencies are also validated by trying

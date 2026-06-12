@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class StickerEventHandler(EventPipeline pipeline) :
+internal sealed class StickerEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildStickersUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildStickersUpdatedEventArgs e)

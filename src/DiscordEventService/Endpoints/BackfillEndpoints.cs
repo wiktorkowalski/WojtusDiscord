@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Endpoints;
 
-public static class BackfillEndpoints
+internal static class BackfillEndpoints
 {
     public static void MapBackfillEndpoints(this WebApplication app)
     {
@@ -118,7 +118,7 @@ public static class BackfillEndpoints
     }
 }
 
-public record BackfillRequest
+internal sealed record BackfillRequest
 {
     public bool IncludeMessages { get; init; } = true;
     public bool IncludeReactions { get; init; } = true;
@@ -130,20 +130,20 @@ public record BackfillRequest
     };
 }
 
-public record BackfillResponse
+internal sealed record BackfillResponse
 {
     public required string JobId { get; init; }
     public required ulong GuildId { get; init; }
 }
 
-public record BackfillStatusResponse
+internal sealed record BackfillStatusResponse
 {
     public required ulong GuildId { get; init; }
     public required string OverallStatus { get; init; }
     public required List<CheckpointDto> Checkpoints { get; init; }
 }
 
-public record CheckpointDto
+internal sealed record CheckpointDto
 {
     public required string Type { get; init; }
     public required string Status { get; init; }

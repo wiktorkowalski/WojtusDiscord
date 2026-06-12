@@ -1,6 +1,6 @@
 namespace DiscordEventService.Configuration;
 
-public sealed class MemeIndexOptions
+internal sealed class MemeIndexOptions
 {
     public const string SectionName = "MemeIndex";
 

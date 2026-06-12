@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class BanEventHandler(EventPipeline pipeline) :
+internal sealed class BanEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildBanAddedEventArgs>,
     IEventHandler<GuildBanRemovedEventArgs>
 {

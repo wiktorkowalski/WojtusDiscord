@@ -5,7 +5,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class PollEventHandler(EventPipeline pipeline) :
+internal sealed class PollEventHandler(EventPipeline pipeline) :
     IEventHandler<MessagePollVotedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, MessagePollVotedEventArgs e)

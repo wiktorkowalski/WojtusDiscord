@@ -6,7 +6,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class ThreadSyncHandler(EventPipeline pipeline) :
+internal sealed class ThreadSyncHandler(EventPipeline pipeline) :
     IEventHandler<ThreadListSyncedEventArgs>
 {
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions

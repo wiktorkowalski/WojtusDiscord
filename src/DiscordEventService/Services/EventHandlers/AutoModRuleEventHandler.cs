@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
+internal sealed class AutoModRuleEventHandler(EventPipeline pipeline) :
     IEventHandler<AutoModerationRuleCreatedEventArgs>,
     IEventHandler<AutoModerationRuleUpdatedEventArgs>,
     IEventHandler<AutoModerationRuleDeletedEventArgs>

@@ -5,7 +5,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class GuildUpdateEventHandler(EventPipeline pipeline) :
+internal sealed class GuildUpdateEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildUpdatedEventArgs e)

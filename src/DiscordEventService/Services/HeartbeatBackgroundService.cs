@@ -2,7 +2,7 @@ using DSharpPlus;
 
 namespace DiscordEventService.Services;
 
-public class HeartbeatBackgroundService(
+internal sealed class HeartbeatBackgroundService(
     IServiceScopeFactory scopeFactory,
     DiscordClient discordClient,
     ILogger<HeartbeatBackgroundService> logger) : BackgroundService

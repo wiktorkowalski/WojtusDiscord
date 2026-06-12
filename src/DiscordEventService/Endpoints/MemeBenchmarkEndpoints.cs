@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Endpoints;
 
-public static class MemeBenchmarkEndpoints
+internal static class MemeBenchmarkEndpoints
 {
     public static void MapMemeBenchmarkEndpoints(this WebApplication app)
     {
@@ -101,7 +101,7 @@ public static class MemeBenchmarkEndpoints
     }
 }
 
-public sealed record BenchmarkStartResponse
+internal sealed record BenchmarkStartResponse
 {
     public required string HangfireJobId { get; init; }
     public required int SampleSize { get; init; }

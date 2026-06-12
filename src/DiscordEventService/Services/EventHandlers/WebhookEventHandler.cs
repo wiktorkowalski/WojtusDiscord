@@ -5,7 +5,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class WebhookEventHandler(EventPipeline pipeline) :
+internal sealed class WebhookEventHandler(EventPipeline pipeline) :
     IEventHandler<WebhooksUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, WebhooksUpdatedEventArgs e)

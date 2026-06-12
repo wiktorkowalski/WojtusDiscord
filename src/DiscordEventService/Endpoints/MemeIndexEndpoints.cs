@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Endpoints;
 
-public static class MemeIndexEndpoints
+internal static class MemeIndexEndpoints
 {
     public static void MapMemeIndexEndpoints(this WebApplication app)
     {
@@ -91,7 +91,7 @@ public static class MemeIndexEndpoints
     }
 }
 
-public sealed record MemeIndexStartResponse
+internal sealed record MemeIndexStartResponse
 {
     public required string HangfireJobId { get; init; }
     public required ulong GuildId { get; init; }
@@ -99,13 +99,13 @@ public sealed record MemeIndexStartResponse
     public required int MaxImagesPerRun { get; init; }
 }
 
-public sealed record MemeIndexStatusResponse
+internal sealed record MemeIndexStatusResponse
 {
     public required List<MemeIndexCheckpointDto> Checkpoints { get; init; }
     public required MemeIndexRowCounts Rows { get; init; }
 }
 
-public sealed record MemeIndexRowCounts
+internal sealed record MemeIndexRowCounts
 {
     public int Pending { get; init; }
     public int Indexed { get; init; }
@@ -114,7 +114,7 @@ public sealed record MemeIndexRowCounts
     public int Total => Pending + Indexed + Failed + Skipped;
 }
 
-public sealed record MemeIndexCheckpointDto
+internal sealed record MemeIndexCheckpointDto
 {
     public required ulong GuildId { get; init; }
     public required string Status { get; init; }

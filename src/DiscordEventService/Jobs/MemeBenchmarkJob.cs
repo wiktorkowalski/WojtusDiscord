@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Jobs;
 
-public sealed class MemeBenchmarkJob(
+internal sealed class MemeBenchmarkJob(
     MemeSampleService sampleService,
     AttachmentUrlRefreshService urlRefreshService,
     OpenRouterClient openRouterClient,

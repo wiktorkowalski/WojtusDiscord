@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class RoleEventHandler(EventPipeline pipeline) :
+internal sealed class RoleEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildRoleCreatedEventArgs>,
     IEventHandler<GuildRoleUpdatedEventArgs>,
     IEventHandler<GuildRoleDeletedEventArgs>

@@ -1,6 +1,6 @@
 namespace DiscordEventService.Services.MemeIndexing;
 
-public static class ImageMagic
+internal static class ImageMagic
 {
     private static readonly string[] ImageExtensions = ["jpg", "jpeg", "png", "webp", "gif"];
 

@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 namespace DiscordEventService.Services.MemeIndexing;
 
 // Trailing defaults keep pre-#221 benchmark links files deserializable — old exports lack MessageId/FileSizeBytes.
-public sealed record MemeSampleItem(
+internal sealed record MemeSampleItem(
     ulong GuildDiscordId,
     ulong ChannelDiscordId,
     ulong MessageDiscordId,
@@ -18,7 +18,7 @@ public sealed record MemeSampleItem(
     Guid MessageId = default,
     long FileSizeBytes = 0);
 
-public sealed class MemeSampleService(
+internal sealed class MemeSampleService(
     DiscordDbContext db,
     IOptions<MemeIndexOptions> options,
     ILogger<MemeSampleService> logger)

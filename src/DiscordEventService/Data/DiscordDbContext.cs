@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace DiscordEventService.Data;
 
-public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbContext(options)
+public sealed class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbContext(options)
 {
     public DbSet<GuildEntity> Guilds => Set<GuildEntity>();
     public DbSet<ChannelEntity> Channels => Set<ChannelEntity>();
@@ -140,13 +140,13 @@ public class DiscordDbContext(DbContextOptions<DiscordDbContext> options) : DbCo
     }
 }
 
-public interface ITimestamped
+internal interface ITimestamped
 {
     DateTime FirstSeenUtc { get; set; }
     DateTime LastUpdatedUtc { get; set; }
 }
 
-public static class UuidV7Extensions
+internal static class UuidV7Extensions
 {
     public static void ConfigureUuidGeneration(this ModelBuilder modelBuilder)
     {

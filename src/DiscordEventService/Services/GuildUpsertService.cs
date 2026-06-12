@@ -4,7 +4,7 @@ using DSharpPlus.Entities;
 
 namespace DiscordEventService.Services;
 
-public class GuildUpsertService(DiscordDbContext db, ILogger<GuildUpsertService> logger)
+internal sealed class GuildUpsertService(DiscordDbContext db, ILogger<GuildUpsertService> logger)
 {
     public async Task<UpsertResult<Guid>> UpsertGuildAsync(DiscordGuild guild)
     {

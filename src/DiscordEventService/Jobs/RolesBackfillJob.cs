@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
 
-public sealed class RolesBackfillJob(
+internal sealed class RolesBackfillJob(
     DiscordClient discordClient,
     BackfillJobExecutor executor) : BackfillJobBase, IBackfillJob
 {

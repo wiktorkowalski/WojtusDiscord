@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
-public class BootQuickSyncService(
+internal sealed class BootQuickSyncService(
     IServiceScopeFactory scopeFactory,
     DiscordClient discordClient,
     ILogger<BootQuickSyncService> logger)

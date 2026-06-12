@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
-public class FailedEventService(DiscordDbContext db, ILogger<FailedEventService> logger, IHostEnvironment env)
+internal sealed class FailedEventService(DiscordDbContext db, ILogger<FailedEventService> logger, IHostEnvironment env)
 {
     private static readonly SemaphoreSlim _fallbackFileLock = new SemaphoreSlim(1, 1);
 

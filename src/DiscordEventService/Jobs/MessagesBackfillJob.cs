@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
 
-public sealed class MessagesBackfillJob(
+internal sealed class MessagesBackfillJob(
     DiscordClient discordClient,
     BackfillJobExecutor executor,
     ILogger<MessagesBackfillJob> logger) : BackfillJobBase, IBackfillJob

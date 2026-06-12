@@ -6,7 +6,7 @@ namespace DiscordEventService.Jobs;
 
 // Jobs supply only per-item work as a delegate, keeping DiscordClient out of the executor so its
 // checkpoint transitions are unit-testable against a real DbContext with no gateway.
-public sealed class BackfillJobExecutor(
+internal sealed class BackfillJobExecutor(
     IServiceScopeFactory scopeFactory,
     ILogger<BackfillJobExecutor> logger)
 {
@@ -105,12 +105,12 @@ public sealed class BackfillJobExecutor(
     }
 }
 
-public sealed record BackfillContext(
+internal sealed record BackfillContext(
     DiscordDbContext Db,
     IServiceProvider Services,
     BackfillCheckpointEntity Checkpoint);
 
-public sealed record BackfillOutcome
+internal sealed record BackfillOutcome
 {
     public required bool IsShortCircuit { get; init; }
     public string? Reason { get; init; }

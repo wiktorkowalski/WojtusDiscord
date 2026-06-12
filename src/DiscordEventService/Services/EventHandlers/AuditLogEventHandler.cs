@@ -5,7 +5,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class AuditLogEventHandler(EventPipeline pipeline) :
+internal sealed class AuditLogEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildAuditLogCreatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildAuditLogCreatedEventArgs e)

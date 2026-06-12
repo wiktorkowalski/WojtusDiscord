@@ -1,6 +1,6 @@
 namespace DiscordEventService.Configuration;
 
-public sealed class OpenRouterOptions
+internal sealed class OpenRouterOptions
 {
     public const string SectionName = "OpenRouter";
 

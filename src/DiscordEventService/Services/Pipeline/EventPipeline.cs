@@ -2,7 +2,7 @@ using DiscordEventService.Data;
 
 namespace DiscordEventService.Services.Pipeline;
 
-public sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFactory loggerFactory)
+internal sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFactory loggerFactory)
 {
     public async Task Execute<TEventArgs>(
         TEventArgs e,

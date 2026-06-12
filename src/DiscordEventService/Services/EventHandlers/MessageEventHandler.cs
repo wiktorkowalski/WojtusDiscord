@@ -16,7 +16,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class MessageEventHandler(EventPipeline pipeline) :
+internal sealed class MessageEventHandler(EventPipeline pipeline) :
     IEventHandler<MessageCreatedEventArgs>,
     IEventHandler<MessageUpdatedEventArgs>,
     IEventHandler<MessageDeletedEventArgs>,

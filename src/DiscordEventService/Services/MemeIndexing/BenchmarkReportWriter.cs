@@ -3,22 +3,22 @@ using System.Text;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-public sealed record BenchmarkCell(string Model, MemeAnalysisResult Result, double ElapsedSeconds);
+internal sealed record BenchmarkCell(string Model, MemeAnalysisResult Result, double ElapsedSeconds);
 
-public sealed record BenchmarkItem(
+internal sealed record BenchmarkItem(
     MemeSampleItem Sample,
     string? FreshUrl,
     string? SkipReason,
     List<BenchmarkCell> Cells);
 
-public sealed record BenchmarkRun(
+internal sealed record BenchmarkRun(
     DateTime StartedUtc,
     DateTime FinishedUtc,
     int RequestedSampleSize,
     string[] Models,
     List<BenchmarkItem> Items);
 
-public static class BenchmarkReportWriter
+internal static class BenchmarkReportWriter
 {
     public static string Render(BenchmarkRun run)
     {

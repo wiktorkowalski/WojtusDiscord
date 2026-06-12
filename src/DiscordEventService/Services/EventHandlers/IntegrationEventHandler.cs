@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class IntegrationEventHandler(EventPipeline pipeline) :
+internal sealed class IntegrationEventHandler(EventPipeline pipeline) :
     IEventHandler<IntegrationCreatedEventArgs>,
     IEventHandler<IntegrationUpdatedEventArgs>,
     IEventHandler<IntegrationDeletedEventArgs>

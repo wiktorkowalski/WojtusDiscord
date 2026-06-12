@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class SocketLifecycleHandler(
+internal sealed class SocketLifecycleHandler(
     DiscordDbContext db,
     DowntimeTrackerService tracker,
     GuildBackfillOrchestrator orchestrator,

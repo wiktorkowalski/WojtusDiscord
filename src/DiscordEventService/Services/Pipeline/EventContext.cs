@@ -2,7 +2,7 @@ using DiscordEventService.Data;
 
 namespace DiscordEventService.Services.Pipeline;
 
-public record EventContext(
+internal sealed record EventContext(
     DiscordDbContext Db,
     IServiceProvider Services,
     Guid CorrelationId,

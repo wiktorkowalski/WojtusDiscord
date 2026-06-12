@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
-public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTrackerService> logger)
+internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTrackerService> logger)
 {
     private static readonly TimeSpan StartupGapThreshold = TimeSpan.FromSeconds(30);
 
@@ -147,7 +147,7 @@ public class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTracker
     }
 }
 
-public record LastAliveResult(DateTime? LastAliveUtc, DateTime? LastHeartbeatUtc, DateTime? MaxReceivedAtUtc);
+internal sealed record LastAliveResult(DateTime? LastAliveUtc, DateTime? LastHeartbeatUtc, DateTime? MaxReceivedAtUtc);
 
-public record OpenDowntimeResult(Guid Id, BotDowntimeType ActualType, bool Created);
+internal sealed record OpenDowntimeResult(Guid Id, BotDowntimeType ActualType, bool Created);
 

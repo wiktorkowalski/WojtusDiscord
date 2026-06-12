@@ -8,12 +8,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
-public class MemberRoleSnapshotBackfillService(
+internal sealed class MemberRoleSnapshotBackfillService(
     DiscordDbContext db,
     DiscordClient discordClient,
     ILogger<MemberRoleSnapshotBackfillService> logger)
 {
-    public record Result(
+    public sealed record Result(
         int EventsProcessed,
         int SnapshotsCreated,
         int SnapshotsClosed,

@@ -5,11 +5,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
-public partial class MessageMentionsBackfillService(
+internal sealed partial class MessageMentionsBackfillService(
     DiscordDbContext db,
     ILogger<MessageMentionsBackfillService> logger)
 {
-    public record Result(
+    public sealed record Result(
         int MessagesScanned,
         int MessagesSkipped,
         int MessagesProcessed,

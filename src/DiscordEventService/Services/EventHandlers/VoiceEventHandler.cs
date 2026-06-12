@@ -5,7 +5,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class VoiceEventHandler(EventPipeline pipeline) :
+internal sealed class VoiceEventHandler(EventPipeline pipeline) :
     IEventHandler<VoiceStateUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, VoiceStateUpdatedEventArgs args)

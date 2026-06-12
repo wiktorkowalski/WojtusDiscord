@@ -7,7 +7,7 @@ namespace DiscordEventService.Jobs;
 // Reconnect-backfill is capped to 2 days, so anything older needs this periodic sweep;
 // skips guilds with an InProgress checkpoint to avoid stepping on the reconnect path or
 // the operator-triggered /api/backfill endpoint.
-public class PeriodicFullBackfillJob(
+internal sealed class PeriodicFullBackfillJob(
     IServiceScopeFactory scopeFactory,
     ILogger<PeriodicFullBackfillJob> logger)
 {

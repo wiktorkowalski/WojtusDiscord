@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class PresenceEventHandler(EventPipeline pipeline) :
+internal sealed class PresenceEventHandler(EventPipeline pipeline) :
     IEventHandler<PresenceUpdatedEventArgs>
 {
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions

@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-public sealed class MemeIndexRunCounters
+internal sealed class MemeIndexRunCounters
 {
     public int Indexed { get; set; }
     public int Deduped { get; set; }
@@ -21,7 +21,7 @@ public sealed class MemeIndexRunCounters
 }
 
 // The DbContext stays a parameter — callers own the unit of work and decide when to flush.
-public sealed class MemeAttachmentIndexer(
+internal sealed class MemeAttachmentIndexer(
     OpenRouterClient openRouterClient,
     IHttpClientFactory httpClientFactory,
     IOptions<MemeIndexOptions> memeIndexOptions,

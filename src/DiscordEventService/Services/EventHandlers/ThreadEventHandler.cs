@@ -7,7 +7,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class ThreadEventHandler(EventPipeline pipeline) :
+internal sealed class ThreadEventHandler(EventPipeline pipeline) :
     IEventHandler<ThreadCreatedEventArgs>,
     IEventHandler<ThreadUpdatedEventArgs>,
     IEventHandler<ThreadDeletedEventArgs>,

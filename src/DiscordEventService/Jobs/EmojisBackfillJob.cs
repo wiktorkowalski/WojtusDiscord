@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
 
-public sealed class EmojisBackfillJob(
+internal sealed class EmojisBackfillJob(
     DiscordClient discordClient,
     BackfillJobExecutor executor) : BackfillJobBase, IBackfillJob
 {
