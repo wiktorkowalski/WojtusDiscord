@@ -34,7 +34,7 @@ public sealed class VoiceDowntimeAndDailyTests(PostgresFixture fixture) : IClass
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task VoiceLeaderboard_SubtractsDowntimeOverlapWithoutCapping()
+    public async Task VoiceLeaderboard_SessionStraddlingOutage_SubtractsDowntimeOverlapWithoutCapping()
     {
         var controller = new StatsController(_db);
 

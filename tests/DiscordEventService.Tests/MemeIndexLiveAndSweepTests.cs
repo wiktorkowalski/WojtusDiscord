@@ -174,7 +174,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     }
 
     [Fact]
-    public async Task SweepCoordinator_EnqueuesOnePerGuildJob()
+    public async Task ExecuteAsync_ConfiguredGuilds_EnqueuesOnePerGuildJob()
     {
         var jobClient = new RecordingJobClient();
 
@@ -186,7 +186,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     }
 
     [Fact]
-    public async Task SweepCoordinator_SkipsGuildWithIndexingInProgress()
+    public async Task ExecuteAsync_GuildWithIndexingInProgress_IsSkipped()
     {
         _db.BackfillCheckpoints.Add(new BackfillCheckpointEntity
         {
@@ -204,7 +204,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     }
 
     [Fact]
-    public async Task SweepCoordinator_Unconfigured_IsANoOp()
+    public async Task ExecuteAsync_Unconfigured_IsANoOp()
     {
         var jobClient = new RecordingJobClient();
 

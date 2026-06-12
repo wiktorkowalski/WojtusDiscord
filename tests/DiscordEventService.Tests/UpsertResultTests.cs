@@ -6,7 +6,7 @@ namespace DiscordEventService.Tests;
 public sealed class UpsertResultTests
 {
     [Fact]
-    public void Success_CarriesValueAndNoFailureReason()
+    public void Success_WithValue_CarriesValueAndNoFailureReason()
     {
         var id = Guid.NewGuid();
 
@@ -18,7 +18,7 @@ public sealed class UpsertResultTests
     }
 
     [Fact]
-    public void Failure_HasNoValueAndCarriesReason()
+    public void Failure_WithReason_HasNoValueAndCarriesReason()
     {
         var result = UpsertResult<Guid>.Failure("lost the row");
 

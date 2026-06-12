@@ -22,7 +22,7 @@ public sealed class RawEventsControllerTests(PostgresFixture fixture) : IClassFi
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task GetTypes_ReturnsCountsPerType()
+    public async Task GetTypes_MixedEventTypes_ReturnsCountsPerType()
     {
         await SeedAsync(("MessageCreated", false), ("MessageCreated", false), ("PresenceUpdated", false));
         var controller = new RawEventsController(_db);
@@ -34,7 +34,7 @@ public sealed class RawEventsControllerTests(PostgresFixture fixture) : IClassFi
     }
 
     [Fact]
-    public async Task GetEvents_FiltersByTypeAndFailedFlag()
+    public async Task GetEvents_TypeAndFailedFilters_ReturnsOnlyMatching()
     {
         await SeedAsync(("MessageCreated", false), ("MessageCreated", true), ("PresenceUpdated", false));
         var controller = new RawEventsController(_db);

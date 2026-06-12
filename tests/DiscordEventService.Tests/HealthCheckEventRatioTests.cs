@@ -26,7 +26,7 @@ public sealed class HealthCheckEventRatioTests(PostgresFixture fixture)
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task EventRatioDrop_DebouncesAcrossRuns_AndExcludesVoice()
+    public async Task ExecuteAsync_EventRatioDrop_DebouncesAcrossRunsAndExcludesVoice()
     {
         var now = DateTime.UtcNow;
 

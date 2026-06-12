@@ -33,7 +33,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task TopMessages_RanksAuthorsByCount()
+    public async Task TopMessages_TwoAuthorsSeeded_RanksAuthorsByCount()
     {
         var controller = new StatsController(_db);
         var top = (await controller.TopMessages(default)).Value!;
@@ -45,7 +45,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task VoiceLeaderboard_SumsSessionMinutes()
+    public async Task VoiceLeaderboard_SeededSessions_SumsSessionMinutes()
     {
         var controller = new StatsController(_db);
         var voice = (await controller.VoiceLeaderboard(default)).Value!;
@@ -56,7 +56,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task TopEmojis_CountsAndFlagsCustom()
+    public async Task TopEmojis_CustomAndUnicodeReactions_CountsAndFlagsCustom()
     {
         var controller = new StatsController(_db);
         var emojis = (await controller.TopEmojis(default)).Value!;
@@ -70,7 +70,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task ChannelActivity_CountsMessagesAndReactions()
+    public async Task ChannelActivity_SeededMessagesAndReactions_CountsBoth()
     {
         var controller = new StatsController(_db);
         var channels = (await controller.ChannelActivity(default)).Value!;
@@ -82,7 +82,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task TopReactionsGiven_RanksReactorsByCount()
+    public async Task TopReactionsGiven_TwoReactorsSeeded_RanksReactorsByCount()
     {
         var controller = new StatsController(_db);
         var given = (await controller.TopReactionsGiven(default)).Value!;
@@ -94,7 +94,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task TopReactionsReceived_RanksAuthorsByReactionsOnTheirMessages()
+    public async Task TopReactionsReceived_ReactionsOnAuthoredMessages_RanksAuthors()
     {
         var controller = new StatsController(_db);
         var received = (await controller.TopReactionsReceived(default)).Value!;
@@ -106,7 +106,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task TopActivities_CountsByNameDescending()
+    public async Task TopActivities_SeededActivities_CountsByNameDescending()
     {
         var controller = new StatsController(_db);
         var activities = (await controller.TopActivities(default)).Value!;
@@ -118,7 +118,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task Overview_AggregatesTotals()
+    public async Task Overview_SeededEvents_AggregatesTotals()
     {
         var controller = new StatsController(_db);
 
@@ -136,7 +136,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task VolumeByType_RanksEventTypes()
+    public async Task VolumeByType_MixedEventTypes_RanksByCount()
     {
         var controller = new StatsController(_db);
         var volume = (await controller.VolumeByType(default)).Value!;

@@ -41,7 +41,7 @@ public sealed class TablesControllerTests(PostgresFixture fixture) : IClassFixtu
     }
 
     [Fact]
-    public void GetColumns_ReportsSnowflakeJsonAndEnumKinds()
+    public void GetColumns_RawEventLogsTable_ReportsSnowflakeJsonAndEnumKinds()
     {
         var controller = NewController();
 
@@ -99,7 +99,7 @@ public sealed class TablesControllerTests(PostgresFixture fixture) : IClassFixtu
     }
 
     [Fact]
-    public async Task GetRows_FiltersByColumn()
+    public async Task GetRows_ColumnFilterProvided_ReturnsOnlyMatchingRows()
     {
         await SeedRawEventsAsync(("MessageCreated", 1UL), ("PresenceUpdated", 2UL), ("MessageDeleted", 3UL));
         var controller = NewController();
@@ -111,7 +111,7 @@ public sealed class TablesControllerTests(PostgresFixture fixture) : IClassFixtu
     }
 
     [Fact]
-    public async Task GetRows_RejectsUnknownTableSortAndFilterColumns()
+    public async Task GetRows_UnknownTableSortOrFilterColumn_ReturnsBadRequest()
     {
         var controller = NewController();
 
