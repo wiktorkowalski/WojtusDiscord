@@ -26,7 +26,7 @@ public class GuildUpsertService(DiscordDbContext db, ILogger<GuildUpsertService>
 
         if (id == Guid.Empty)
         {
-            logger.LogError("GuildUpsert lost the row for DiscordId={DiscordId} after upsert", guild.Id);
+            logger.LogError("Guild upsert lost the row for guild {GuildId} after upsert", guild.Id);
             return UpsertResult<Guid>.Failure($"Guild upsert lost the row for DiscordId={guild.Id}");
         }
 

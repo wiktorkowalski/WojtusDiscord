@@ -30,7 +30,7 @@ public class UserService(DiscordDbContext db, ILogger<UserService> logger)
             var entity = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == user.Id);
             if (entity is null)
             {
-                logger.LogError("UserUpsert lost the row for DiscordId={DiscordId} after detecting a name change", user.Id);
+                logger.LogError("User upsert lost the row for user {UserId} after detecting a name change", user.Id);
                 return UpsertResult<Guid>.Failure($"User upsert lost the row for DiscordId={user.Id}");
             }
 
@@ -52,7 +52,7 @@ public class UserService(DiscordDbContext db, ILogger<UserService> logger)
             await db.SaveChangesAsync();
 
             logger.LogInformation(
-                "User name changed for {DiscordId}: username {OldUser} → {NewUser}, globalName {OldGlobal} → {NewGlobal}",
+                "User name changed for {UserId}: username {OldUsername} → {NewUsername}, global name {OldGlobalName} → {NewGlobalName}",
                 user.Id,
                 usernameChanged ? existing.Username : "(unchanged)",
                 usernameChanged ? user.Username : "(unchanged)",
@@ -85,7 +85,7 @@ public class UserService(DiscordDbContext db, ILogger<UserService> logger)
 
         if (id == Guid.Empty)
         {
-            logger.LogError("UserUpsert lost the row for DiscordId={DiscordId} after upsert", user.Id);
+            logger.LogError("User upsert lost the row for user {UserId} after upsert", user.Id);
             return UpsertResult<Guid>.Failure($"User upsert lost the row for DiscordId={user.Id}");
         }
 
@@ -104,8 +104,8 @@ public class UserService(DiscordDbContext db, ILogger<UserService> logger)
 
         if (!userResult.IsSuccess || guildId == Guid.Empty)
         {
-            logger.LogWarning("Cannot upsert member: User={UserResolved} Guild={GuildResolved} for MemberId={MemberId} GuildId={GuildId}",
-                userResult.IsSuccess, guildId != Guid.Empty, member.Id, member.Guild.Id);
+            logger.LogError("Cannot upsert member {MemberId} in guild {GuildId}: user resolved {UserResolved}, guild resolved {GuildResolved}",
+                member.Id, member.Guild.Id, userResult.IsSuccess, guildId != Guid.Empty);
             return;
         }
 

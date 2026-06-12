@@ -19,7 +19,7 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
         await pipeline.Execute(e, "GuildCreated", nameof(GuildEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
-                ctx.Logger.LogInformation("GuildCreated event received for GuildId={GuildId} Name={GuildName}", e.Guild.Id, e.Guild.Name);
+                ctx.Logger.LogInformation("GuildCreated received for guild {GuildId} ({GuildName})", e.Guild.Id, e.Guild.Name);
 
                 // Upsert the guild (for its Guid) then every channel/role, all in one transaction
                 // so a partial failure rolls back atomically. Each upsert handles its own 23505
@@ -195,7 +195,7 @@ public sealed class GuildEventHandler(EventPipeline pipeline) :
         if (mapped == ChannelType.Unknown)
         {
             logger.LogWarning(
-                "Unknown DiscordChannelType={DiscordType} (int={Int}); mapping to ChannelType.Unknown",
+                "Unknown Discord channel type {DiscordChannelType} (value {ChannelTypeValue}); mapping to ChannelType.Unknown",
                 discordType, (int)discordType);
         }
 

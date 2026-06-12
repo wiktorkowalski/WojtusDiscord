@@ -35,14 +35,14 @@ public sealed class AttachmentUrlRefreshService(
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
             {
                 // Lose this batch only; its URLs surface downstream as skips.
-                logger.LogWarning(ex, "Attachment URL refresh batch failed ({Count} urls)", batch.Count);
+                logger.LogWarning(ex, "Attachment URL refresh batch failed for {UrlCount} urls", batch.Count);
             }
 
             if (offset + BatchSize < distinct.Count)
                 await Task.Delay(DelayBetweenBatches, cancellationToken);
         }
 
-        logger.LogInformation("Refreshed {Refreshed}/{Requested} attachment URLs", result.Count, distinct.Count);
+        logger.LogInformation("Refreshed {RefreshedCount} of {RequestedCount} attachment URLs", result.Count, distinct.Count);
         return result;
     }
 

@@ -175,7 +175,7 @@ public sealed class MemeAttachmentIndexer(
         row.Status = MemeIndexStatus.Skipped;
         row.Error = reason;
         counters.Skipped++;
-        logger.LogInformation("Meme attachment {AttachmentId} skipped: {Reason}", row.AttachmentDiscordId, reason);
+        logger.LogWarning("Meme attachment {AttachmentId} skipped: {Reason}", row.AttachmentDiscordId, reason);
     }
 
     private void Fail(MemeIndexEntity row, MemeIndexRunCounters counters, string error)

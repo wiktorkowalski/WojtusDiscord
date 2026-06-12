@@ -40,7 +40,7 @@ public class ChannelUpsertService(DiscordDbContext db, ILogger<ChannelUpsertServ
 
         if (id == Guid.Empty)
         {
-            logger.LogError("ChannelUpsert lost the row for DiscordId={DiscordId} after upsert", channel.Id);
+            logger.LogError("Channel upsert lost the row for channel {ChannelId} after upsert", channel.Id);
             return UpsertResult<Guid>.Failure($"Channel upsert lost the row for DiscordId={channel.Id}");
         }
 
@@ -50,7 +50,7 @@ public class ChannelUpsertService(DiscordDbContext db, ILogger<ChannelUpsertServ
     public async Task<Guid> InsertPlaceholderAsync(ulong channelDiscordId, Guid guildId, DateTime firstOrphanSeenUtc)
     {
         logger.LogWarning(
-            "Inserting placeholder channel row for unresolvable thread DiscordId={DiscordId}; first orphan message seen at {FirstSeen}",
+            "Inserting placeholder channel row for unresolvable thread {ChannelId}; first orphan message seen at {FirstOrphanSeenUtc}",
             channelDiscordId, firstOrphanSeenUtc);
 
         // Insert-or-get: a concurrent writer (or a real ChannelCreate) may have inserted the row

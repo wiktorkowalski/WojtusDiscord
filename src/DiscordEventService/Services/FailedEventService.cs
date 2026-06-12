@@ -42,14 +42,14 @@ public class FailedEventService(DiscordDbContext db, ILogger<FailedEventService>
             await db.SaveChangesAsync();
 
             logger.LogWarning(
-                "Recorded failed event: {EventType} in {HandlerName} - {ExceptionType}: {Message}",
+                "Recorded failed event: {EventType} in {HandlerName} - {ExceptionType}: {ExceptionMessage}",
                 eventType, handlerName, failedEvent.ExceptionType, exception.Message);
         }
         catch (Exception ex)
         {
             // Last resort - if we can't even record the failure, just log it
             logger.LogCritical(ex,
-                "CRITICAL: Failed to record event failure. Original error: {EventType} in {HandlerName} - {OriginalException}",
+                "CRITICAL: Failed to record event failure. Original error: {EventType} in {HandlerName} - {OriginalExceptionMessage}",
                 eventType, handlerName, exception.Message);
 
             try
