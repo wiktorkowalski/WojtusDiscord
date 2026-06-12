@@ -334,60 +334,60 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
     private static MessageEntity BuildMessage(
         MessageCreatedEventArgs e, Guid guildId, Guid channelId, Guid authorId,
         string? attachmentsJson, string? embedsJson) => new MessageEntity
-    {
-        DiscordId = e.Message.Id,
-        ChannelId = channelId,
-        GuildId = guildId,
-        AuthorId = authorId,
-        Content = NormalizeContent(e.Message.Content),
-        ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
-        HasAttachments = e.Message.Attachments.Count > 0,
-        HasEmbeds = e.Message.Embeds.Count > 0,
-        AttachmentsJson = attachmentsJson,
-        EmbedsJson = embedsJson,
-        Flags = (int)(e.Message.Flags ?? 0),
-        CreatedAtUtc = e.Message.Timestamp.UtcDateTime,
-    };
+        {
+            DiscordId = e.Message.Id,
+            ChannelId = channelId,
+            GuildId = guildId,
+            AuthorId = authorId,
+            Content = NormalizeContent(e.Message.Content),
+            ReplyToDiscordId = e.Message.ReferencedMessage?.Id,
+            HasAttachments = e.Message.Attachments.Count > 0,
+            HasEmbeds = e.Message.Embeds.Count > 0,
+            AttachmentsJson = attachmentsJson,
+            EmbedsJson = embedsJson,
+            Flags = (int)(e.Message.Flags ?? 0),
+            CreatedAtUtc = e.Message.Timestamp.UtcDateTime,
+        };
 
     private static MessageEventEntity BuildMessageCreatedEvent(
         MessageCreatedEventArgs e, EventContext ctx, string? attachmentsJson, string? embedsJson) => new MessageEventEntity
-    {
-        MessageDiscordId = e.Message.Id,
-        ChannelDiscordId = e.Channel.Id,
-        AuthorDiscordId = e.Author.Id,
-        GuildDiscordId = e.Guild.Id,
-        EventType = MessageEventType.Created,
-        Content = NormalizeContent(e.Message.Content),
-        HasAttachments = e.Message.Attachments.Count > 0,
-        HasEmbeds = e.Message.Embeds.Count > 0,
-        ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
-        AttachmentsJson = attachmentsJson,
-        EmbedsJson = embedsJson,
-        EventTimestampUtc = e.Message.Timestamp.UtcDateTime,
-        ReceivedAtUtc = ctx.ReceivedAtUtc,
-        RawEventJson = ctx.RawJson,
-    };
+        {
+            MessageDiscordId = e.Message.Id,
+            ChannelDiscordId = e.Channel.Id,
+            AuthorDiscordId = e.Author.Id,
+            GuildDiscordId = e.Guild.Id,
+            EventType = MessageEventType.Created,
+            Content = NormalizeContent(e.Message.Content),
+            HasAttachments = e.Message.Attachments.Count > 0,
+            HasEmbeds = e.Message.Embeds.Count > 0,
+            ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
+            AttachmentsJson = attachmentsJson,
+            EmbedsJson = embedsJson,
+            EventTimestampUtc = e.Message.Timestamp.UtcDateTime,
+            ReceivedAtUtc = ctx.ReceivedAtUtc,
+            RawEventJson = ctx.RawJson,
+        };
 
     private static MessageEventEntity BuildMessageUpdatedEvent(
         MessageUpdatedEventArgs e, EventContext ctx, string? normalizedContent, string? contentBefore,
         string? attachmentsJson, string? embedsJson, DateTime editedAt) => new MessageEventEntity
-    {
-        MessageDiscordId = e.Message.Id,
-        ChannelDiscordId = e.Channel.Id,
-        AuthorDiscordId = e.Author?.Id,
-        GuildDiscordId = e.Guild.Id,
-        EventType = MessageEventType.Updated,
-        Content = normalizedContent,
-        ContentBefore = contentBefore,
-        HasAttachments = e.Message.Attachments.Count > 0,
-        HasEmbeds = e.Message.Embeds.Count > 0,
-        ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
-        AttachmentsJson = attachmentsJson,
-        EmbedsJson = embedsJson,
-        EventTimestampUtc = editedAt,
-        ReceivedAtUtc = ctx.ReceivedAtUtc,
-        RawEventJson = ctx.RawJson,
-    };
+        {
+            MessageDiscordId = e.Message.Id,
+            ChannelDiscordId = e.Channel.Id,
+            AuthorDiscordId = e.Author?.Id,
+            GuildDiscordId = e.Guild.Id,
+            EventType = MessageEventType.Updated,
+            Content = normalizedContent,
+            ContentBefore = contentBefore,
+            HasAttachments = e.Message.Attachments.Count > 0,
+            HasEmbeds = e.Message.Embeds.Count > 0,
+            ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
+            AttachmentsJson = attachmentsJson,
+            EmbedsJson = embedsJson,
+            EventTimestampUtc = editedAt,
+            ReceivedAtUtc = ctx.ReceivedAtUtc,
+            RawEventJson = ctx.RawJson,
+        };
 
     private static void AddEditHistoryIfChanged(
         EventContext ctx,

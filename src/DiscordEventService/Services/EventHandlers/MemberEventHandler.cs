@@ -234,31 +234,31 @@ internal sealed class MemberEventHandler(EventPipeline pipeline) :
         bool mutedAfter,
         bool? deafenedBefore,
         bool deafenedAfter) => new MemberEventEntity
-    {
-        UserDiscordId = e.Member.Id,
-        GuildDiscordId = e.Guild.Id,
-        EventType = MemberEventType.Updated,
-        NicknameBefore = e.NicknameBefore,
-        NicknameAfter = e.NicknameAfter,
-        RolesAddedJson = rolesAdded.Any()
+        {
+            UserDiscordId = e.Member.Id,
+            GuildDiscordId = e.Guild.Id,
+            EventType = MemberEventType.Updated,
+            NicknameBefore = e.NicknameBefore,
+            NicknameAfter = e.NicknameAfter,
+            RolesAddedJson = rolesAdded.Any()
             ? JsonSerializer.Serialize(rolesAdded)
             : null,
-        RolesRemovedJson = rolesRemoved.Any()
+            RolesRemovedJson = rolesRemoved.Any()
             ? JsonSerializer.Serialize(rolesRemoved)
             : null,
-        TimeoutUntilUtc = e.CommunicationDisabledUntilAfter?.UtcDateTime,
-        PremiumSinceBeforeUtc = premiumBefore?.UtcDateTime,
-        PremiumSinceAfterUtc = premiumAfter?.UtcDateTime,
-        GuildAvatarHashBefore = e.GuildAvatarHashBefore,
-        GuildAvatarHashAfter = e.GuildAvatarHashAfter,
-        IsPendingBefore = e.PendingBefore,
-        IsPendingAfter = e.PendingAfter,
-        IsMutedBefore = mutedBefore,
-        IsMutedAfter = mutedAfter,
-        IsDeafenedBefore = deafenedBefore,
-        IsDeafenedAfter = deafenedAfter,
-        EventTimestampUtc = ctx.ReceivedAtUtc,
-        ReceivedAtUtc = ctx.ReceivedAtUtc,
-        RawEventJson = ctx.RawJson,
-    };
+            TimeoutUntilUtc = e.CommunicationDisabledUntilAfter?.UtcDateTime,
+            PremiumSinceBeforeUtc = premiumBefore?.UtcDateTime,
+            PremiumSinceAfterUtc = premiumAfter?.UtcDateTime,
+            GuildAvatarHashBefore = e.GuildAvatarHashBefore,
+            GuildAvatarHashAfter = e.GuildAvatarHashAfter,
+            IsPendingBefore = e.PendingBefore,
+            IsPendingAfter = e.PendingAfter,
+            IsMutedBefore = mutedBefore,
+            IsMutedAfter = mutedAfter,
+            IsDeafenedBefore = deafenedBefore,
+            IsDeafenedAfter = deafenedAfter,
+            EventTimestampUtc = ctx.ReceivedAtUtc,
+            ReceivedAtUtc = ctx.ReceivedAtUtc,
+            RawEventJson = ctx.RawJson,
+        };
 }

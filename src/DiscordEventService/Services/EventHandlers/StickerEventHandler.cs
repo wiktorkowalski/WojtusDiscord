@@ -86,19 +86,19 @@ internal sealed class StickerEventHandler(EventPipeline pipeline) :
         List<ulong> addedIds,
         List<ulong> removedIds,
         List<ulong> updatedIds) => new StickerEventEntity
-    {
-        GuildDiscordId = e.Guild.Id,
-        StickersAddedJson = addedIds.Count > 0
+        {
+            GuildDiscordId = e.Guild.Id,
+            StickersAddedJson = addedIds.Count > 0
             ? JsonSerializer.Serialize(addedIds.Select(id => new { Id = id, e.StickersAfter[id].Name }))
             : null,
-        StickersRemovedJson = removedIds.Count > 0
+            StickersRemovedJson = removedIds.Count > 0
             ? JsonSerializer.Serialize(removedIds.Select(id => new { Id = id, e.StickersBefore[id].Name }))
             : null,
-        StickersUpdatedJson = updatedIds.Count > 0
+            StickersUpdatedJson = updatedIds.Count > 0
             ? JsonSerializer.Serialize(updatedIds.Select(id => new { Id = id, NameBefore = e.StickersBefore[id].Name, NameAfter = e.StickersAfter[id].Name }))
             : null,
-        EventTimestampUtc = ctx.ReceivedAtUtc,
-        ReceivedAtUtc = ctx.ReceivedAtUtc,
-        RawEventJson = ctx.RawJson
-    };
+            EventTimestampUtc = ctx.ReceivedAtUtc,
+            ReceivedAtUtc = ctx.ReceivedAtUtc,
+            RawEventJson = ctx.RawJson
+        };
 }

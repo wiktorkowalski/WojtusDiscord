@@ -95,19 +95,19 @@ internal sealed class EmojiEventHandler(EventPipeline pipeline) :
         List<ulong> addedIds,
         List<ulong> removedIds,
         List<ulong> updatedIds) => new EmojiEventEntity
-    {
-        GuildDiscordId = e.Guild.Id,
-        EmojisAddedJson = addedIds.Count > 0
+        {
+            GuildDiscordId = e.Guild.Id,
+            EmojisAddedJson = addedIds.Count > 0
             ? JsonSerializer.Serialize(addedIds.Select(id => new { Id = id, e.EmojisAfter[id].Name }))
             : null,
-        EmojisRemovedJson = removedIds.Count > 0
+            EmojisRemovedJson = removedIds.Count > 0
             ? JsonSerializer.Serialize(removedIds.Select(id => new { Id = id, e.EmojisBefore[id].Name }))
             : null,
-        EmojisUpdatedJson = updatedIds.Count > 0
+            EmojisUpdatedJson = updatedIds.Count > 0
             ? JsonSerializer.Serialize(updatedIds.Select(id => new { Id = id, NameBefore = e.EmojisBefore[id].Name, NameAfter = e.EmojisAfter[id].Name }))
             : null,
-        EventTimestampUtc = ctx.ReceivedAtUtc,
-        ReceivedAtUtc = ctx.ReceivedAtUtc,
-        RawEventJson = ctx.RawJson,
-    };
+            EventTimestampUtc = ctx.ReceivedAtUtc,
+            ReceivedAtUtc = ctx.ReceivedAtUtc,
+            RawEventJson = ctx.RawJson,
+        };
 }

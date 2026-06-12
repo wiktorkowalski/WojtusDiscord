@@ -168,25 +168,25 @@ internal sealed class PresenceEventHandler(EventPipeline pipeline) :
 
     private static PresenceEventEntity BuildPresenceEvent(
         PresenceUpdatedEventArgs args, ulong guildId, EventContext ctx) => new PresenceEventEntity
-    {
-        UserDiscordId = args.User.Id,
-        GuildDiscordId = guildId,
+        {
+            UserDiscordId = args.User.Id,
+            GuildDiscordId = guildId,
 
-        DesktopStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Desktop),
-        MobileStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Mobile),
-        WebStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Web),
+            DesktopStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Desktop),
+            MobileStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Mobile),
+            WebStatusBefore = GetStatusValue(args.PresenceBefore?.ClientStatus?.Web),
 
-        DesktopStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Desktop),
-        MobileStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Mobile),
-        WebStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Web),
+            DesktopStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Desktop),
+            MobileStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Mobile),
+            WebStatusAfter = GetStatusValue(args.PresenceAfter?.ClientStatus?.Web),
 
-        ActivitiesBeforeJson = SerializeActivities(args.PresenceBefore?.Activities),
-        ActivitiesAfterJson = SerializeActivities(args.PresenceAfter?.Activities),
+            ActivitiesBeforeJson = SerializeActivities(args.PresenceBefore?.Activities),
+            ActivitiesAfterJson = SerializeActivities(args.PresenceAfter?.Activities),
 
-        EventTimestampUtc = ctx.ReceivedAtUtc,
-        ReceivedAtUtc = ctx.ReceivedAtUtc,
-        RawEventJson = ctx.RawJson
-    };
+            EventTimestampUtc = ctx.ReceivedAtUtc,
+            ReceivedAtUtc = ctx.ReceivedAtUtc,
+            RawEventJson = ctx.RawJson
+        };
 
     private static bool IsSameActivity(DiscordActivity a, DiscordActivity b) =>
         a.Name == b.Name && a.ActivityType == b.ActivityType;
