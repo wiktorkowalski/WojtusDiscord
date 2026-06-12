@@ -6,7 +6,7 @@ namespace DiscordEventService.Services;
 
 // Single source of truth for the scoped services both the root (ASP.NET Core) and the DSharpPlus
 // child DI container need — registration and StartupValidator both loop over CoreServiceTypes.
-public static class CoreServiceRegistration
+internal static class CoreServiceRegistration
 {
     public static readonly Type[] CoreServiceTypes =
     [

@@ -1,6 +1,6 @@
 namespace DiscordEventService.Jobs;
 
-public interface IBackfillJob
+internal interface IBackfillJob
 {
     Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken);
 }

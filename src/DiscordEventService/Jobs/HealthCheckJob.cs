@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Jobs;
 
-public class HealthCheckJob(
+internal sealed class HealthCheckJob(
     IServiceScopeFactory scopeFactory,
     IHttpClientFactory httpClientFactory,
     IOptions<HealthCheckOptions> options,

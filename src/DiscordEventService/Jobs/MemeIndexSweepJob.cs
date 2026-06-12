@@ -11,7 +11,7 @@ namespace DiscordEventService.Jobs;
 // seconds; this catches what it misses — attachments posted during downtime,
 // live-path enqueue failures, and Failed rows still under the attempt cap.
 // Skips guilds whose meme indexing is already running.
-public sealed class MemeIndexSweepJob(
+internal sealed class MemeIndexSweepJob(
     IServiceScopeFactory scopeFactory,
     IBackgroundJobClient backgroundJobClient,
     ILogger<MemeIndexSweepJob> logger)

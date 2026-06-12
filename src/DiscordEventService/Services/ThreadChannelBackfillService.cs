@@ -6,13 +6,13 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
-public class ThreadChannelBackfillService(
+internal sealed class ThreadChannelBackfillService(
     DiscordDbContext db,
     DiscordClient client,
     ChannelUpsertService channelUpsert,
     ILogger<ThreadChannelBackfillService> logger)
 {
-    public record Result(int ThreadsRepaired);
+    public sealed record Result(int ThreadsRepaired);
 
     public async Task<Result> BackfillAsync(CancellationToken ct)
     {

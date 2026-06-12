@@ -1,6 +1,6 @@
 namespace DiscordEventService.Configuration;
 
-public class DatabaseOptions
+internal sealed class DatabaseOptions
 {
     public const string SectionName = "Database";
 

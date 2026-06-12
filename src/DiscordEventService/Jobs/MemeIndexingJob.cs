@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Jobs;
 
-public sealed class MemeIndexingJob(
+internal sealed class MemeIndexingJob(
     BackfillJobExecutor executor,
     IServiceScopeFactory scopeFactory,
     ILogger<MemeIndexingJob> logger) : BackfillJobBase

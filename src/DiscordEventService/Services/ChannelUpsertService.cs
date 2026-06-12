@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
-public class ChannelUpsertService(DiscordDbContext db, ILogger<ChannelUpsertService> logger)
+internal sealed class ChannelUpsertService(DiscordDbContext db, ILogger<ChannelUpsertService> logger)
 {
     public async Task<UpsertResult<Guid>> UpsertChannelAsync(DiscordChannel channel, Guid guildId)
     {

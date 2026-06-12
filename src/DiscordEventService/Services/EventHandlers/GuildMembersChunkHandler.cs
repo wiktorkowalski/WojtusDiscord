@@ -6,7 +6,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class GuildMembersChunkHandler(EventPipeline pipeline) :
+internal sealed class GuildMembersChunkHandler(EventPipeline pipeline) :
     IEventHandler<GuildMembersChunkedEventArgs>
 {
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions

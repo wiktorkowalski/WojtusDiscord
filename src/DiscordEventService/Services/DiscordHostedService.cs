@@ -4,7 +4,7 @@ using DSharpPlus.Exceptions;
 
 namespace DiscordEventService.Services;
 
-public class DiscordHostedService(
+internal sealed class DiscordHostedService(
     DiscordClient client,
     IServiceScopeFactory scopeFactory,
     ILogger<DiscordHostedService> logger) : IHostedService

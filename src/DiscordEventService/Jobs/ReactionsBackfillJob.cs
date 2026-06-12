@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
 
-public sealed class ReactionsBackfillJob(
+internal sealed class ReactionsBackfillJob(
     DiscordClient discordClient,
     BackfillJobExecutor executor,
     ILogger<ReactionsBackfillJob> logger) : BackfillJobBase, IBackfillJob

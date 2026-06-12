@@ -6,7 +6,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-public sealed class AttachmentUrlRefreshService(
+internal sealed class AttachmentUrlRefreshService(
     IHttpClientFactory httpClientFactory,
     IOptions<DiscordOptions> discordOptions,
     ILogger<AttachmentUrlRefreshService> logger)

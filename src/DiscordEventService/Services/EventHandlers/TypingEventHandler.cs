@@ -6,7 +6,7 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class TypingEventHandler(EventPipeline pipeline, IMemoryCache cache) :
+internal sealed class TypingEventHandler(EventPipeline pipeline, IMemoryCache cache) :
     IEventHandler<TypingStartedEventArgs>
 {
     private static readonly TimeSpan ThrottleWindow = TimeSpan.FromSeconds(10);

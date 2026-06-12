@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace DiscordEventService.Configuration;
 
-public class DiscordOptions
+internal sealed class DiscordOptions
 {
     public const string SectionName = "Discord";
 

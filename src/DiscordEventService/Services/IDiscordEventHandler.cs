@@ -2,7 +2,7 @@ using DSharpPlus;
 
 namespace DiscordEventService.Services;
 
-public interface IDiscordEventHandler
+internal interface IDiscordEventHandler
 {
     void RegisterHandlers(DiscordClient client);
 }

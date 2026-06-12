@@ -6,7 +6,7 @@ namespace DiscordEventService.Jobs;
 // Per-item progress helpers shared by every backfill job. The job lifecycle (scope, checkpoint
 // get-or-create, status transitions) lives in BackfillJobExecutor; only the mid-loop progress/error
 // book-keeping that runs inside a job's work delegate stays here.
-public abstract class BackfillJobBase
+internal abstract class BackfillJobBase
 {
     protected abstract BackfillType BackfillType { get; }
 

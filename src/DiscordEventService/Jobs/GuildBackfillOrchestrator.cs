@@ -2,7 +2,7 @@ using Hangfire;
 
 namespace DiscordEventService.Jobs;
 
-public class GuildBackfillOrchestrator(
+internal sealed class GuildBackfillOrchestrator(
     IBackgroundJobClient backgroundJobClient,
     ILogger<GuildBackfillOrchestrator> logger)
 {
@@ -58,7 +58,7 @@ public class GuildBackfillOrchestrator(
     }
 }
 
-public record BackfillOptions
+internal sealed record BackfillOptions
 {
     public bool IncludeMessages { get; init; } = true;
     public bool IncludeReactions { get; init; } = true;

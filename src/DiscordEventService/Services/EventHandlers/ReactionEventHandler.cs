@@ -5,7 +5,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class ReactionEventHandler(EventPipeline pipeline) :
+internal sealed class ReactionEventHandler(EventPipeline pipeline) :
     IEventHandler<MessageReactionAddedEventArgs>,
     IEventHandler<MessageReactionRemovedEventArgs>,
     IEventHandler<MessageReactionsClearedEventArgs>,

@@ -7,12 +7,12 @@ using Newtonsoft.Json.Serialization;
 namespace DiscordEventService.Services;
 
 // Error is non-null when serialization failed; Json is then a diagnostic stub, not the real payload.
-public sealed record EventSerializationResult(string Json, Exception? Error)
+internal sealed record EventSerializationResult(string Json, Exception? Error)
 {
     public bool Failed => Error is not null;
 }
 
-public class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogService> logger)
+internal sealed class RawEventLogService(DiscordDbContext dbContext, ILogger<RawEventLogService> logger)
 {
     // Marker in the error field of a serialization-failure stub — kept constant so detectors don't hard-code the literal.
     public const string SerializationFailedMarker = "Serialization failed";

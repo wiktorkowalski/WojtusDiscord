@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-public sealed record MemeMetadata
+internal sealed record MemeMetadata
 {
     [JsonPropertyName("description_pl")]
     public required string DescriptionPl { get; init; }
@@ -26,7 +26,7 @@ public sealed record MemeMetadata
     public string? Template { get; init; }
 }
 
-public enum MemeAnalysisOutcome
+internal enum MemeAnalysisOutcome
 {
     Success,
 
@@ -38,9 +38,9 @@ public enum MemeAnalysisOutcome
     Error,
 }
 
-public sealed record MemeAnalysisUsage(int PromptTokens, int CompletionTokens, decimal? CostUsd);
+internal sealed record MemeAnalysisUsage(int PromptTokens, int CompletionTokens, decimal? CostUsd);
 
-public sealed record MemeAnalysisResult
+internal sealed record MemeAnalysisResult
 {
     public required MemeAnalysisOutcome Outcome { get; init; }
     public MemeMetadata? Metadata { get; init; }

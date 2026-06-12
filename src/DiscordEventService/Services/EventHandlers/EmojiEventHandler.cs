@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class EmojiEventHandler(EventPipeline pipeline) :
+internal sealed class EmojiEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildEmojisUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildEmojisUpdatedEventArgs e)

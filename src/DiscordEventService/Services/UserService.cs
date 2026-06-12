@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
-public class UserService(DiscordDbContext db, ILogger<UserService> logger)
+internal sealed class UserService(DiscordDbContext db, ILogger<UserService> logger)
 {
     public async Task<UpsertResult<Guid>> UpsertUserAsync(DiscordUser user)
     {

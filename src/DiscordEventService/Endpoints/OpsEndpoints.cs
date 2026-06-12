@@ -3,7 +3,7 @@ using DiscordEventService.Services;
 
 namespace DiscordEventService.Endpoints;
 
-public static class OpsEndpoints
+internal static class OpsEndpoints
 {
     public static void MapOpsEndpoints(this WebApplication app)
     {
@@ -109,7 +109,7 @@ public static class OpsEndpoints
     }
 }
 
-public record DowntimeStartResponse
+internal sealed record DowntimeStartResponse
 {
     public required Guid Id { get; init; }
     public required string Type { get; init; }

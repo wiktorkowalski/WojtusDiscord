@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
 
-public sealed class StickersBackfillJob(
+internal sealed class StickersBackfillJob(
     DiscordClient discordClient,
     BackfillJobExecutor executor) : BackfillJobBase, IBackfillJob
 {

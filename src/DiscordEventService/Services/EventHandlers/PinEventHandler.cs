@@ -5,7 +5,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class PinEventHandler(EventPipeline pipeline) :
+internal sealed class PinEventHandler(EventPipeline pipeline) :
     IEventHandler<ChannelPinsUpdatedEventArgs>
 {
     public async Task HandleEventAsync(DiscordClient sender, ChannelPinsUpdatedEventArgs e)

@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-public sealed class OpenRouterClient(
+internal sealed class OpenRouterClient(
     IHttpClientFactory httpClientFactory,
     IOptions<OpenRouterOptions> options,
     ILogger<OpenRouterClient> logger)

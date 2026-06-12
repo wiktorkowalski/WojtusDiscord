@@ -2,7 +2,7 @@ using DSharpPlus.Entities;
 
 namespace DiscordEventService.Services.Pipeline;
 
-public sealed class FkResolver(
+internal sealed class FkResolver(
     GuildUpsertService guildUpsert,
     ChannelUpsertService channelUpsert,
     UserService userService)

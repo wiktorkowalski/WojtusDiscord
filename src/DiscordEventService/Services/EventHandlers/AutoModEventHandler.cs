@@ -5,7 +5,7 @@ using DSharpPlus.EventArgs;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class AutoModEventHandler(EventPipeline pipeline) :
+internal sealed class AutoModEventHandler(EventPipeline pipeline) :
     IEventHandler<AutoModerationRuleCreatedEventArgs>,
     IEventHandler<AutoModerationRuleUpdatedEventArgs>,
     IEventHandler<AutoModerationRuleDeletedEventArgs>,

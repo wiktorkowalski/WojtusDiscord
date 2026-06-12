@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class ScheduledEventHandler(EventPipeline pipeline) :
+internal sealed class ScheduledEventHandler(EventPipeline pipeline) :
     IEventHandler<ScheduledGuildEventCreatedEventArgs>,
     IEventHandler<ScheduledGuildEventUpdatedEventArgs>,
     IEventHandler<ScheduledGuildEventDeletedEventArgs>,

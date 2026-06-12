@@ -1,6 +1,6 @@
 namespace DiscordEventService.Configuration;
 
-public class HealthCheckOptions
+internal sealed class HealthCheckOptions
 {
     public const string SectionName = "HealthCheck";
 

@@ -4,9 +4,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
 
-public record OrphanReplayResult(int Scanned, int Inserted, int Skipped);
+internal sealed record OrphanReplayResult(int Scanned, int Inserted, int Skipped);
 
-public class OrphanReplayService(DiscordDbContext db, ILogger<OrphanReplayService> logger)
+internal sealed class OrphanReplayService(DiscordDbContext db, ILogger<OrphanReplayService> logger)
 {
     // Scan-only: JSON reconstruction is deferred until a real non-stub orphan is sampled in prod.
     public async Task<OrphanReplayResult> ReplayMemberUpdateOrphansAsync(CancellationToken ct)

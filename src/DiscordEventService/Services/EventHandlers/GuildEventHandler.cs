@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
-public sealed class GuildEventHandler(EventPipeline pipeline) :
+internal sealed class GuildEventHandler(EventPipeline pipeline) :
     IEventHandler<GuildCreatedEventArgs>,
     IEventHandler<GuildAvailableEventArgs>,
     IEventHandler<GuildUpdatedEventArgs>,
