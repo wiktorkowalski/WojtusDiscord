@@ -52,57 +52,17 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
         var memeCount = await db.Messages.AsNoTracking()
             .LongCountAsync(m => m.AuthorId == userId && (m.HasAttachments || m.HasEmbeds), ct);
 
-        // Present reactions on this user's messages (see ReactionEventQueryExtensions).
-        var reactionsReceived = await db.ReactionEvents.AsNoTracking().WherePresent()
-            .Join(
-                db.Messages.AsNoTracking().Where(m => m.AuthorId == userId),
-                r => r.MessageDiscordId,
-                m => m.DiscordId,
-                (r, m) => r.Id)
-            .LongCountAsync(ct);
+        var reactionsReceived = await CountReactionsReceivedAsync(userId, ct);
 
         var voiceMinutes = await VoiceMinutesAsync(discordSf, ct);
         var onlineMinutes = await OnlineMinutesAsync(discordSf, ct);
 
-        // Top emote the user gave (present reactions only).
-        var favoriteEmote = await db.ReactionEvents.AsNoTracking().WherePresent()
-            .Where(r => r.UserDiscordId == discordSf)
-            .GroupBy(r => new { r.EmoteName, r.EmoteDiscordId })
-            .Select(g => new { g.Key.EmoteName, g.Key.EmoteDiscordId, Count = g.LongCount() })
-            .OrderByDescending(x => x.Count)
-            .FirstOrDefaultAsync(ct);
-
-        var favoriteEmoteDto = favoriteEmote is null
-            ? null
-            : new ProfileFavoriteEmoteDto(
-                favoriteEmote.EmoteName, favoriteEmote.EmoteDiscordId, favoriteEmote.EmoteDiscordId is > 0);
-
-        // Channel the user posted in most.
-        var busiestChannel = await db.Messages.AsNoTracking()
-            .Where(m => m.AuthorId == userId)
-            .GroupBy(m => new { m.Channel.Name, m.Channel.DiscordId })
-            .Select(g => new { g.Key.Name, g.Key.DiscordId, Count = g.LongCount() })
-            .OrderByDescending(x => x.Count)
-            .FirstOrDefaultAsync(ct);
-
-        var busiestChannelDto = busiestChannel is null
-            ? null
-            : new ProfileBusiestChannelDto(busiestChannel.Name, busiestChannel.DiscordId);
+        var favoriteEmoteDto = await GetFavoriteEmoteAsync(discordSf, ct);
+        var busiestChannelDto = await GetBusiestChannelAsync(userId, ct);
 
         var messagesDaily14 = await MessagesDaily14Async(userId, ct);
 
-        // Current overall status from the latest presence row, by client-status priority
-        // (online > idle > dnd > offline); "offline" when there are no presence rows.
-        var latestPresence = await db.PresenceEvents.AsNoTracking()
-            .Where(p => p.UserDiscordId == discordSf)
-            .OrderByDescending(p => p.ReceivedAtUtc)
-            .ThenByDescending(p => p.Id)
-            .Select(p => new { p.DesktopStatusAfter, p.MobileStatusAfter, p.WebStatusAfter })
-            .FirstOrDefaultAsync(ct);
-        var status = latestPresence is null
-            ? PresenceStatus.Offline
-            : PresenceStatus.Overall(
-                latestPresence.DesktopStatusAfter, latestPresence.MobileStatusAfter, latestPresence.WebStatusAfter);
+        var status = await GetCurrentStatusAsync(discordSf, ct);
 
         var nameHistory = await db.UserNameHistory.AsNoTracking()
             .Where(h => h.UserId == userId)
@@ -235,5 +195,63 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
         }
 
         return series;
+    }
+
+    // Present reactions on this user's messages (see ReactionEventQueryExtensions).
+    private async Task<long> CountReactionsReceivedAsync(Guid userId, CancellationToken ct) =>
+        await db.ReactionEvents.AsNoTracking().WherePresent()
+            .Join(
+                db.Messages.AsNoTracking().Where(m => m.AuthorId == userId),
+                r => r.MessageDiscordId,
+                m => m.DiscordId,
+                (r, m) => r.Id)
+            .LongCountAsync(ct);
+
+    // Top emote the user gave (present reactions only).
+    private async Task<ProfileFavoriteEmoteDto?> GetFavoriteEmoteAsync(ulong discordSf, CancellationToken ct)
+    {
+        var favoriteEmote = await db.ReactionEvents.AsNoTracking().WherePresent()
+            .Where(r => r.UserDiscordId == discordSf)
+            .GroupBy(r => new { r.EmoteName, r.EmoteDiscordId })
+            .Select(g => new { g.Key.EmoteName, g.Key.EmoteDiscordId, Count = g.LongCount() })
+            .OrderByDescending(x => x.Count)
+            .FirstOrDefaultAsync(ct);
+
+        return favoriteEmote is null
+            ? null
+            : new ProfileFavoriteEmoteDto(
+                favoriteEmote.EmoteName, favoriteEmote.EmoteDiscordId, favoriteEmote.EmoteDiscordId is > 0);
+    }
+
+    // Channel the user posted in most.
+    private async Task<ProfileBusiestChannelDto?> GetBusiestChannelAsync(Guid userId, CancellationToken ct)
+    {
+        var busiestChannel = await db.Messages.AsNoTracking()
+            .Where(m => m.AuthorId == userId)
+            .GroupBy(m => new { m.Channel.Name, m.Channel.DiscordId })
+            .Select(g => new { g.Key.Name, g.Key.DiscordId, Count = g.LongCount() })
+            .OrderByDescending(x => x.Count)
+            .FirstOrDefaultAsync(ct);
+
+        return busiestChannel is null
+            ? null
+            : new ProfileBusiestChannelDto(busiestChannel.Name, busiestChannel.DiscordId);
+    }
+
+    // Current overall status from the latest presence row, by client-status priority
+    // (online > idle > dnd > offline); "offline" when there are no presence rows.
+    private async Task<string> GetCurrentStatusAsync(ulong discordSf, CancellationToken ct)
+    {
+        var latestPresence = await db.PresenceEvents.AsNoTracking()
+            .Where(p => p.UserDiscordId == discordSf)
+            .OrderByDescending(p => p.ReceivedAtUtc)
+            .ThenByDescending(p => p.Id)
+            .Select(p => new { p.DesktopStatusAfter, p.MobileStatusAfter, p.WebStatusAfter })
+            .FirstOrDefaultAsync(ct);
+
+        return latestPresence is null
+            ? PresenceStatus.Offline
+            : PresenceStatus.Overall(
+                latestPresence.DesktopStatusAfter, latestPresence.MobileStatusAfter, latestPresence.WebStatusAfter);
     }
 }

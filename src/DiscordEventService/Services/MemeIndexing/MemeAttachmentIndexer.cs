@@ -70,24 +70,8 @@ internal sealed class MemeAttachmentIndexer(
             return;
         }
 
-        byte[] imageBytes;
-        try
-        {
-            var client = httpClientFactory.CreateClient(MemeBenchmarkJob.DownloadHttpClientName);
-            imageBytes = await client.GetByteArrayAsync(freshUrl, cancellationToken);
-        }
-        catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.NotFound
-            or System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Gone)
-        {
-            Skip(row, counters, $"dead attachment: download HTTP {(int)ex.StatusCode!}");
-            return;
-        }
-        catch (Exception ex) when (ex is HttpRequestException
-            || (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
-        {
-            Fail(row, counters, $"download failed: {ex.Message}");
-            return;
-        }
+        var imageBytes = await DownloadImageAsync(freshUrl, row, counters, cancellationToken);
+        if (imageBytes is null) return;
 
         row.FileSizeBytes = imageBytes.Length;
 
@@ -108,32 +92,8 @@ internal sealed class MemeAttachmentIndexer(
         var contentHash = Convert.ToHexStringLower(SHA256.HashData(imageBytes));
         row.ContentHash = contentHash;
 
-        // Repost dedupe: same bytes already Indexed → copy its metadata, no
-        // model call. RawResponseJson stays null — provenance lives on the
-        // original row, found via the shared content_hash.
-        var original = await db.MemeIndex.AsNoTracking()
-            .Where(m => m.ContentHash == contentHash && m.Status == MemeIndexStatus.Indexed && m.Id != row.Id)
-            .Select(m => new { m.DescriptionPl, m.DescriptionEn, m.OcrText, m.Tags, m.Source, m.Template, m.ModelId })
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (original is not null)
-        {
-            row.DescriptionPl = original.DescriptionPl;
-            row.DescriptionEn = original.DescriptionEn;
-            row.OcrText = original.OcrText;
-            row.Tags = original.Tags;
-            row.Source = original.Source;
-            row.Template = original.Template;
-            row.ModelId = original.ModelId;
-            row.RawResponseJson = null;
-            row.IndexedAtUtc = DateTime.UtcNow;
-            row.Status = MemeIndexStatus.Indexed;
-            row.Error = null;
-            counters.Deduped++;
-            logger.LogDebug("Meme attachment {AttachmentId} deduped via content hash {ContentHash}",
-                row.AttachmentDiscordId, contentHash);
+        if (await TryDedupeByContentHashAsync(db, row, contentHash, counters, cancellationToken))
             return;
-        }
 
         var result = await openRouterClient.AnalyzeImageAsync(imageBytes, mimeType, openRouter.Model, cancellationToken);
         counters.ModelCalls++;
@@ -141,6 +101,67 @@ internal sealed class MemeAttachmentIndexer(
         counters.CompletionTokens += result.Usage?.CompletionTokens ?? 0;
         counters.CostUsd += result.Usage?.CostUsd ?? 0;
 
+        ApplyAnalysisResult(row, result, openRouter.Model, counters);
+
+        await Task.Delay(TimeSpan.FromMilliseconds(openRouter.RequestDelayMs), cancellationToken);
+    }
+
+    // Returns null when the row was already terminally marked (Skip on dead/oversized
+    // attachment, Fail on transient download error) and processing should stop.
+    private async Task<byte[]?> DownloadImageAsync(
+        string freshUrl, MemeIndexEntity row, MemeIndexRunCounters counters, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var client = httpClientFactory.CreateClient(MemeBenchmarkJob.DownloadHttpClientName);
+            return await client.GetByteArrayAsync(freshUrl, cancellationToken);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.NotFound
+            or System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Gone)
+        {
+            Skip(row, counters, $"dead attachment: download HTTP {(int)ex.StatusCode!}");
+            return null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException
+            || (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            Fail(row, counters, $"download failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    // Repost dedupe: same bytes already Indexed → copy its metadata, no
+    // model call. RawResponseJson stays null — provenance lives on the
+    // original row, found via the shared content_hash.
+    private async Task<bool> TryDedupeByContentHashAsync(
+        DiscordDbContext db, MemeIndexEntity row, string contentHash, MemeIndexRunCounters counters, CancellationToken cancellationToken)
+    {
+        var original = await db.MemeIndex.AsNoTracking()
+            .Where(m => m.ContentHash == contentHash && m.Status == MemeIndexStatus.Indexed && m.Id != row.Id)
+            .Select(m => new { m.DescriptionPl, m.DescriptionEn, m.OcrText, m.Tags, m.Source, m.Template, m.ModelId })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (original is null) return false;
+
+        row.DescriptionPl = original.DescriptionPl;
+        row.DescriptionEn = original.DescriptionEn;
+        row.OcrText = original.OcrText;
+        row.Tags = original.Tags;
+        row.Source = original.Source;
+        row.Template = original.Template;
+        row.ModelId = original.ModelId;
+        row.RawResponseJson = null;
+        row.IndexedAtUtc = DateTime.UtcNow;
+        row.Status = MemeIndexStatus.Indexed;
+        row.Error = null;
+        counters.Deduped++;
+        logger.LogDebug("Meme attachment {AttachmentId} deduped via content hash {ContentHash}",
+            row.AttachmentDiscordId, contentHash);
+        return true;
+    }
+
+    private void ApplyAnalysisResult(MemeIndexEntity row, MemeAnalysisResult result, string model, MemeIndexRunCounters counters)
+    {
         switch (result.Outcome)
         {
             case MemeAnalysisOutcome.Success:
@@ -150,7 +171,7 @@ internal sealed class MemeAttachmentIndexer(
                 row.Tags = result.Metadata.Tags;
                 row.Source = result.Metadata.Source;
                 row.Template = result.Metadata.Template;
-                row.ModelId = openRouter.Model;
+                row.ModelId = model;
                 row.RawResponseJson = result.RawContent;
                 row.IndexedAtUtc = DateTime.UtcNow;
                 row.Status = MemeIndexStatus.Indexed;
@@ -166,8 +187,6 @@ internal sealed class MemeAttachmentIndexer(
                 Fail(row, counters, result.Error ?? "unknown analysis error");
                 break;
         }
-
-        await Task.Delay(TimeSpan.FromMilliseconds(openRouter.RequestDelayMs), cancellationToken);
     }
 
     private void Skip(MemeIndexEntity row, MemeIndexRunCounters counters, string reason)

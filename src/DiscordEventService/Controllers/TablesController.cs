@@ -95,38 +95,55 @@ public sealed class TablesController(DiscordDbContext db, SchemaCatalog catalog)
 
         var total = await CountAsync(connection, quotedTable, where, filter, ct);
 
-        var rows = new List<Dictionary<string, object?>>(pageSize);
-        await using (var cmd = connection.CreateCommand())
-        {
-            cmd.CommandText =
-                $"SELECT * FROM {quotedTable}{where} " +
-                $"ORDER BY {Quote(sortColumn)} {direction} LIMIT @limit OFFSET @offset";
-            if (hasFilter)
-                cmd.Parameters.AddWithValue("filter", $"%{filter}%");
-            cmd.Parameters.AddWithValue("limit", pageSize);
-            cmd.Parameters.AddWithValue("offset", offset);
-
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            while (await reader.ReadAsync(ct))
-            {
-                var row = new Dictionary<string, object?>(reader.FieldCount, StringComparer.Ordinal);
-                for (var i = 0; i < reader.FieldCount; i++)
-                {
-                    var name = reader.GetName(i);
-                    var value = await reader.IsDBNullAsync(i, ct) ? null : reader.GetValue(i);
-
-                    // Snowflakes are stored as bigint; box back to ulong so the global
-                    // JSON converter emits them as strings (JS number precision).
-                    if (value is long l && meta.Column(name)?.Kind == ColumnKind.Snowflake)
-                        value = unchecked((ulong)l);
-
-                    row[name] = value;
-                }
-                rows.Add(row);
-            }
-        }
+        var rows = await QueryRowsAsync(
+            connection, meta, quotedTable, where, sortColumn, direction, hasFilter, filter, pageSize, offset, ct);
 
         return Ok(new PagedResult<Dictionary<string, object?>>(rows, total, page, pageSize));
+    }
+
+    private static async Task<List<Dictionary<string, object?>>> QueryRowsAsync(
+        NpgsqlConnection connection,
+        TableMeta meta,
+        string quotedTable,
+        string where,
+        string sortColumn,
+        string direction,
+        bool hasFilter,
+        string? filter,
+        int pageSize,
+        long offset,
+        CancellationToken ct)
+    {
+        var rows = new List<Dictionary<string, object?>>(pageSize);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText =
+            $"SELECT * FROM {quotedTable}{where} " +
+            $"ORDER BY {Quote(sortColumn)} {direction} LIMIT @limit OFFSET @offset";
+        if (hasFilter)
+            cmd.Parameters.AddWithValue("filter", $"%{filter}%");
+        cmd.Parameters.AddWithValue("limit", pageSize);
+        cmd.Parameters.AddWithValue("offset", offset);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var row = new Dictionary<string, object?>(reader.FieldCount, StringComparer.Ordinal);
+            for (var i = 0; i < reader.FieldCount; i++)
+            {
+                var name = reader.GetName(i);
+                var value = await reader.IsDBNullAsync(i, ct) ? null : reader.GetValue(i);
+
+                // Snowflakes are stored as bigint; box back to ulong so the global
+                // JSON converter emits them as strings (JS number precision).
+                if (value is long l && meta.Column(name)?.Kind == ColumnKind.Snowflake)
+                    value = unchecked((ulong)l);
+
+                row[name] = value;
+            }
+            rows.Add(row);
+        }
+
+        return rows;
     }
 
     private static async Task<long> CountAsync(

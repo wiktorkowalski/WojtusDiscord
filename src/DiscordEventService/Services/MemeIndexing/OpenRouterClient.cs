@@ -69,34 +69,7 @@ internal sealed class OpenRouterClient(
         if (!opts.IsConfigured)
             return MemeAnalysisResult.Failed("OpenRouter:ApiKey is not configured", isTransient: false);
 
-        var payload = new
-        {
-            model,
-            messages = new object[]
-            {
-                new { role = "system", content = SystemPrompt },
-                new
-                {
-                    role = "user",
-                    content = new object[]
-                    {
-                        new
-                        {
-                            type = "image_url",
-                            image_url = new { url = $"data:{mimeType};base64,{Convert.ToBase64String(imageBytes)}" },
-                        },
-                    },
-                },
-            },
-            // No reasoning override: effort=low made gemini-2.5-flash return
-            // empty content; the raised max_tokens budget is what thinking
-            // models actually need.
-            response_format = ResponseSchema,
-            max_tokens = opts.MaxOutputTokens,
-            temperature = 0.2,
-            // include=true returns the real cost from OpenRouter instead of us keeping price tables.
-            usage = new { include = true },
-        };
+        var payload = BuildAnalysisPayload(imageBytes, mimeType, model, opts);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", opts.ApiKey);
@@ -136,6 +109,35 @@ internal sealed class OpenRouterClient(
 
         return ParseResponse(body, model);
     }
+
+    private static object BuildAnalysisPayload(byte[] imageBytes, string mimeType, string model, OpenRouterOptions opts) => new
+    {
+        model,
+        messages = new object[]
+        {
+            new { role = "system", content = SystemPrompt },
+            new
+            {
+                role = "user",
+                content = new object[]
+                {
+                    new
+                    {
+                        type = "image_url",
+                        image_url = new { url = $"data:{mimeType};base64,{Convert.ToBase64String(imageBytes)}" },
+                    },
+                },
+            },
+        },
+        // No reasoning override: effort=low made gemini-2.5-flash return
+        // empty content; the raised max_tokens budget is what thinking
+        // models actually need.
+        response_format = ResponseSchema,
+        max_tokens = opts.MaxOutputTokens,
+        temperature = 0.2,
+        // include=true returns the real cost from OpenRouter instead of us keeping price tables.
+        usage = new { include = true },
+    };
 
     private MemeAnalysisResult ParseResponse(string body, string model)
     {

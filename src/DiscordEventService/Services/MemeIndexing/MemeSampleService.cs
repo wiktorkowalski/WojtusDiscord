@@ -100,22 +100,9 @@ internal sealed class MemeSampleService(
         var candidates = new List<MemeSampleItem>();
         foreach (var row in rows)
         {
-            List<StoredAttachment>? attachments;
-            try
-            {
-                attachments = JsonSerializer.Deserialize<List<StoredAttachment>>(row.AttachmentsJson!);
-            }
-            catch (JsonException ex)
-            {
-                logger.LogWarning(ex, "Unparseable attachments_json on message {MessageId}", row.DiscordId);
-                continue;
-            }
-
-            if (attachments is null)
-                continue;
+            var attachments = ParseIndexableAttachments(row.AttachmentsJson!, row.DiscordId);
 
             candidates.AddRange(attachments
-                .Where(a => a.FileName is not null && a.Url is not null && ImageMagic.IsIndexableFileName(a.FileName))
                 .Select(a => new MemeSampleItem(
                     row.GuildDiscordId,
                     row.ChannelDiscordId,
@@ -129,5 +116,23 @@ internal sealed class MemeSampleService(
         }
 
         return candidates;
+    }
+
+    private List<StoredAttachment> ParseIndexableAttachments(string attachmentsJson, ulong messageDiscordId)
+    {
+        List<StoredAttachment>? attachments;
+        try
+        {
+            attachments = JsonSerializer.Deserialize<List<StoredAttachment>>(attachmentsJson);
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Unparseable attachments_json on message {MessageId}", messageDiscordId);
+            return [];
+        }
+
+        return attachments
+            ?.Where(a => a.FileName is not null && a.Url is not null && ImageMagic.IsIndexableFileName(a.FileName))
+            .ToList() ?? [];
     }
 }

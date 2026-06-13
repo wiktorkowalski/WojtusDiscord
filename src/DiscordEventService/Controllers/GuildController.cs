@@ -35,12 +35,21 @@ public sealed class GuildController(DiscordDbContext db) : ControllerBase
             .Select(e => (DateTime?)e.ReceivedAtUtc)
             .FirstOrDefaultAsync(ct);
 
-        // A correlated subquery picks each non-bot user's most-recent presence row
-        // (ReceivedAtUtc desc, Id as a deterministic tiebreak) and projects its three
-        // per-device statuses. We MATERIALIZE first, then derive the overall status
-        // (PresenceStatus.Overall — a priority pick, not a numeric max) and
-        // filter/sort/take in C#: filtering on a correlated subquery in SQL would
-        // evaluate it twice and could disagree on ties.
+        var onlineDtos = await GetOnlineUsersAsync(ct);
+
+        return new GuildDto(
+            guild.DiscordId, guild.Name, guild.IconHash,
+            memberCount, channelCount, userCount, eventSpanStart, onlineDtos);
+    }
+
+    // A correlated subquery picks each non-bot user's most-recent presence row
+    // (ReceivedAtUtc desc, Id as a deterministic tiebreak) and projects its three
+    // per-device statuses. We MATERIALIZE first, then derive the overall status
+    // (PresenceStatus.Overall — a priority pick, not a numeric max) and
+    // filter/sort/take in C#: filtering on a correlated subquery in SQL would
+    // evaluate it twice and could disagree on ties.
+    private async Task<List<GuildOnlineDto>> GetOnlineUsersAsync(CancellationToken ct)
+    {
         var candidates = await db.Users.AsNoTracking()
             .Where(u => !u.IsBot)
             .Select(u => new
@@ -57,7 +66,7 @@ public sealed class GuildController(DiscordDbContext db) : ControllerBase
             })
             .ToListAsync(ct);
 
-        var onlineDtos = candidates
+        return candidates
             .Where(x => x.Latest is not null)
             .Select(x => new
             {
@@ -72,9 +81,5 @@ public sealed class GuildController(DiscordDbContext db) : ControllerBase
             .Take(8)
             .Select(x => new GuildOnlineDto(x.DiscordId, x.Username, x.AvatarHash, x.Status))
             .ToList();
-
-        return new GuildDto(
-            guild.DiscordId, guild.Name, guild.IconHash,
-            memberCount, channelCount, userCount, eventSpanStart, onlineDtos);
     }
 }

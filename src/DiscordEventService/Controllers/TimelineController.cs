@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using DiscordEventService.Data;
+using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Dtos;
 using DiscordEventService.Infrastructure;
 using Microsoft.AspNetCore.Mvc;
@@ -31,27 +32,7 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
     {
         pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
 
-        var query = db.RawEventLogs.AsNoTracking();
-
-        if (after is not null)
-        {
-            var afterUtc = after.Value.ToUtcInstant();
-            query = query.Where(r => r.ReceivedAtUtc >= afterUtc);
-        }
-        if (before is not null)
-        {
-            var beforeUtc = before.Value.ToUtcInstant();
-            query = query.Where(r => r.ReceivedAtUtc <= beforeUtc);
-        }
-        if (!string.IsNullOrWhiteSpace(eventType))
-        {
-            var types = eventType.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            query = query.Where(r => types.Contains(r.EventType));
-        }
-        if (userId is not null)
-            query = query.Where(r => r.UserDiscordId == userId.Value);
-        if (channelId is not null)
-            query = query.Where(r => r.ChannelDiscordId == channelId.Value);
+        var query = ApplyFilters(db.RawEventLogs.AsNoTracking(), after, before, eventType, userId, channelId);
 
         if (TryDecodeCursor(cursor, out var cursorTs, out var cursorId))
         {
@@ -99,6 +80,37 @@ public sealed class TimelineController(DiscordDbContext db) : ControllerBase
             : null;
 
         return Ok(new TimelinePage(events, nextCursor, hasMore));
+    }
+
+    private static IQueryable<RawEventLogEntity> ApplyFilters(
+        IQueryable<RawEventLogEntity> query,
+        DateTime? after,
+        DateTime? before,
+        string? eventType,
+        ulong? userId,
+        ulong? channelId)
+    {
+        if (after is not null)
+        {
+            var afterUtc = after.Value.ToUtcInstant();
+            query = query.Where(r => r.ReceivedAtUtc >= afterUtc);
+        }
+        if (before is not null)
+        {
+            var beforeUtc = before.Value.ToUtcInstant();
+            query = query.Where(r => r.ReceivedAtUtc <= beforeUtc);
+        }
+        if (!string.IsNullOrWhiteSpace(eventType))
+        {
+            var types = eventType.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            query = query.Where(r => types.Contains(r.EventType));
+        }
+        if (userId is not null)
+            query = query.Where(r => r.UserDiscordId == userId.Value);
+        if (channelId is not null)
+            query = query.Where(r => r.ChannelDiscordId == channelId.Value);
+
+        return query;
     }
 
     private static string EncodeCursor(DateTime receivedAtUtc, Guid id)
