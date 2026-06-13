@@ -272,5 +272,4 @@ internal sealed class HealthCheckJob(
                 .ToList();
         }
     }
-
 }

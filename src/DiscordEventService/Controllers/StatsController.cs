@@ -357,7 +357,6 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     {
         var hasPrev = prevStart is not null && prevEnd is not null;
 
-
         var messages = new CommunityMetricDto(
             await db.Messages.AsNoTracking()
                 .LongCountAsync(m => m.CreatedAtUtc >= curStart && m.CreatedAtUtc <= curEnd, ct),

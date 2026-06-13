@@ -254,5 +254,4 @@ public sealed class PeopleController(DiscordDbContext db) : ControllerBase
             : PresenceStatus.Overall(
                 latestPresence.DesktopStatusAfter, latestPresence.MobileStatusAfter, latestPresence.WebStatusAfter);
     }
-
 }

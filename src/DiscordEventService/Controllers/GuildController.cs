@@ -82,5 +82,4 @@ public sealed class GuildController(DiscordDbContext db) : ControllerBase
             .Select(x => new GuildOnlineDto(x.DiscordId, x.Username, x.AvatarHash, x.Status))
             .ToList();
     }
-
 }

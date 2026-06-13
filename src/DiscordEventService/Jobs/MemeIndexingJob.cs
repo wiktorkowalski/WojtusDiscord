@@ -242,5 +242,4 @@ internal sealed class MemeIndexingJob(
             }
         }
     }
-
 }
