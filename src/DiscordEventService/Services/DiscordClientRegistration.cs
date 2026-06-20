@@ -1,5 +1,6 @@
 using DiscordEventService.Commands;
 using DiscordEventService.Configuration;
+using DiscordEventService.Services.Conversation;
 using DiscordEventService.Services.EventHandlers;
 using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
@@ -68,12 +69,17 @@ internal static class DiscordClientRegistration
             // DI-aware factory which works at any time after Build.
             services.AddSingleton<IBackgroundJobClient>(_ => rootSp.GetRequiredService<IBackgroundJobClient>());
             services.AddMemoryCache();
+
+            // #238: forward the singleton IChatClient + bind the conversation/OpenRouter
+            // options the ConversationEventHandler and ConversationService read.
+            ConversationRegistration.AddConversationChildServices(services, rootSp, configuration);
         });
     }
 
     private static void ConfigureEventHandlers(DiscordClientBuilder clientBuilder) =>
         clientBuilder.ConfigureEventHandlers(b => b
             .AddEventHandlers<MessageEventHandler>(ServiceLifetime.Scoped)
+            .AddEventHandlers<ConversationEventHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<ReactionEventHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<PollEventHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<PinEventHandler>(ServiceLifetime.Scoped)

@@ -1,6 +1,7 @@
 using DiscordEventService.Data;
 using DiscordEventService.Services.Pipeline;
 using Hangfire;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Caching.Memory;
 
 namespace DiscordEventService.Services;
@@ -22,6 +23,7 @@ internal static class StartupValidator
         typeof(IHostEnvironment),
         typeof(IMemoryCache),
         typeof(EventPipeline),
+        typeof(IChatClient),
     ];
 
     public static void ValidateChildContainer(IServiceProvider childProvider, ILogger logger)
