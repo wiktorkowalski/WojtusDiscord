@@ -44,7 +44,10 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
 
         _channel = new ChannelEntity
         {
-            DiscordId = ChannelDiscordId, GuildId = _guild.Id, Name = "memes", Type = ChannelType.Text
+            DiscordId = ChannelDiscordId,
+            GuildId = _guild.Id,
+            Name = "memes",
+            Type = ChannelType.Text
         };
         _author = new UserEntity { DiscordId = 3UL, Username = "u" };
         _db.Channels.Add(_channel);
