@@ -9,16 +9,18 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using OpenAI;
 using System.ClientModel;
+using System.Diagnostics;
 using Xunit;
 
 namespace DiscordEventService.Tests;
 
 // MANUAL live-gate test (#241): drives the real streaming agentic loop against OpenRouter
 // -> Anthropic with reasoning ON and a forced multi-round tool call (meme_search hits the
-// seeded row, so the model must do model -> tool -> model). It exists to close the
-// carried-forward risk that the OpenAI/MEAI adapter doesn't replay reasoning_details, so
-// Anthropic could 400 on round 2. Skipped in CI (hits a paid API); run by hand with
-// OPENROUTER_API_KEY exported.
+// seeded row, so the model must do model -> tool -> model). It closes the carried-forward
+// risk that the OpenAI/MEAI adapter doesn't replay reasoning_details (Anthropic 400 on
+// round 2) AND that the real usage.cost is recovered from the experimental ChatTokenUsage
+// patch. Both verified live 2026-06-20 (no 400; cost ≈ $0.009). Skipped in CI (hits a paid
+// API); run by hand with OPENROUTER_API_KEY exported.
 public sealed class ConversationLiveApiTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -37,11 +39,27 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
 
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
-    [Fact(Skip = "Live: hits real OpenRouter (paid). Run manually to verify the reasoning+multi-round tool gate.")]
+    [Fact(Skip = "Live: hits real OpenRouter (paid). Run manually to verify the reasoning+multi-round tool gate and usage.cost recovery.")]
     public async Task GenerateReplyAsync_RealOpenRouter_MultiRoundToolCall_DoesNotThrow()
     {
         var apiKey = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
         Assert.False(string.IsNullOrWhiteSpace(apiKey), "export OPENROUTER_API_KEY to run this live test");
+
+        // Listen to the turn span so we can assert the real usage.cost was recovered from
+        // the experimental ChatTokenUsage patch and recorded — otherwise StartActivity
+        // returns null (no listener) and the cost path is silently untested.
+        double? capturedCost = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = src => src.Name == ConversationTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (activity.GetTagItem("conversation.cost_usd") is double cost)
+                    capturedCost = cost;
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
 
         var conversationOptions = Options.Create(new ConversationOptions
         {
@@ -81,6 +99,10 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
         Assert.Contains(events, e => e is ConversationUpdate.ToolBatchSummary);
         var answer = string.Concat(events.OfType<ConversationUpdate.AssistantTextDelta>().Select(d => d.Text));
         Assert.False(string.IsNullOrWhiteSpace(answer), "expected a non-empty streamed answer");
+
+        // The real OpenRouter usage.cost flowed through the experimental ChatTokenUsage
+        // patch and was recorded on the turn span (verified live 2026-06-20 ≈ $0.009).
+        Assert.True(capturedCost is > 0, $"expected a non-zero usage.cost; got {capturedCost?.ToString() ?? "NULL"}");
     }
 
     private async Task SeedCatMemeAsync()
