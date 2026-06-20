@@ -66,9 +66,15 @@ internal sealed class ConversationEventHandler(
     private async Task RespondAsync(DiscordChannel target, MessageCreatedEventArgs e)
     {
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(options.Value.RequestTimeoutSeconds));
-        var authorName = e.Author.GlobalName ?? e.Author.Username;
 
-        var reply = await conversation.GenerateReplyAsync(e.Message.Content, authorName, cts.Token);
+        // The out-of-band invocation context: a null guild is a DM. Captured from the
+        // event, never from the model, so a tool's scope can't be spoofed by a prompt.
+        var context = new ConversationContext(
+            e.Guild?.Id,
+            e.Author.Id,
+            e.Author.GlobalName ?? e.Author.Username);
+
+        var reply = await conversation.GenerateReplyAsync(e.Message.Content, context, cts.Token);
         if (string.IsNullOrWhiteSpace(reply))
             return;
 
