@@ -25,6 +25,8 @@ internal static class StartupValidator
         typeof(EventPipeline),
         typeof(IChatClient),
         typeof(Conversation.DatabaseSchemaHint),
+        typeof(Conversation.IGuildActionService),
+        typeof(Conversation.IConfirmationService),
     ];
 
     public static void ValidateChildContainer(IServiceProvider childProvider, ILogger logger)

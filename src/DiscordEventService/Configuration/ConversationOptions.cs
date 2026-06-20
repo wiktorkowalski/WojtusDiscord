@@ -33,6 +33,16 @@ internal sealed class ConversationOptions
     // parameter) so prompt injection cannot escalate. Consumed from §6 onward.
     public ulong[] AdminUserIds { get; set; } = [];
 
+    // Whether a user may invoke action tools (#238 §6). The single source of truth for the
+    // admin gate, read both when building the invocation context (the invoker) and when a
+    // confirm button is clicked (the clicker) — never a model parameter, so a prompt-injected
+    // member can neither escalate nor self-confirm a staged action.
+    public bool IsAdmin(ulong userId) => Array.IndexOf(AdminUserIds, userId) >= 0;
+
+    // A staged irreversible action (#238 §6) expires if no admin confirms within this window.
+    // The pending action is in-memory only and is also dropped on restart.
+    public int ConfirmExpirySeconds { get; set; } = 300;
+
     // Optional system-prompt override; falls back to a built-in persona when unset.
     public string? SystemPrompt { get; set; }
 

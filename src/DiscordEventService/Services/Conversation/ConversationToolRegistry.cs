@@ -17,12 +17,27 @@ internal sealed class ConversationToolRegistry(
     MemeSearchService memeSearch,
     GuildStatsService guildStats,
     DatabaseQueryService databaseQuery,
+    IGuildActionService guildActions,
+    IConfirmationService confirmations,
     DatabaseSchemaHint schemaHint,
     IOptions<ConversationOptions> options,
     ILogger<ConversationToolRegistry> logger)
 {
     private const int MaxMemeResults = 10;
     private const int MaxHitDescriptionLength = 160;
+
+    // The single refusal for the admin gate (#238 §6): decided from the out-of-band
+    // ConversationContext.IsAdmin, never a model parameter, so a prompt-injected member can't
+    // talk their way past it.
+    private const string AdminOnlyRefusal =
+        "That's an admin-only action and you're not on the admin list, so I can't do it.";
+
+    private const string NoGuildMessage =
+        "This conversation isn't tied to a server, so I can't run server actions here.";
+
+    // Discord caps a timeout at 28 days; clamp the model's minutes to it so the confirm prompt and
+    // the executed action agree (and the API never rejects an over-long request).
+    private const int MaxTimeoutMinutes = 28 * 24 * 60;
 
     // All-required + no-additional-properties => a clean schema the model can't drift
     // past with junk keys. (Anthropic via OpenRouter ignores the OpenAI `strict` wire
@@ -38,7 +53,21 @@ internal sealed class ConversationToolRegistry(
 
     public ConversationToolset BuildToolset(ConversationContext context) =>
         new ConversationToolset(
-            [BuildMemeSearchTool(context), BuildTopPostersTool(context), BuildQueryDatabaseTool(context)],
+            [
+                // Read tools — open to everyone in an allow-listed channel / DM.
+                BuildMemeSearchTool(context),
+                BuildTopPostersTool(context),
+                BuildQueryDatabaseTool(context),
+                // Action tools — admin-only (§6); the irreversible ones stage behind a confirm button.
+                BuildAddReactionTool(context),
+                BuildPinMessageTool(context),
+                BuildGrantRoleTool(context),
+                BuildRemoveRoleTool(context),
+                BuildTimeoutMemberTool(context),
+                BuildKickMemberTool(context),
+                BuildBanMemberTool(context),
+                BuildDeleteMessageTool(context),
+            ],
             logger);
 
     private AIFunction BuildTopPostersTool(ConversationContext context) =>
@@ -193,6 +222,285 @@ internal sealed class ConversationToolRegistry(
 
     private static string Truncate(string text, int maxLength) =>
         text.Length <= maxLength ? text : text[..(maxLength - 1)] + "…";
+
+    // ───────────────────────── Action tools (#238 §6) ─────────────────────────
+    // Every action tool first checks context.IsAdmin (the un-promptable gate). Reversible ones
+    // (reaction, pin) run immediately; irreversible ones (role / moderation / delete) stage
+    // behind a confirm button via the ConfirmationService and run only when an admin clicks it.
+
+    private AIFunction BuildAddReactionTool(ConversationContext context) =>
+        AIFunctionFactory.Create(
+            ([Description("Channel id (snowflake string) the message is in.")] string channelId,
+                [Description("Message id (snowflake string) to react to.")] string messageId,
+                [Description("A single standard unicode emoji, e.g. 👍 or 🔥.")] string emoji,
+                CancellationToken ct) => AddReactionAsync(context, channelId, messageId, emoji, ct),
+            new AIFunctionFactoryOptions
+            {
+                Name = "add_reaction",
+                Description =
+                    "ADMIN ONLY. React to a message with an emoji. Runs immediately (it's easily undone). "
+                    + "If the user isn't an admin this is refused.",
+                JsonSchemaCreateOptions = StrictSchema,
+            });
+
+    private async Task<string> AddReactionAsync(
+        ConversationContext context, string channelId, string messageId, string emoji, CancellationToken ct)
+    {
+        if (!context.IsAdmin)
+            return AdminOnlyRefusal;
+        if (!TryParseId(channelId, out var cid))
+            return $"\"{channelId}\" isn't a valid channel id.";
+        if (!TryParseId(messageId, out var mid))
+            return $"\"{messageId}\" isn't a valid message id.";
+
+        var result = await guildActions.AddReactionAsync(cid, mid, emoji, ct);
+        logger.LogInformation(
+            "Reversible action add_reaction by {InvokerId} ({Invoker}) on {ChannelId}/{MessageId}: {Outcome}",
+            context.InvokerId, context.InvokerDisplayName, cid, mid, result);
+        return result;
+    }
+
+    private AIFunction BuildPinMessageTool(ConversationContext context) =>
+        AIFunctionFactory.Create(
+            ([Description("Channel id (snowflake string) the message is in.")] string channelId,
+                [Description("Message id (snowflake string) to pin.")] string messageId,
+                CancellationToken ct) => PinMessageAsync(context, channelId, messageId, ct),
+            new AIFunctionFactoryOptions
+            {
+                Name = "pin_message",
+                Description =
+                    "ADMIN ONLY. Pin a message in its channel. Runs immediately (unpinning undoes it). "
+                    + "If the user isn't an admin this is refused.",
+                JsonSchemaCreateOptions = StrictSchema,
+            });
+
+    private async Task<string> PinMessageAsync(
+        ConversationContext context, string channelId, string messageId, CancellationToken ct)
+    {
+        if (!context.IsAdmin)
+            return AdminOnlyRefusal;
+        if (!TryParseId(channelId, out var cid))
+            return $"\"{channelId}\" isn't a valid channel id.";
+        if (!TryParseId(messageId, out var mid))
+            return $"\"{messageId}\" isn't a valid message id.";
+
+        var result = await guildActions.PinMessageAsync(cid, mid, ct);
+        logger.LogInformation(
+            "Reversible action pin_message by {InvokerId} ({Invoker}) on {ChannelId}/{MessageId}: {Outcome}",
+            context.InvokerId, context.InvokerDisplayName, cid, mid, result);
+        return result;
+    }
+
+    private AIFunction BuildGrantRoleTool(ConversationContext context) =>
+        AIFunctionFactory.Create(
+            ([Description("User id (snowflake string) to give the role to.")] string userId,
+                [Description("Role id (snowflake string) to grant.")] string roleId,
+                CancellationToken ct) => GrantRoleAsync(context, userId, roleId, ct),
+            new AIFunctionFactoryOptions
+            {
+                Name = "grant_role",
+                Description =
+                    "ADMIN ONLY. Give a member a role. This does NOT happen immediately — it posts a "
+                    + "confirmation an admin must click. If the user isn't an admin this is refused.",
+                JsonSchemaCreateOptions = StrictSchema,
+            });
+
+    private async Task<string> GrantRoleAsync(
+        ConversationContext context, string userId, string roleId, CancellationToken ct)
+    {
+        if (!context.IsAdmin)
+            return AdminOnlyRefusal;
+        if (!TryResolveGuild(context, out var guildId))
+            return NoGuildMessage;
+        if (!TryParseId(userId, out var uid))
+            return $"\"{userId}\" isn't a valid user id.";
+        if (!TryParseId(roleId, out var rid))
+            return $"\"{roleId}\" isn't a valid role id.";
+
+        var who = await guildActions.DescribeUserAsync(guildId, uid, ct);
+        var what = await guildActions.DescribeRoleAsync(guildId, rid, ct);
+        return await StageAsync(context, $"Give **{who}** the **{what}** role.",
+            token => guildActions.GrantRoleAsync(guildId, uid, rid, ReasonFor(context), token), ct);
+    }
+
+    private AIFunction BuildRemoveRoleTool(ConversationContext context) =>
+        AIFunctionFactory.Create(
+            ([Description("User id (snowflake string) to remove the role from.")] string userId,
+                [Description("Role id (snowflake string) to remove.")] string roleId,
+                CancellationToken ct) => RemoveRoleAsync(context, userId, roleId, ct),
+            new AIFunctionFactoryOptions
+            {
+                Name = "remove_role",
+                Description =
+                    "ADMIN ONLY. Remove a role from a member. This does NOT happen immediately — it posts a "
+                    + "confirmation an admin must click. If the user isn't an admin this is refused.",
+                JsonSchemaCreateOptions = StrictSchema,
+            });
+
+    private async Task<string> RemoveRoleAsync(
+        ConversationContext context, string userId, string roleId, CancellationToken ct)
+    {
+        if (!context.IsAdmin)
+            return AdminOnlyRefusal;
+        if (!TryResolveGuild(context, out var guildId))
+            return NoGuildMessage;
+        if (!TryParseId(userId, out var uid))
+            return $"\"{userId}\" isn't a valid user id.";
+        if (!TryParseId(roleId, out var rid))
+            return $"\"{roleId}\" isn't a valid role id.";
+
+        var who = await guildActions.DescribeUserAsync(guildId, uid, ct);
+        var what = await guildActions.DescribeRoleAsync(guildId, rid, ct);
+        return await StageAsync(context, $"Remove the **{what}** role from **{who}**.",
+            token => guildActions.RemoveRoleAsync(guildId, uid, rid, ReasonFor(context), token), ct);
+    }
+
+    private AIFunction BuildTimeoutMemberTool(ConversationContext context) =>
+        AIFunctionFactory.Create(
+            ([Description("User id (snowflake string) to time out.")] string userId,
+                [Description("How many minutes to time them out for (1-40320).")] int minutes,
+                [Description("Short reason for the timeout (shown in the audit log).")] string reason,
+                CancellationToken ct) => TimeoutMemberAsync(context, userId, minutes, reason, ct),
+            new AIFunctionFactoryOptions
+            {
+                Name = "timeout_member",
+                Description =
+                    "ADMIN ONLY. Time a member out (mute) for some minutes. This does NOT happen immediately — "
+                    + "it posts a confirmation an admin must click. If the user isn't an admin this is refused.",
+                JsonSchemaCreateOptions = StrictSchema,
+            });
+
+    private async Task<string> TimeoutMemberAsync(
+        ConversationContext context, string userId, int minutes, string reason, CancellationToken ct)
+    {
+        if (!context.IsAdmin)
+            return AdminOnlyRefusal;
+        if (!TryResolveGuild(context, out var guildId))
+            return NoGuildMessage;
+        if (!TryParseId(userId, out var uid))
+            return $"\"{userId}\" isn't a valid user id.";
+
+        // Clamp here, before building both the description and the delegate, so the duration the
+        // admin confirms is exactly what runs (the service clamp is then a defensive no-op).
+        var clamped = Math.Clamp(minutes, 1, MaxTimeoutMinutes);
+        var who = await guildActions.DescribeUserAsync(guildId, uid, ct);
+        return await StageAsync(context, $"Time out **{who}** for {clamped} minute(s){ReasonSuffix(reason)}.",
+            token => guildActions.TimeoutMemberAsync(guildId, uid, clamped, FullReason(context, reason), token), ct);
+    }
+
+    private AIFunction BuildKickMemberTool(ConversationContext context) =>
+        AIFunctionFactory.Create(
+            ([Description("User id (snowflake string) to kick.")] string userId,
+                [Description("Short reason for the kick (shown in the audit log).")] string reason,
+                CancellationToken ct) => KickMemberAsync(context, userId, reason, ct),
+            new AIFunctionFactoryOptions
+            {
+                Name = "kick_member",
+                Description =
+                    "ADMIN ONLY. Kick a member from the server. This does NOT happen immediately — it posts a "
+                    + "confirmation an admin must click. If the user isn't an admin this is refused.",
+                JsonSchemaCreateOptions = StrictSchema,
+            });
+
+    private async Task<string> KickMemberAsync(
+        ConversationContext context, string userId, string reason, CancellationToken ct)
+    {
+        if (!context.IsAdmin)
+            return AdminOnlyRefusal;
+        if (!TryResolveGuild(context, out var guildId))
+            return NoGuildMessage;
+        if (!TryParseId(userId, out var uid))
+            return $"\"{userId}\" isn't a valid user id.";
+
+        var who = await guildActions.DescribeUserAsync(guildId, uid, ct);
+        return await StageAsync(context, $"Kick **{who}** from the server{ReasonSuffix(reason)}.",
+            token => guildActions.KickMemberAsync(guildId, uid, FullReason(context, reason), token), ct);
+    }
+
+    private AIFunction BuildBanMemberTool(ConversationContext context) =>
+        AIFunctionFactory.Create(
+            ([Description("User id (snowflake string) to ban.")] string userId,
+                [Description("Short reason for the ban (shown in the audit log).")] string reason,
+                CancellationToken ct) => BanMemberAsync(context, userId, reason, ct),
+            new AIFunctionFactoryOptions
+            {
+                Name = "ban_member",
+                Description =
+                    "ADMIN ONLY. Ban a user from the server. This does NOT happen immediately — it posts a "
+                    + "confirmation an admin must click. If the user isn't an admin this is refused.",
+                JsonSchemaCreateOptions = StrictSchema,
+            });
+
+    private async Task<string> BanMemberAsync(
+        ConversationContext context, string userId, string reason, CancellationToken ct)
+    {
+        if (!context.IsAdmin)
+            return AdminOnlyRefusal;
+        if (!TryResolveGuild(context, out var guildId))
+            return NoGuildMessage;
+        if (!TryParseId(userId, out var uid))
+            return $"\"{userId}\" isn't a valid user id.";
+
+        var who = await guildActions.DescribeUserAsync(guildId, uid, ct);
+        return await StageAsync(context, $"Ban **{who}** from the server{ReasonSuffix(reason)}.",
+            token => guildActions.BanMemberAsync(guildId, uid, FullReason(context, reason), token), ct);
+    }
+
+    private AIFunction BuildDeleteMessageTool(ConversationContext context) =>
+        AIFunctionFactory.Create(
+            ([Description("Channel id (snowflake string) the message is in.")] string channelId,
+                [Description("Message id (snowflake string) to delete.")] string messageId,
+                CancellationToken ct) => DeleteMessageAsync(context, channelId, messageId, ct),
+            new AIFunctionFactoryOptions
+            {
+                Name = "delete_message",
+                Description =
+                    "ADMIN ONLY. Delete a message. This does NOT happen immediately — it posts a confirmation "
+                    + "an admin must click. If the user isn't an admin this is refused.",
+                JsonSchemaCreateOptions = StrictSchema,
+            });
+
+    private async Task<string> DeleteMessageAsync(
+        ConversationContext context, string channelId, string messageId, CancellationToken ct)
+    {
+        if (!context.IsAdmin)
+            return AdminOnlyRefusal;
+        if (!TryParseId(channelId, out var cid))
+            return $"\"{channelId}\" isn't a valid channel id.";
+        if (!TryParseId(messageId, out var mid))
+            return $"\"{messageId}\" isn't a valid message id.";
+
+        return await StageAsync(context, $"Delete message `{mid}` in channel `{cid}`.",
+            token => guildActions.DeleteMessageAsync(cid, mid, ReasonFor(context), token), ct);
+    }
+
+    // Stage an irreversible action behind a confirm button posted in the conversation surface.
+    private Task<string> StageAsync(
+        ConversationContext context, string description,
+        Func<CancellationToken, Task<string>> execute, CancellationToken ct) =>
+        confirmations.StageAsync(
+            context.ChannelId, context.InvokerId, context.InvokerDisplayName, description, execute, ct);
+
+    private bool TryResolveGuild(ConversationContext context, out ulong guildId)
+    {
+        var resolved = context.GuildId ?? options.Value.PrimaryGuildId;
+        guildId = resolved ?? 0;
+        return resolved is not null;
+    }
+
+    private static bool TryParseId(string? raw, out ulong id) =>
+        ulong.TryParse(raw?.Trim(), out id);
+
+    // The audit-log reason always names the out-of-band requester (never a model claim), so the
+    // server log shows who actually asked.
+    private static string ReasonFor(ConversationContext context) =>
+        $"Requested via Wojtuś by {context.InvokerDisplayName} ({context.InvokerId})";
+
+    private static string FullReason(ConversationContext context, string reason) =>
+        string.IsNullOrWhiteSpace(reason) ? ReasonFor(context) : $"{reason.Trim()} — {ReasonFor(context)}";
+
+    private static string ReasonSuffix(string reason) =>
+        string.IsNullOrWhiteSpace(reason) ? string.Empty : $" — reason: {reason.Trim()}";
 }
 
 // The dispatch seam for one turn: the single place every tool call is invoked, timed,

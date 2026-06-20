@@ -77,7 +77,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         });
 
         var service = BuildService(client);
-        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester");
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester", IsAdmin: false, ChannelId: 7UL);
 
         var events = await CollectAsync(service.GenerateReplyAsync("znajdz mema o zolwiu", context, CancellationToken.None));
 
@@ -131,7 +131,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         });
 
         var service = BuildService(client);
-        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester");
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester", IsAdmin: false, ChannelId: 7UL);
 
         var events = await CollectAsync(service.GenerateReplyAsync("memy?", context, CancellationToken.None));
 
@@ -157,7 +157,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
                 : StreamText(cappedAnswer));
 
         var service = BuildService(client, maxToolRounds: cap);
-        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester");
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester", IsAdmin: false, ChannelId: 7UL);
 
         var events = await CollectAsync(service.GenerateReplyAsync("loop forever", context, CancellationToken.None));
 
@@ -181,6 +181,8 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             new MemeSearchService(NewContext()),
             new GuildStatsService(NewContext()),
             new DatabaseQueryService(NewContext(), conversationOptions, NullLogger<DatabaseQueryService>.Instance),
+            new FakeGuildActionService(),
+            new FakeConfirmationService(),
             new DatabaseSchemaHint("schema hint"),
             conversationOptions,
             NullLogger<ConversationToolRegistry>.Instance);

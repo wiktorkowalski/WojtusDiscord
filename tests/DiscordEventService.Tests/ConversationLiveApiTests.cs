@@ -82,13 +82,15 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
             new MemeSearchService(NewContext()),
             new GuildStatsService(NewContext()),
             new DatabaseQueryService(NewContext(), conversationOptions, NullLogger<DatabaseQueryService>.Instance),
+            new FakeGuildActionService(),
+            new FakeConfirmationService(),
             new DatabaseSchemaHint("schema hint"),
             conversationOptions,
             NullLogger<ConversationToolRegistry>.Instance);
         var service = new ConversationService(
             chatClient, registry, conversationOptions, openRouterOptions, NullLogger<ConversationService>.Instance);
 
-        var context = new ConversationContext(GuildDiscordId, InvokerId: 1UL, "tester");
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 1UL, "tester", IsAdmin: false, ChannelId: 9UL);
 
         List<ConversationUpdate> events = [];
         await foreach (var update in service.GenerateReplyAsync(
