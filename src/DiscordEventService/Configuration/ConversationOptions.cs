@@ -36,6 +36,15 @@ internal sealed class ConversationOptions
     // Optional system-prompt override; falls back to a built-in persona when unset.
     public string? SystemPrompt { get; set; }
 
+    // Streaming cadence (#241): the round's message is edited in place at most this often
+    // while text streams in (Discord rate limits), with a guaranteed final flush.
+    public int StreamEditThrottleMs { get; set; } = 750;
+
+    // Shown as the per-round interim line when the model calls a tool without first
+    // narrating, so a tool round always has a visible "working on it" message. Discord
+    // subtext via the `-#` prefix.
+    public string InterimNarration { get; set; } = "-# 🔍 już sprawdzam…";
+
     // Hard ceiling on a single turn's model round-trip.
     public int RequestTimeoutSeconds { get; set; } = 120;
 

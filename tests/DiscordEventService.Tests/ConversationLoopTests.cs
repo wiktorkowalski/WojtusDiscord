@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
@@ -11,16 +12,19 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// Exercises the §2 contract end-to-end against a real Postgres + real MemeSearchService,
-// with the model itself faked by a scripted IChatClient. Proves the model->tool->model
-// loop: tool-call turn appended before the tool result, the result fed back into the
-// next model call, a final answer surfaced, and the round cap terminating the loop.
+// Exercises the §3 streaming contract end-to-end against a real Postgres + real
+// MemeSearchService, with the model itself faked by a scripted streaming IChatClient.
+// Proves the model->tool->model loop AND its render cadence: text deltas streamed live,
+// an interim narration per tool round, a tool-batch summary that seals the round's
+// message, the tool result fed back into the next model call, a final answer accumulated
+// from deltas, and the round cap terminating the loop with tools withheld.
 public sealed class ConversationLoopTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private const ulong GuildDiscordId = 1UL;
     private const ulong ChannelDiscordId = 2UL;
     private const ulong MemeMessageId = 1301UL;
+    private const string Interim = "-# interim";
 
     private DiscordDbContext _db = null!;
     private GuildEntity _guild = null!;
@@ -60,29 +64,40 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task GenerateReplyAsync_ToolCallThenAnswer_FeedsResultBackAndSurfacesAnswer()
+    public async Task GenerateReplyAsync_SilentToolCallThenAnswer_NarratesFeedsResultBackAndStreamsAnswer()
     {
         const string finalAnswer = "Found the turtle meme for you.";
+        // Round 0 calls the tool with no narration text; round 1 streams the answer in two
+        // deltas (to prove accumulation).
         var client = new ScriptedChatClient((callIndex, _, _) => callIndex switch
         {
-            0 => ToolCall("call_1", "meme_search", new Dictionary<string, object?> { ["query"] = "zolw", ["limit"] = 5 }),
-            _ => FinalText(finalAnswer),
+            0 => StreamToolCall("call_1", "meme_search",
+                new Dictionary<string, object?> { ["query"] = "zolw", ["limit"] = 5 }),
+            _ => StreamText("Found the turtle ", "meme for you."),
         });
 
         var service = BuildService(client);
         var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester");
 
-        var reply = await service.GenerateReplyAsync("znajdz mema o zolwiu", context, CancellationToken.None);
+        var events = await CollectAsync(service.GenerateReplyAsync("znajdz mema o zolwiu", context, CancellationToken.None));
 
-        Assert.Equal(finalAnswer, reply);
+        // The model was silent before the tool, so the loop injects the interim narration
+        // as the round's first (and only) text before the tool-batch summary.
+        Assert.Equal(Interim, FirstDelta(events));
+        var summary = Assert.Single(events.OfType<ConversationUpdate.ToolBatchSummary>());
+        Assert.Contains("meme_search", summary.Text);
+        // The interim narration precedes the tool-batch summary.
+        Assert.True(IndexOf<ConversationUpdate.AssistantTextDelta>(events) < IndexOf<ConversationUpdate.ToolBatchSummary>(events));
+        // The answer is the deltas after the summary, accumulated into one message.
+        Assert.Equal(finalAnswer, FinalAnswer(events));
 
         // Two model calls: the tool-requesting round, then the answering round.
         Assert.Equal(2, client.Calls.Count);
         // Tools are re-sent on every round.
         Assert.Equal([true, true], client.CallHadTools);
 
-        // The second call's transcript carries the tool result, and the assistant
-        // tool-call turn precedes it.
+        // The second call's transcript carries the tool result, and the assistant tool-call
+        // turn precedes it.
         var secondCall = client.Calls[1];
         var toolCallIndex = IndexOfContent<FunctionCallContent>(secondCall);
         var toolResultIndex = IndexOfContent<FunctionResultContent>(secondCall);
@@ -100,6 +115,36 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task GenerateReplyAsync_ModelNarratesBeforeTool_StreamsNarrationThenSummaryThenAnswer()
+    {
+        // A single round emits narration text AND a tool call (the realistic shape); the
+        // next round streams the answer across deltas.
+        var client = new ScriptedChatClient((callIndex, _, _) => callIndex switch
+        {
+            0 =>
+            [
+                new ChatResponseUpdate(ChatRole.Assistant, "Sprawdzam memy. "),
+                ToolCallUpdate("call_1", "meme_search",
+                    new Dictionary<string, object?> { ["query"] = "zolw", ["limit"] = 5 }),
+            ],
+            _ => StreamText("Oto ", "co ", "znalazłem."),
+        });
+
+        var service = BuildService(client);
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester");
+
+        var events = await CollectAsync(service.GenerateReplyAsync("memy?", context, CancellationToken.None));
+
+        // The model's own narration is surfaced (NOT the injected interim) and precedes the
+        // tool-batch summary.
+        Assert.Equal("Sprawdzam memy. ", FirstDelta(events));
+        Assert.DoesNotContain(events.OfType<ConversationUpdate.AssistantTextDelta>(), d => d.Text == Interim);
+        Assert.Single(events.OfType<ConversationUpdate.ToolBatchSummary>());
+        // The answer is accumulated from its deltas.
+        Assert.Equal("Oto co znalazłem.", FinalAnswer(events));
+    }
+
+    [Fact]
     public async Task GenerateReplyAsync_ModelNeverStops_HitsRoundCapAndFinalizesWithoutTools()
     {
         const int cap = 3;
@@ -107,15 +152,16 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         // Always ask for a tool while tools are offered; answer once they're withheld.
         var client = new ScriptedChatClient((callIndex, _, options) =>
             options?.Tools is { Count: > 0 }
-                ? ToolCall($"call_{callIndex}", "meme_search", new Dictionary<string, object?> { ["query"] = "x", ["limit"] = 1 })
-                : FinalText(cappedAnswer));
+                ? StreamToolCall($"call_{callIndex}", "meme_search",
+                    new Dictionary<string, object?> { ["query"] = "x", ["limit"] = 1 })
+                : StreamText(cappedAnswer));
 
         var service = BuildService(client, maxToolRounds: cap);
         var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester");
 
-        var reply = await service.GenerateReplyAsync("loop forever", context, CancellationToken.None);
+        var events = await CollectAsync(service.GenerateReplyAsync("loop forever", context, CancellationToken.None));
 
-        Assert.Equal(cappedAnswer, reply);
+        Assert.Equal(cappedAnswer, FinalAnswer(events));
         // cap rounds offering tools, then one finalizing call with tools withheld.
         Assert.Equal(cap + 1, client.Calls.Count);
         Assert.Equal([true, true, true, false], client.CallHadTools);
@@ -127,6 +173,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         {
             MaxToolRounds = maxToolRounds,
             ReasoningEffort = "low",
+            InterimNarration = Interim,
         });
         var openRouterOptions = Options.Create(new OpenRouterOptions { ApiKey = "test-key" });
 
@@ -143,6 +190,43 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             NullLogger<ConversationService>.Instance);
     }
 
+    private static async Task<List<ConversationUpdate>> CollectAsync(IAsyncEnumerable<ConversationUpdate> stream)
+    {
+        List<ConversationUpdate> events = [];
+        await foreach (var update in stream)
+            events.Add(update);
+        return events;
+    }
+
+    private static string FirstDelta(IEnumerable<ConversationUpdate> events) =>
+        events.OfType<ConversationUpdate.AssistantTextDelta>().First().Text;
+
+    // The deltas after the last tool-batch summary form the final answer message.
+    private static string FinalAnswer(IReadOnlyList<ConversationUpdate> events)
+    {
+        var lastSummary = -1;
+        for (var i = 0; i < events.Count; i++)
+        {
+            if (events[i] is ConversationUpdate.ToolBatchSummary)
+                lastSummary = i;
+        }
+
+        return string.Concat(events.Skip(lastSummary + 1)
+            .OfType<ConversationUpdate.AssistantTextDelta>()
+            .Select(delta => delta.Text));
+    }
+
+    private static int IndexOf<TUpdate>(IReadOnlyList<ConversationUpdate> events) where TUpdate : ConversationUpdate
+    {
+        for (var i = 0; i < events.Count; i++)
+        {
+            if (events[i] is TUpdate)
+                return i;
+        }
+
+        return -1;
+    }
+
     private static int IndexOfContent<TContent>(IReadOnlyList<ChatMessage> messages) where TContent : AIContent
     {
         for (var i = 0; i < messages.Count; i++)
@@ -154,11 +238,15 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         return -1;
     }
 
-    private static ChatResponse ToolCall(string callId, string name, Dictionary<string, object?> arguments) =>
-        new ChatResponse(new ChatMessage(ChatRole.Assistant, [new FunctionCallContent(callId, name, arguments)]));
+    private static ChatResponseUpdate ToolCallUpdate(string callId, string name, Dictionary<string, object?> arguments) =>
+        new(ChatRole.Assistant, [new FunctionCallContent(callId, name, arguments)]);
 
-    private static ChatResponse FinalText(string text) =>
-        new ChatResponse(new ChatMessage(ChatRole.Assistant, text));
+    private static IReadOnlyList<ChatResponseUpdate> StreamToolCall(
+        string callId, string name, Dictionary<string, object?> arguments) =>
+        [ToolCallUpdate(callId, name, arguments)];
+
+    private static IReadOnlyList<ChatResponseUpdate> StreamText(params string[] deltas) =>
+        deltas.Select(delta => new ChatResponseUpdate(ChatRole.Assistant, delta)).ToList();
 
     private async Task SeedTurtleMemeAsync()
     {
@@ -206,28 +294,35 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         return new DiscordDbContext(options);
     }
 
-    // A fake IChatClient that returns scripted responses and records each call's
+    // A fake IChatClient that returns scripted streaming responses and records each call's
     // transcript and whether tools were offered.
     private sealed class ScriptedChatClient(
-        Func<int, IReadOnlyList<ChatMessage>, ChatOptions?, ChatResponse> responder) : IChatClient
+        Func<int, IReadOnlyList<ChatMessage>, ChatOptions?, IReadOnlyList<ChatResponseUpdate>> responder) : IChatClient
     {
         private int _callIndex;
 
         public List<IReadOnlyList<ChatMessage>> Calls { get; } = [];
         public List<bool> CallHadTools { get; } = [];
 
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var snapshot = messages.ToList();
             Calls.Add(snapshot);
             CallHadTools.Add(options?.Tools is { Count: > 0 });
-            return Task.FromResult(responder(_callIndex++, snapshot, options));
+
+            foreach (var update in responder(_callIndex++, snapshot, options))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                yield return update;
+                await Task.Yield();
+            }
         }
 
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        public Task<ChatResponse> GetResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException("Streaming lands in §3.");
+            throw new NotSupportedException("§3 drives the loop via GetStreamingResponseAsync.");
 
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
 

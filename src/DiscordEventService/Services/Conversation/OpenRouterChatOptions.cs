@@ -4,10 +4,10 @@ using OpenAI.Chat;
 namespace DiscordEventService.Services.Conversation;
 
 // Builds the per-request ChatOptions for the OpenRouter chat model, injecting the
-// Claude/OpenRouter body fields (`provider`, `reasoning`) through a JsonPatch on a
-// fresh ChatCompletionOptions. ChatOptions.AdditionalProperties is NOT the mechanism —
+// Claude/OpenRouter body fields (`provider`, `reasoning`, `usage`) through a JsonPatch on
+// a fresh ChatCompletionOptions. ChatOptions.AdditionalProperties is NOT the mechanism —
 // the OpenAI adapter silently drops that dictionary (except the reserved `strict` key).
-// Reused unchanged by every round once the agentic loop lands (§2+).
+// Reused unchanged by every round of the agentic loop (§2+).
 internal static class OpenRouterChatOptions
 {
     public static ChatOptions Create(string reasoningEffort) => new()
@@ -27,6 +27,11 @@ internal static class OpenRouterChatOptions
         // Request reasoning tokens at the configured effort.
         options.Patch.Set("$.reasoning"u8,
             BinaryData.FromObjectAsJson(new { effort = reasoningEffort }));
+
+        // Ask OpenRouter to include the real upstream `usage.cost` (USD) on the final
+        // chunk — it is not in MEAI's typed UsageDetails and is recovered from the raw
+        // ChatTokenUsage patch (#241). Captured per round for the §5 usage ledger.
+        options.Patch.Set("$.usage"u8, BinaryData.FromObjectAsJson(new { include = true }));
 
         return options;
 #pragma warning restore SCME0001
