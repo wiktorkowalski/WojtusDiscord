@@ -74,17 +74,48 @@ internal sealed class ConversationEventHandler(
             e.Author.Id,
             e.Author.GlobalName ?? e.Author.Username);
 
-        var reply = await conversation.GenerateReplyAsync(e.Message.Content, context, cts.Token);
-        if (string.IsNullOrWhiteSpace(reply))
-            return;
-
-        // Reply with Mentions.None — model text may contain @mentions, and the reply is
-        // itself re-ingested by MessageEventHandler (the "message" three-senses note).
-        foreach (var chunk in ChunkForDiscord(reply))
+        // Render the agentic loop's events into Discord (#241): each round streams into its
+        // own message (edited in place, throttled); a tool-batch summary seals that round's
+        // message so the next delta opens a fresh one. The final round's message is the
+        // answer typed in live.
+        var throttle = TimeSpan.FromMilliseconds(options.Value.StreamEditThrottleMs);
+        DiscordStreamingMessage? bubble = null;
+        var messagesSent = 0;
+        try
         {
-            await target.SendMessageAsync(new DiscordMessageBuilder()
-                .WithContent(chunk)
-                .WithAllowedMentions(Mentions.None));
+            await foreach (var update in conversation.GenerateReplyAsync(e.Message.Content, context, cts.Token))
+            {
+                switch (update)
+                {
+                    case ConversationUpdate.AssistantTextDelta delta:
+                        bubble ??= new DiscordStreamingMessage(target, throttle);
+                        await bubble.AppendDeltaAsync(delta.Text, cts.Token);
+                        break;
+
+                    case ConversationUpdate.ToolBatchSummary summary:
+                        bubble ??= new DiscordStreamingMessage(target, throttle);
+                        await bubble.AppendLineAsync(summary.Text, cts.Token);
+                        messagesSent += bubble.MessageCount; // seal the round's message; next delta starts fresh
+                        bubble = null;
+                        break;
+                }
+            }
+
+            // Guaranteed final flush for the answer (the last bubble is never sealed by a
+            // tool summary).
+            if (bubble is not null)
+            {
+                await bubble.FlushAsync(cts.Token);
+                messagesSent += bubble.MessageCount;
+            }
+
+            logger.LogInformation("Conversation reply for {Author} sent {MessageCount} message(s)",
+                context.InvokerDisplayName, messagesSent);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            logger.LogWarning("Conversation turn timed out after {Timeout}s for message {MessageId}",
+                options.Value.RequestTimeoutSeconds, e.Message.Id);
         }
     }
 
@@ -131,34 +162,5 @@ internal sealed class ConversationEventHandler(
             return "Chat with Wojtuś";
 
         return text.Length <= MaxThreadNameLength ? text : text[..MaxThreadNameLength];
-    }
-
-    // Discord caps a single message at 2000 characters; split a long reply on a newline
-    // or word boundary so nothing is dropped mid-word.
-    private static List<string> ChunkForDiscord(string content)
-    {
-        const int limit = 2000;
-        List<string> chunks = [];
-        var start = 0;
-
-        while (content.Length - start > limit)
-        {
-            var window = content.Substring(start, limit);
-            var breakAt = window.LastIndexOf('\n');
-            if (breakAt <= 0)
-                breakAt = window.LastIndexOf(' ');
-            if (breakAt <= 0)
-                breakAt = limit;
-
-            chunks.Add(content.Substring(start, breakAt).TrimEnd());
-            start += breakAt;
-            while (start < content.Length && char.IsWhiteSpace(content[start]))
-                start++;
-        }
-
-        if (start < content.Length)
-            chunks.Add(content[start..]);
-
-        return chunks;
     }
 }
