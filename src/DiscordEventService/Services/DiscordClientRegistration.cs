@@ -80,6 +80,7 @@ internal static class DiscordClientRegistration
         clientBuilder.ConfigureEventHandlers(b => b
             .AddEventHandlers<MessageEventHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<ConversationEventHandler>(ServiceLifetime.Scoped)
+            .AddEventHandlers<ConfirmationComponentHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<ReactionEventHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<PollEventHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<PinEventHandler>(ServiceLifetime.Scoped)

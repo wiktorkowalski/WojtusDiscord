@@ -69,10 +69,14 @@ internal sealed class ConversationEventHandler(
 
         // The out-of-band invocation context: a null guild is a DM. Captured from the
         // event, never from the model, so a tool's scope can't be spoofed by a prompt.
+        // IsAdmin (the §6 action gate) is decided here from the allow-list — never a model
+        // parameter — and ChannelId is the surface a staged action posts its confirm button into.
         var context = new ConversationContext(
             e.Guild?.Id,
             e.Author.Id,
-            e.Author.GlobalName ?? e.Author.Username);
+            e.Author.GlobalName ?? e.Author.Username,
+            options.Value.IsAdmin(e.Author.Id),
+            target.Id);
 
         // Render the agentic loop's events into Discord (#241): each round streams into its
         // own message (edited in place, throttled); a tool-batch summary seals that round's
