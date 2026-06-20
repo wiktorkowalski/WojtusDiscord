@@ -12,8 +12,8 @@ namespace DiscordEventService.Services.Conversation;
 // itself lives a layer up, in the tool closures (ConversationContext.IsAdmin) and the confirm
 // button — this service performs, it does not authorize.
 //
-// Stateless and singleton: it depends only on the singleton DiscordClient, so the deferred
-// execute delegate a staged action captures can safely outlive the turn that staged it.
+// Stateless and singleton: it reads the singleton DiscordClient from the accessor, so the
+// deferred execute delegate a staged action captures can safely outlive the turn that staged it.
 internal interface IGuildActionService
 {
     // Reversible — run immediately after the admin gate.
@@ -33,11 +33,15 @@ internal interface IGuildActionService
     Task<string> DescribeRoleAsync(ulong guildId, ulong roleId, CancellationToken cancellationToken);
 }
 
-internal sealed class GuildActionService(DiscordClient client, ILogger<GuildActionService> logger)
+internal sealed class GuildActionService(DiscordClientAccessor clientAccessor, ILogger<GuildActionService> logger)
     : IGuildActionService
 {
     // Discord caps a timeout at 28 days; clamp so the API never rejects an over-long request.
     private const int MaxTimeoutMinutes = 28 * 24 * 60;
+
+    // Resolved from the accessor (never injected directly) so DiscordClient stays out of the
+    // child container's DI graph — see DiscordClientAccessor for why.
+    private DiscordClient Client => clientAccessor.Client;
 
     public Task<string> AddReactionAsync(ulong channelId, ulong messageId, string emoji, CancellationToken cancellationToken) =>
         RunAsync("message", async () =>
@@ -69,7 +73,7 @@ internal sealed class GuildActionService(DiscordClient client, ILogger<GuildActi
         ulong guildId, ulong userId, ulong roleId, string reason, CancellationToken cancellationToken) =>
         RunAsync("user or role", async () =>
         {
-            var guild = await client.GetGuildAsync(guildId);
+            var guild = await Client.GetGuildAsync(guildId);
             var member = await guild.GetMemberAsync(userId);
             var role = await guild.GetRoleAsync(roleId);
             await member.GrantRoleAsync(role, reason);
@@ -80,7 +84,7 @@ internal sealed class GuildActionService(DiscordClient client, ILogger<GuildActi
         ulong guildId, ulong userId, ulong roleId, string reason, CancellationToken cancellationToken) =>
         RunAsync("user or role", async () =>
         {
-            var guild = await client.GetGuildAsync(guildId);
+            var guild = await Client.GetGuildAsync(guildId);
             var member = await guild.GetMemberAsync(userId);
             var role = await guild.GetRoleAsync(roleId);
             await member.RevokeRoleAsync(role, reason);
@@ -92,7 +96,7 @@ internal sealed class GuildActionService(DiscordClient client, ILogger<GuildActi
         RunAsync("user", async () =>
         {
             var clamped = Math.Clamp(minutes, 1, MaxTimeoutMinutes);
-            var guild = await client.GetGuildAsync(guildId);
+            var guild = await Client.GetGuildAsync(guildId);
             var member = await guild.GetMemberAsync(userId);
             await member.TimeoutAsync(DateTimeOffset.UtcNow.AddMinutes(clamped), reason);
             return $"Timed out {member.DisplayName} for {clamped} minute(s).";
@@ -101,7 +105,7 @@ internal sealed class GuildActionService(DiscordClient client, ILogger<GuildActi
     public Task<string> KickMemberAsync(ulong guildId, ulong userId, string reason, CancellationToken cancellationToken) =>
         RunAsync("user", async () =>
         {
-            var guild = await client.GetGuildAsync(guildId);
+            var guild = await Client.GetGuildAsync(guildId);
             var member = await guild.GetMemberAsync(userId);
             await member.RemoveAsync(reason);
             return $"Kicked {member.DisplayName}.";
@@ -110,7 +114,7 @@ internal sealed class GuildActionService(DiscordClient client, ILogger<GuildActi
     public Task<string> BanMemberAsync(ulong guildId, ulong userId, string reason, CancellationToken cancellationToken) =>
         RunAsync("user", async () =>
         {
-            var guild = await client.GetGuildAsync(guildId);
+            var guild = await Client.GetGuildAsync(guildId);
             // Ban by id so it works even when the target isn't a resolvable member (already gone).
             await guild.BanMemberAsync(userId, TimeSpan.Zero, reason);
             return $"Banned user {userId}.";
@@ -128,7 +132,7 @@ internal sealed class GuildActionService(DiscordClient client, ILogger<GuildActi
     {
         try
         {
-            var guild = await client.GetGuildAsync(guildId);
+            var guild = await Client.GetGuildAsync(guildId);
             var member = await guild.GetMemberAsync(userId);
             return $"{member.DisplayName} ({userId})";
         }
@@ -144,7 +148,7 @@ internal sealed class GuildActionService(DiscordClient client, ILogger<GuildActi
     {
         try
         {
-            var guild = await client.GetGuildAsync(guildId);
+            var guild = await Client.GetGuildAsync(guildId);
             var role = await guild.GetRoleAsync(roleId);
             return $"{role.Name} ({roleId})";
         }
@@ -156,7 +160,7 @@ internal sealed class GuildActionService(DiscordClient client, ILogger<GuildActi
 
     private async Task<DiscordMessage> FetchMessageAsync(ulong channelId, ulong messageId)
     {
-        var channel = await client.GetChannelAsync(channelId);
+        var channel = await Client.GetChannelAsync(channelId);
         return await channel.GetMessageAsync(messageId);
     }
 

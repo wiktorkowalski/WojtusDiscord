@@ -2,7 +2,6 @@ using System.ClientModel;
 using System.Text;
 using DiscordEventService.Configuration;
 using DiscordEventService.Infrastructure;
-using DSharpPlus;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using OpenAI;
@@ -35,6 +34,9 @@ internal static class ConversationRegistration
         // GuildActionService is stateless over the singleton DiscordClient, and ConfirmationService
         // holds pending confirmations in memory across the turn that stages one and the click that
         // confirms it. (Both also registered in the child container, which is where they're used.)
+        // They reach the DiscordClient via DiscordClientAccessor (a plain holder), NEVER by
+        // registering DiscordClient in a container — see DiscordClientAccessor for why that deadlocks.
+        services.AddSingleton<DiscordClientAccessor>();
         services.AddSingleton<IGuildActionService, GuildActionService>();
         services.AddSingleton<IConfirmationService, ConfirmationService>();
 
@@ -66,10 +68,10 @@ internal static class ConversationRegistration
         // container too (DatabaseQueryService/GuildStatsService use the shared DiscordDbContext).
         services.AddSingleton(_ => rootSp.GetRequiredService<DatabaseSchemaHint>());
 
-        // §6: forward the singleton DiscordClient so the action services can perform Discord writes
-        // from the child container (the conversation + confirm-button handlers run here). The lambda
-        // is lazy — it returns the already-built root singleton, so there's no construction cycle.
-        services.AddSingleton(_ => rootSp.GetRequiredService<DiscordClient>());
+        // §6: forward the DiscordClientAccessor (a plain holder) so the action services reach the
+        // DiscordClient without DiscordClient ever being a registration in this child container —
+        // forwarding DiscordClient itself re-enters its own construction and deadlocks boot.
+        services.AddSingleton(_ => rootSp.GetRequiredService<DiscordClientAccessor>());
 
         // §6 action seam — its own child-container singletons. The ConfirmationService store is the
         // one that matters: staging (during a turn) and the confirm click both run in this child
