@@ -176,6 +176,18 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task ExecuteAsync_NonFiniteFloat_SerializesWithoutThrowing()
+    {
+        // 'Infinity'::float8 would make STJ's default Strict number handling throw mid-serialize, and
+        // that throw escapes the DB-exception catch filters — must come back as a named literal instead.
+        var result = await NewService().ExecuteAsync("SELECT 'Infinity'::float8 AS inf", CancellationToken.None);
+
+        using var doc = JsonDocument.Parse(result);
+        Assert.Equal(1, doc.RootElement.GetProperty("row_count").GetInt32());
+        Assert.Equal("Infinity", doc.RootElement.GetProperty("rows")[0].GetProperty("inf").GetString());
+    }
+
+    [Fact]
     public async Task SchemaHint_ListsTablesWithIdAnnotations()
     {
         await using var context = NewContext();

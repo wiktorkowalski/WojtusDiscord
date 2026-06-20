@@ -2,6 +2,7 @@ using System.Data;
 using System.Globalization;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using Microsoft.EntityFrameworkCore;
@@ -37,6 +38,9 @@ internal sealed class DatabaseQueryService(
     {
         // The model reads the JSON; relaxed escaping keeps Polish text legible and the payload small.
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        // float8/float4 can be NaN/±Infinity; default Strict handling would throw mid-serialize, and that
+        // throw escapes the DB-exception catch filters — emit them as named literals instead.
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
     };
 
     public async Task<string> ExecuteAsync(string? sql, CancellationToken cancellationToken)
