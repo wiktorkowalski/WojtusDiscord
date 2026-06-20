@@ -21,6 +21,8 @@ internal static class CoreServiceRegistration
         typeof(GuildBackfillOrchestrator),
         typeof(BootQuickSyncService),
         typeof(MemeSearchService),
+        typeof(GuildStatsService),
+        typeof(DatabaseQueryService),
         typeof(ConversationToolRegistry),
         typeof(ConversationService),
     ];

@@ -1,6 +1,7 @@
 using System.ClientModel;
 using System.Text;
 using DiscordEventService.Configuration;
+using DiscordEventService.Infrastructure;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using OpenAI;
@@ -24,6 +25,11 @@ internal static class ConversationRegistration
             .Bind(configuration.GetSection(ConversationOptions.SectionName));
 
         services.AddSingleton<IChatClient>(CreateChatClient);
+
+        // query_database (#238 §4): the cached schema hint for the tool description, derived from the
+        // same SchemaCatalog the dashboard explorer uses (so it tracks the EF model).
+        services.AddSingleton(sp => DatabaseSchemaHint.Build(sp.GetRequiredService<SchemaCatalog>()));
+
         AddLangfuseTracing(services, configuration);
         return services;
     }
@@ -47,6 +53,10 @@ internal static class ConversationRegistration
             });
 
         services.AddSingleton<IChatClient>(_ => rootSp.GetRequiredService<IChatClient>());
+
+        // Forward the single cached schema hint so ConversationToolRegistry resolves it in the child
+        // container too (DatabaseQueryService/GuildStatsService use the shared DiscordDbContext).
+        services.AddSingleton(_ => rootSp.GetRequiredService<DatabaseSchemaHint>());
     }
 
     private static IChatClient CreateChatClient(IServiceProvider sp)
