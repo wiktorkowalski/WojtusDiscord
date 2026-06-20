@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using Microsoft.EntityFrameworkCore;
@@ -20,11 +21,16 @@ namespace DiscordEventService.Services.Conversation;
 // functions are rejected (permission denied), runaway queries are bounded by a client CommandTimeout
 // under a server statement_timeout, and rows + per-value lengths are capped. bigint columns (Discord
 // snowflakes) are stringified for precision. The result is untrusted DATA, never instructions.
-internal sealed class DatabaseQueryService(
+internal sealed partial class DatabaseQueryService(
     DiscordDbContext db,
     IOptions<ConversationOptions> options,
     ILogger<DatabaseQueryService> logger)
 {
+    // The role from config is embedded into SET LOCAL ROLE as a quoted identifier, so validate its shape
+    // (it should be a plain identifier; the AddConversationQueryRole migration provisions the default).
+    [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
+    private static partial Regex QueryRoleNameRegex();
+
     // Cap on a single field's serialized length, so a SELECT repeat('x', 1e9) can't OOM us — the row
     // cap bounds row COUNT, this bounds row WIDTH.
     private const int MaxFieldLength = 2000;
@@ -46,7 +52,7 @@ internal sealed class DatabaseQueryService(
     public async Task<string> ExecuteAsync(string? sql, CancellationToken cancellationToken)
     {
         var settings = options.Value;
-        if (!QueryRoleProvisioner.IsValidRoleName(settings.QueryRoleName))
+        if (!QueryRoleNameRegex().IsMatch(settings.QueryRoleName))
             return "Database querying is misconfigured (invalid query role) and is unavailable.";
 
         var trimmed = sql?.Trim() ?? string.Empty;

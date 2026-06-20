@@ -20,7 +20,8 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private const ulong SeedGuildId = 9999UL;
-    private const string QueryRole = "q_test_role";
+    // The role the AddConversationQueryRole migration provisions (it runs as superuser in the container).
+    private const string QueryRole = "wojtus_query";
 
     private DiscordDbContext _db = null!;
 
@@ -31,10 +32,6 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
         await _db.Guilds.ExecuteDeleteAsync();
         _db.Guilds.Add(new GuildEntity { DiscordId = SeedGuildId, Name = "seed-guild" });
         await _db.SaveChangesAsync();
-
-        // Provision the non-superuser SELECT-only role the same way the bot does in Development.
-        await QueryRoleProvisioner.ProvisionAsync(
-            fixture.Container.GetConnectionString(), QueryRole, CancellationToken.None);
     }
 
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
@@ -199,8 +196,17 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
     }
 
     [Fact]
-    public void BuildProvisioningSql_RejectsInjectionInRoleName() =>
-        Assert.Throws<ArgumentException>(() => QueryRoleProvisioner.BuildProvisioningSql("ro; DROP TABLE guilds"));
+    public async Task ExecuteAsync_InvalidRoleNameConfigured_ReportsMisconfigured()
+    {
+        var service = new DatabaseQueryService(
+            NewContext(),
+            Options.Create(new ConversationOptions { QueryRoleName = "bad; name" }),
+            NullLogger<DatabaseQueryService>.Instance);
+
+        var result = await service.ExecuteAsync("SELECT 1", CancellationToken.None);
+
+        Assert.Contains("misconfigured", result);
+    }
 
     private DatabaseQueryService NewService(int rowLimit = 100, int timeoutSeconds = 10, int serverTimeoutSeconds = 15) =>
         new(NewContext(), OptionsFor(rowLimit, timeoutSeconds, serverTimeoutSeconds), NullLogger<DatabaseQueryService>.Instance);

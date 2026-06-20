@@ -87,7 +87,7 @@ The bot's natural-language output Turn (as opposed to an assistant tool-call Tur
 One model invocation inside a Conversation turn's agentic loop. A round either requests tools (loop continues) or yields a final Assistant reply. Each round is surfaced visibly — interim message → tool calls → next round — rather than collapsed into one reply.
 
 **Read tool**:
-A tool answering from ingested data with no side effects — a curated query (e.g. meme search, leaderboards) or the guarded read-only database query. Always runs under a SELECT-only database identity, never the ingestion writer.
+A tool answering from ingested data with no side effects — a curated query (e.g. meme search, `top_posters`) or the guarded read-only `query_database`. The SQL query runs inside a read-only transaction that drops to the non-superuser, SELECT-only `wojtus_query` role (via `SET LOCAL ROLE`) before any model SQL, never as the superuser ingestion login; the role is provisioned by the `AddConversationQueryRole` migration (see ADR-0006).
 
 **Action tool**:
 A tool performing a Discord write (post, react, role, pin, delete, moderation). Admin-only; irreversible ones require explicit button confirmation.
