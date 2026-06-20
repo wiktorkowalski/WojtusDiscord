@@ -15,6 +15,16 @@ internal sealed class ConversationOptions
     // OpenRouter `reasoning.effort` for the chat model: low | medium | high.
     public string ReasoningEffort { get; set; } = "medium";
 
+    // Hard ceiling on model->tool->model rounds in a single turn (#240). Guards
+    // against a runaway tool loop; on the cap the bot makes one final tool-less call
+    // so a turn always terminates with text rather than looping on tool_choice.
+    public int MaxToolRounds { get; set; } = 8;
+
+    // The guild whose ingested data the assistant answers about when there is no
+    // ambient guild — i.e. in a DM. Lets meme_search (and later query_database) work
+    // outside the server. Unset => those tools report they need a server context.
+    public ulong? PrimaryGuildId { get; set; }
+
     // Guild channels where an @mention opens a conversation thread. Snowflakes, not
     // names. Empty => the bot only converses in DMs (threads it already owns still work).
     public ulong[] ChannelAllowList { get; set; } = [];
