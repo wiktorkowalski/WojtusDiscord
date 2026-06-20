@@ -80,6 +80,7 @@ internal sealed class ConversationEventHandler(
         // answer typed in live.
         var throttle = TimeSpan.FromMilliseconds(options.Value.StreamEditThrottleMs);
         DiscordStreamingMessage? bubble = null;
+        var messagesSent = 0;
         try
         {
             await foreach (var update in conversation.GenerateReplyAsync(e.Message.Content, context, cts.Token))
@@ -94,7 +95,8 @@ internal sealed class ConversationEventHandler(
                     case ConversationUpdate.ToolBatchSummary summary:
                         bubble ??= new DiscordStreamingMessage(target, throttle);
                         await bubble.AppendLineAsync(summary.Text, cts.Token);
-                        bubble = null; // seal the round's message; the next delta starts fresh
+                        messagesSent += bubble.MessageCount; // seal the round's message; next delta starts fresh
+                        bubble = null;
                         break;
                 }
             }
@@ -102,7 +104,13 @@ internal sealed class ConversationEventHandler(
             // Guaranteed final flush for the answer (the last bubble is never sealed by a
             // tool summary).
             if (bubble is not null)
+            {
                 await bubble.FlushAsync(cts.Token);
+                messagesSent += bubble.MessageCount;
+            }
+
+            logger.LogInformation("Conversation reply for {Author} sent {MessageCount} message(s)",
+                context.InvokerDisplayName, messagesSent);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {

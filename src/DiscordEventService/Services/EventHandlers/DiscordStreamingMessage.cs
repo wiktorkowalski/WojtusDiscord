@@ -20,6 +20,9 @@ internal sealed class DiscordStreamingMessage(DiscordChannel channel, TimeSpan t
     private readonly List<string> _rendered = [];
     private long _lastFlushTimestamp = -1;
 
+    // How many Discord messages this bubble has actually posted (for the turn summary).
+    public int MessageCount => _messages.Count;
+
     // Accumulate a streamed token; push to Discord only when the throttle window elapsed.
     public Task AppendDeltaAsync(string text, CancellationToken cancellationToken)
     {
@@ -51,10 +54,15 @@ internal sealed class DiscordStreamingMessage(DiscordChannel channel, TimeSpan t
     // are edited at most once; only the growing tail is re-edited each flush.
     public async Task FlushAsync(CancellationToken cancellationToken)
     {
-        if (_text.Length == 0)
+        // Never emit a blank Discord message: a round can open with whitespace-only
+        // streamed text (e.g. a leading newline before the model's first word), and a
+        // message whose content is all whitespace renders as an empty bubble. Wait until
+        // there is something visible before posting or editing.
+        var content = _text.ToString();
+        if (string.IsNullOrWhiteSpace(content))
             return;
 
-        var chunks = MessageChunker.Chunk(_text.ToString(), Limit);
+        var chunks = MessageChunker.Chunk(content, Limit);
         for (var i = 0; i < chunks.Count; i++)
         {
             if (i < _messages.Count)
