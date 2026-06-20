@@ -48,6 +48,17 @@ internal sealed class ConversationOptions
     // Hard ceiling on a single turn's model round-trip.
     public int RequestTimeoutSeconds { get; set; } = 120;
 
+    // query_database (#238 §4). The query runs inside a read-only transaction that first drops to
+    // QueryRoleName via SET LOCAL ROLE — a non-superuser, SELECT-only role — so the model's SQL can
+    // neither write nor reach privileged/file functions (the app login is a superuser; the read-only
+    // txn alone would not stop pg_read_file etc.). Rows are capped (read N+1, truncate); each value is
+    // length-capped. The client CommandTimeout (QueryTimeoutSeconds) stays UNDER the per-query
+    // server-side statement_timeout (QueryServerTimeoutSeconds) so the client cancels first.
+    public string QueryRoleName { get; set; } = "wojtus_query";
+    public int QueryRowLimit { get; set; } = 100;
+    public int QueryTimeoutSeconds { get; set; } = 10;
+    public int QueryServerTimeoutSeconds { get; set; } = 15;
+
     // Langfuse OTLP tracing (ADR-0006). All three are required to export; when any is
     // absent the feature still works, traces just aren't shipped.
     public string? LangfuseHost { get; set; }

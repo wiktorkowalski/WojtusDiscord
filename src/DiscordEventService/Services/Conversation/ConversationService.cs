@@ -191,7 +191,10 @@ internal sealed class ConversationService(
               You have tools for looking things up about this server. Prefer calling a tool over
               guessing when a question is about the server's own content (for example its memes or
               images). Call meme_search to find memes or images people posted; once you have results,
-              answer using them and include the jump links so people can open them.
+              answer using them and include the jump links so people can open them. For a simple
+              "who posts the most" ranking, call top_posters. For other analytical or statistical
+              questions (counts, activity over time, who-did-what) that the curated tools can't
+              answer, call query_database with a single read-only SQL SELECT and summarize the rows.
 
               When you are about to use a tool, first write one short sentence (in the user's language)
               saying what you are checking, then call the tool — keep these progress notes brief.

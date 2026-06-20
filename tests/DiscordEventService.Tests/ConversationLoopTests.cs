@@ -179,6 +179,9 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
 
         var registry = new ConversationToolRegistry(
             new MemeSearchService(NewContext()),
+            new GuildStatsService(NewContext()),
+            new DatabaseQueryService(NewContext(), conversationOptions, NullLogger<DatabaseQueryService>.Instance),
+            new DatabaseSchemaHint("schema hint"),
             conversationOptions,
             NullLogger<ConversationToolRegistry>.Instance);
 
