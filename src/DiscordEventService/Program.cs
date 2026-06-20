@@ -4,6 +4,7 @@ using DiscordEventService.Endpoints;
 using DiscordEventService.Infrastructure;
 using DiscordEventService.Jobs;
 using DiscordEventService.Services;
+using DiscordEventService.Services.Conversation;
 using DiscordEventService.Services.MemeIndexing;
 using DotNetEnv;
 using DSharpPlus;
@@ -150,6 +151,12 @@ builder.Services.AddScoped<MemeAttachmentIndexer>();
 builder.Services.AddScoped<MemeBenchmarkJob>();
 builder.Services.AddScoped<MemeIndexingJob>();
 builder.Services.AddScoped<MemeIndexSweepJob>();
+
+// Conversational assistant (#238, ADR-0006): the MEAI IChatClient over OpenRouter +
+// Langfuse OTel export. Registers the singleton chat client in the root container; the
+// DSharpPlus child container forwards to it (ConversationRegistration). ConversationService
+// is a shared scoped service (CoreServiceTypes); the handler lives in DiscordClientRegistration.
+builder.Services.AddConversationFeature(builder.Configuration);
 
 // Hangfire. With a fixed InvisibilityTimeout a job outliving it gets presumed
 // dead, re-queued, and the original execution cancelled — observed live on the

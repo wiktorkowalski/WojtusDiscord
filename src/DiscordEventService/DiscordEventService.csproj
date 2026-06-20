@@ -25,6 +25,14 @@
     <PackageReference Include="Hangfire.Core" Version="1.8.22" />
     <PackageReference Include="Hangfire.AspNetCore" Version="1.8.22" />
     <PackageReference Include="Hangfire.PostgreSql" Version="1.20.13" />
+    <!-- Conversational assistant (#238): MEAI IChatClient over OpenRouter + Langfuse OTel.
+         OpenAI is pinned >= 2.10.0 — older SDKs silently drop the JsonPatch body fields
+         (provider/reasoning/cache_control) the OpenRouter loop depends on. -->
+    <PackageReference Include="OpenAI" Version="2.11.0" />
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.7.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.7.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.16.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.16.0" />
   </ItemGroup>
 
 </Project>

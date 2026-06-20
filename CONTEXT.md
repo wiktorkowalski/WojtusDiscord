@@ -69,8 +69,38 @@ _Avoid_: meme (collides with the stat), media message.
 **Meme channel**:
 A channel whose image attachments are in scope for meme indexing. A configurable set, seeded with #memes; not derived from channel name.
 
+### Conversational assistant `[target — landing with the conversational-assistant epic]`
+
+The bot's interactive side: members talk to the bot, it answers questions about the guild from ingested data, and (for admins) performs Discord actions. A distinct bounded concern from ingestion — it *reads* the event/entity stores and the live Discord API; it does not produce the event stream.
+
+**Conversation**:
+A thread- or DM-scoped exchange between a member and the bot, keyed by the channel/thread Snowflake (a thread spawned from an @mention, or a DM channel). Its Turns are recorded append-only.
+_Avoid_: "session", "chat history" as the entity name.
+
+**Turn**:
+One recorded entry in a Conversation — a user message, an assistant reply, an assistant tool call, or a tool result. Append-only. Not a Structured event (gateway projection) and not a Discord message (see Flagged ambiguities).
+
+**Assistant reply**:
+The bot's natural-language output Turn (as opposed to an assistant tool-call Turn) — the text a member reads.
+
+**Round**:
+One model invocation inside a Conversation turn's agentic loop. A round either requests tools (loop continues) or yields a final Assistant reply. Each round is surfaced visibly — interim message → tool calls → next round — rather than collapsed into one reply.
+
+**Read tool**:
+A tool answering from ingested data with no side effects — a curated query (e.g. meme search, leaderboards) or the guarded read-only database query. Always runs under a SELECT-only database identity, never the ingestion writer.
+
+**Action tool**:
+A tool performing a Discord write (post, react, role, pin, delete, moderation). Admin-only; irreversible ones require explicit button confirmation.
+_Avoid_: collapsing Read tools and Action tools into one undifferentiated "tool" — their authorization and reversibility differ.
+
 ## Flagged ambiguities
 
+- **"Message" (three senses)**:
+  - A Discord gateway message ingested into `messages` / `message_events` — the canonical event-stream meaning.
+  - A **Turn** in a Conversation (the LLM-chat sense).
+  - The bot's own posted Discord message, which is itself re-ingested as the first sense.
+  Reserve "message" for the ingested Discord entity; say **Turn** for conversation entries.
+- **"Context"**: the retrieved Conversation history window (what the bot replays to the model) vs the model's token context window vs the per-event ingestion `EventContext`. Disambiguate per use.
 - **"Active"** is used for two unrelated concepts:
   - `bans.is_active` — ban is currently in force.
   - `activities.is_active` — Discord presence is currently playing.
