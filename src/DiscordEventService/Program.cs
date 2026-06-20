@@ -228,25 +228,6 @@ if (dbOptions.AutoMigrate)
     await db.Database.MigrateAsync();
 }
 
-// query_database (#238 §4): in Development, provision the non-superuser SELECT-only role the tool drops
-// into (idempotent, run as the EF owner) so it works out of the box. In production this is a documented
-// one-time MANUAL step — CREATE ROLE is a privileged write against the read-only-by-convention prod DB —
-// and until it runs the tool fails closed (SET LOCAL ROLE errors) rather than querying as the superuser.
-if (app.Environment.IsDevelopment())
-{
-    var queryRole = app.Services.GetRequiredService<IOptions<ConversationOptions>>().Value.QueryRoleName;
-    var logger = app.Services.GetRequiredService<ILogger<Program>>();
-    try
-    {
-        await QueryRoleProvisioner.ProvisionAsync(connectionString, queryRole, CancellationToken.None);
-        logger.LogInformation("Provisioned the read-only query role {Role} (Development)", queryRole);
-    }
-    catch (Exception ex)
-    {
-        logger.LogWarning(ex, "Failed to provision the read-only query role; query_database will fail closed");
-    }
-}
-
 // Serve the bundled dashboard SPA (Vite build output in wwwroot). Must precede
 // the route-mapping below; the SPA fallback is registered LAST so it never
 // swallows /api, /health, or /hangfire.
