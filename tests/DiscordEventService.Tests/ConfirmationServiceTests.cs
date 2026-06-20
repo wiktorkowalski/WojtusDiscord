@@ -54,7 +54,7 @@ public sealed class ConfirmationServiceTests
     }
 
     private static ConfirmationService NewService() =>
-        new(client: null!, Options.Create(new ConversationOptions()), NullLogger<ConfirmationService>.Instance);
+        new(clientAccessor: null!, Options.Create(new ConversationOptions()), NullLogger<ConfirmationService>.Instance);
 }
 
 public sealed class ConversationOptionsAdminTests

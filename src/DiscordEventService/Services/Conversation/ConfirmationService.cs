@@ -40,7 +40,7 @@ internal interface IConfirmationService
 // after the tool's ConversationContext.IsAdmin check, and the *clicker* is re-checked against
 // AdminUserIds by the component handler at click time.
 internal sealed class ConfirmationService(
-    DiscordClient client,
+    DiscordClientAccessor clientAccessor,
     IOptions<ConversationOptions> options,
     ILogger<ConfirmationService> logger) : IConfirmationService
 {
@@ -136,7 +136,7 @@ internal sealed class ConfirmationService(
                 new DiscordButtonComponent(DiscordButtonStyle.Secondary, CancelPrefix + token, "Cancel"))
             .WithAllowedMentions(Mentions.None);
 
-        var channel = await client.GetChannelAsync(channelId);
+        var channel = await clientAccessor.Client.GetChannelAsync(channelId);
         return await channel.SendMessageAsync(builder);
     }
 

@@ -205,6 +205,10 @@ var app = builder.Build();
 // at startup (before app.Run()) if anything is missing or misregistered.
 {
     var discordClient = app.Services.GetRequiredService<DiscordClient>();
+    // §6: hand the built client to the accessor before anything uses it (handlers fire only after
+    // app.Run). The action services read it from here instead of resolving DiscordClient out of the
+    // child container, which would re-enter the client's own construction and deadlock boot.
+    app.Services.GetRequiredService<DiscordClientAccessor>().Client = discordClient;
     StartupValidator.ValidateChildContainer(
         discordClient.ServiceProvider,
         app.Services.GetRequiredService<ILogger<Program>>());
