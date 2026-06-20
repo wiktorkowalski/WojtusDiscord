@@ -138,8 +138,12 @@ internal sealed class ConversationService(
         turn?.SetTag("conversation.cost_usd", turnCostUsd);
     }
 
+    // Whitespace-only counts as no visible text — stays consistent with the handler's
+    // DiscordStreamingMessage flush guard, so an all-whitespace round still triggers the
+    // interim narration / empty-answer fallback (which renders) instead of silently
+    // yielding a bubble the guard would drop.
     private static bool HadText(IEnumerable<ChatResponseUpdate> updates) =>
-        updates.Any(update => !string.IsNullOrEmpty(update.Text));
+        updates.Any(update => !string.IsNullOrWhiteSpace(update.Text));
 
     // One short, dim status line naming the tools the model ran this round (Discord
     // subtext via the `-#` prefix), e.g. "-# 🔧 meme_search".
