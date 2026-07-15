@@ -59,10 +59,14 @@ tools give the model control over when and how often to search, rather than alwa
 once per request." So the `web` plugin = search-runs-once-per-request; if it is attached to
 every round of a multi-round tool loop, every round bills a search.
 Source: <https://openrouter.ai/docs/guides/features/plugins/web-search>.
-*Implication:* attach the plugin **selectively**. `OpenRouterChatOptions.Create(...)` is
-already called per round (`ConversationService.cs:50` and again at `:133` for the final
-forced round), so gating the `$.plugins` patch on a bool is a one-parameter change — e.g.
-only the final tool-less synthesis round carries it, capping a turn at one search.
+*Implication:* attach the plugin **selectively**. Note the as-built call shape:
+`OpenRouterChatOptions.Create(...)` runs **once** before the loop (`ConversationService.cs:50`)
+and that single `ChatOptions` is reused by every tool round; only the final forced round
+makes its own `Create` call (`:133`). So the cheapest correct gating is a bool on that
+distinct final-round `Create` — the final tool-less synthesis round carries the plugin,
+capping a turn at one search. True per-round control inside the main loop would additionally
+require moving the `Create` call inside the loop (or varying the `RawRepresentationFactory`
+closure per round).
 
 **`usage.cost` — the app already reads the number that includes it (medium confidence on
 itemisation).** `usage.cost` is documented as the total credit cost of the request, and the
@@ -135,7 +139,10 @@ options.Patch.Set("$.plugins"u8,
 (`BinaryData.FromString` with a raw JSON string literal, or `BinaryData.FromObjectAsJson`
 with an anonymous object as the sibling patches do — either serialises to the same body.)
 To make it selective, thread a `bool includeWebSearch` through `OpenRouterChatOptions.Create`
-and only emit the patch when true; `ConversationService` decides per round.
+and only emit the patch when true. The natural attach point is the final forced round's own
+`Create` call (`ConversationService.cs:133`); the main loop shares one `ChatOptions` built
+before the loop (`:50`), so per-round gating there would also mean moving `Create` inside
+the loop.
 
 **The `:online` suffix is the no-body-patch alternative — a pure model-id string change.**
 OpenRouter documents `:online` as "exactly equivalent to" `plugins: [{ "id": "web" }]` with
