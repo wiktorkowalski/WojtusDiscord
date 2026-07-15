@@ -22,9 +22,9 @@ into `OpenRouterChatOptions.BuildRawRepresentation` as literally one more `Patch
 next to the `provider`/`reasoning`/`usage` patches already there. The one real hazard is
 cost: the `web` plugin runs a search **once per request it is attached to**, so attaching
 it to every round of the hand-driven tool loop bills up to `MaxToolRounds` searches per
-turn. Attach it conditionally (e.g. only on the final synthesis round, or gate it behind a
-config flag / a cheap model-signalled "needs web" heuristic) so a turn bills at most one
-`$0.005` Exa search. The plain app-owned Exa/Brave/Tavily tool gives finer per-call control
+turn. Attach it conditionally so a turn bills at most one `$0.005` Exa search — which
+as-built requires a small refactor (per-round options construction inside the loop; neither
+existing `Create` call site works — see (a)) that the epic must spec. The plain app-owned Exa/Brave/Tavily tool gives finer per-call control
 and true model-decides-when semantics, but it costs a new provider + key + client +
 citation plumbing — exactly the wire work ADR-0006 chose MEAI to avoid — so it is the
 *alternative*, not the default. If model-controlled search without app plumbing is wanted,
@@ -59,14 +59,20 @@ tools give the model control over when and how often to search, rather than alwa
 once per request." So the `web` plugin = search-runs-once-per-request; if it is attached to
 every round of a multi-round tool loop, every round bills a search.
 Source: <https://openrouter.ai/docs/guides/features/plugins/web-search>.
-*Implication:* attach the plugin **selectively**. Note the as-built call shape:
-`OpenRouterChatOptions.Create(...)` runs **once** before the loop (`ConversationService.cs:50`)
-and that single `ChatOptions` is reused by every tool round; only the final forced round
-makes its own `Create` call (`:133`). So the cheapest correct gating is a bool on that
-distinct final-round `Create` — the final tool-less synthesis round carries the plugin,
-capping a turn at one search. True per-round control inside the main loop would additionally
-require moving the `Create` call inside the loop (or varying the `RawRepresentationFactory`
-closure per round).
+*Implication:* attach the plugin **selectively** — and note that the as-built loop has
+**no attach point that means "just the answer round"**. `OpenRouterChatOptions.Create(...)`
+runs once before the loop (`ConversationService.cs:50`) and that single `ChatOptions` is
+reused by *every* tool round, so gating there hits the cost trap (up to `MaxToolRounds`
+searches per turn). The other `Create` call (`:133`) is the **round-cap fallback**, not the
+normal synthesis round: the loop `yield break`s from *inside* itself the moment a round
+returns zero tool calls (`:101-109`), and `:133` only executes when all `MaxToolRounds`
+(default 8) rounds made tool calls — attaching there means search fires almost never.
+Getting "one search, on the answer round" therefore requires **per-round options
+construction**: move the `Create` call inside the loop (or vary the
+`RawRepresentationFactory` closure per round) and set the plugin only on the rounds that
+should search — a small refactor the epic must spec, not a one-parameter bool on existing
+code. The `openrouter:web_search` server tool (open question C) would sidestep this
+entirely by letting the model decide when to search.
 
 **`usage.cost` — the app already reads the number that includes it (medium confidence on
 itemisation).** `usage.cost` is documented as the total credit cost of the request, and the
@@ -139,10 +145,10 @@ options.Patch.Set("$.plugins"u8,
 (`BinaryData.FromString` with a raw JSON string literal, or `BinaryData.FromObjectAsJson`
 with an anonymous object as the sibling patches do — either serialises to the same body.)
 To make it selective, thread a `bool includeWebSearch` through `OpenRouterChatOptions.Create`
-and only emit the patch when true. The natural attach point is the final forced round's own
-`Create` call (`ConversationService.cs:133`); the main loop shares one `ChatOptions` built
-before the loop (`:50`), so per-round gating there would also mean moving `Create` inside
-the loop.
+and only emit the patch when true — but see (a): neither existing `Create` call site is a
+usable attach point (`:50` is shared by every loop round; `:133` is the rarely-hit round-cap
+fallback), so selective attachment also means moving options construction inside the loop
+so each round can decide.
 
 **The `:online` suffix is the no-body-patch alternative — a pure model-id string change.**
 OpenRouter documents `:online` as "exactly equivalent to" `plugins: [{ "id": "web" }]` with
