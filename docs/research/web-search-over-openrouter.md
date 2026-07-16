@@ -14,6 +14,12 @@ primary sources (OpenRouter docs, OpenAI .NET SDK public API surface) below. Rea
 
 ## TL;DR — recommendation
 
+> **Superseded by the [#261 addendum](#addendum-261--the-openrouterweb_search-server-tool-spiked-live)
+> (2026-07-16): use the `openrouter:web_search` *server tool*, not the plugin.** The live
+> spike confirmed it composes with the hand-driven loop and app tools on the streaming
+> path, needs no per-round options refactor, and its cost lands in `usage.cost`. The
+> plugin analysis below stands as the fallback if the server tool ever regresses.
+
 **Use the OpenRouter `web` plugin, injected via the existing `JsonPatch` helper, and
 attach it selectively (not on every loop round).** It is the only option that needs *no*
 new provider, no new API key, and no new HTTP client — it reuses ADR-0005's "OpenRouter is
@@ -258,16 +264,9 @@ one-line patch.
 
 ## Open questions
 
-- **C. `openrouter:web_search` server tool.** OpenRouter now offers a model-controlled
-  *server tool* that fires only when the model chooses ("control over when and how often to
-  search, rather than always running once per request") while still running search
-  server-side (no app HTTP client, still single-provider). This would be the best-of-both
-  option — model-decides semantics *and* zero app plumbing — **if** it composes transparently
-  with a hand-driven loop (i.e. OpenRouter executes it within one request and injects results,
-  rather than surfacing a tool-call the app must dispatch). I could not confirm from the docs
-  how a server tool interacts with an app that owns its own tool-dispatch loop. Worth a
-  10-minute spike against the real API before committing.
-  Source: <https://openrouter.ai/docs/guides/features/plugins/web-search>.
+- **C. `openrouter:web_search` server tool.** ~~Worth a 10-minute spike against the real
+  API before committing.~~ **Resolved by the #261 addendum below**: it composes
+  transparently (server-side execution, no app dispatch), and is now the recommendation.
 - **`usage.cost` itemisation.** Docs confirm `usage.cost` is the total request cost but do
   not itemise the web-search surcharge inside it; verify empirically that a plugin search
   moves `usage.cost` (it should) so the §5 usage ledger attributes it correctly.
@@ -277,4 +276,114 @@ one-line patch.
 - **Streaming annotation chunk.** Confirmed annotations are OpenAI-standard and recovered via
   `StreamingChatCompletionUpdate.Patch`; the exact chunk OpenRouter attaches them to (final
   content chunk vs. a dedicated trailing chunk) isn't documented — verify against a live
-  stream when wiring the recovery.
+  stream when wiring the recovery. **Answered for the server tool by the #261 addendum:**
+  annotations arrive spread across *multiple* mid-stream delta chunks (one per citation as
+  the model writes), at Patch path `$.choices[0].delta.annotations` — the recovery must
+  accumulate across all updates, not read one trailing chunk.
+
+---
+
+## Addendum (#261) — the `openrouter:web_search` server tool, spiked live
+
+Spike for ticket #261 (2026-07-16), against the real OpenRouter API
+(`anthropic/claude-sonnet-4.6`, Anthropic-pinned provider, streaming), answering open
+question C. Two legs: raw SSE over chat-completions with an app `function` tool **and**
+`{"type":"openrouter:web_search","parameters":{"engine":"exa","max_results":3}}` in the
+same `tools` array (three cases: web-only prompt, app-tool-only prompt, app-tool
+dispatch round-trip); then the same composition through the app's exact stack
+(`OpenAI 2.11.0` + `Microsoft.Extensions.AI[.OpenAI] 10.7.0`, `AsIChatClient()`,
+`GetStreamingResponseAsync`) with the wire body captured via a logging transport.
+
+### Verdict — **spec the server tool in the epic, not the selective plugin**
+
+It is the best-of-both option #254 hoped for: model-decides-when-to-search semantics with
+zero app plumbing, **and it removes the per-round options refactor entirely** — because a
+search is billed only when the model invokes one (never per attached request), the tool can
+be attached to *every* loop round from the existing shared
+`OpenRouterChatOptions.BuildRawRepresentation`, one line, no per-round options
+construction. The selective-plugin patch (and its loop refactor) stands as the documented
+fallback.
+
+### (a) Execution model — server-side, within one request, no app dispatch
+
+OpenRouter executes the search entirely server-side and the model incorporates results
+before the stream ends: `finish_reason=stop`, full cited answer text, **no
+`openrouter:web_search` tool call ever surfaced to the client** in any case. The model may
+search **multiple times in one request** (the web-only case ran 3 searches — visible as
+`server_tool_use_details: {"web_search_requests": 3, "tool_calls_requested": 3,
+"tool_calls_executed": 3}` on the usage object). The app's dispatch loop never sees the
+search; it only ever dispatches its own `function` tools.
+
+### (b) Coexistence with app tools — clean, on both the raw and MEAI paths
+
+- **App-tool prompt, server tool attached:** the `meme_search` call streamed and assembled
+  normally (`finish_reason=tool_calls`, standard `toolu_…` id, well-formed argument
+  deltas); no search fired, no search fee. Streaming tool-call assembly is unperturbed.
+- **Mixed round (both in one turn):** the model can run a server-side search *and* emit an
+  app tool call *and* answer text **in the same round, with `finish_reason=stop`**. The
+  loop's round classifier must key on "did the round return tool calls" — which
+  `ConversationService` already does — not on `finish_reason`.
+- **MEAI injection:** the server tool is not a `function` tool, so it cannot ride
+  `ChatOptions.Tools`. It slots in as one `JsonPatch` line next to the existing
+  `provider`/`reasoning` patches:
+
+  ```csharp
+  options.Patch.Append("$.tools"u8,
+      BinaryData.FromString("""{"type":"openrouter:web_search","parameters":{"engine":"exa","max_results":3}}"""));
+  ```
+
+  `JsonPatch.Append` **merges with the typed model's serialization** — the captured wire
+  body shows `tools: [{function meme_search…}, {openrouter:web_search…}]`, i.e. the
+  adapter-serialized `ChatOptions.Tools` entries followed by the appended server tool.
+  Nothing is clobbered (`Patch.Set("$.tools"…)` would replace the array — use `Append`).
+
+### (c) Cost — inside `usage.cost`, and itemisable
+
+The search fee lands in the same `usage.cost` the app already recovers via
+`ChatTokenUsage.Patch.TryGetValue("$.cost"u8, …)`. Better than #254 could confirm for the
+plugin, it is **itemisable**: the usage object carries
+`cost_details.upstream_inference_cost` (model tokens only), and in the 3-search case
+`cost − upstream_inference_cost = $0.015` — exactly 3 × the $0.005 Exa fee — plus the
+`server_tool_use_details.web_search_requests` counter. The §-ledger can attribute search
+spend precisely per round.
+
+Cost caveats for the epic:
+- **The model controls search count** — one request billed 3 searches when the prompt
+  invited it. `max_results` bounds results per search; `max_total_results` bounds
+  cumulative results per request (an indirect search cap); there is no direct
+  "max searches" knob. Soft-cap alerting (#256) covers the tail risk.
+- **Searches don't persist across rounds**: results are injected into *that request's*
+  context only — they are not in the message history the app replays — so a later round
+  of the same turn may re-search what round N already searched (observed: the dispatch
+  round-trip case searched once in round 1 and again in round 2, +$0.005). Acceptable at
+  this scale; worth knowing when reading the ledger.
+- Injected results are billed as normal prompt tokens (the 3-search request carried
+  ~13k prompt tokens vs ~750 for the no-search request).
+
+### (d) Citations — same `url_citation` schema, different delivery
+
+Annotations are the same OpenAI-standard `url_citation` objects the plugin produces
+(`url`, `title`, `content` with Exa's `[...]` excerpt markers) — but `start_index` /
+`end_index` were **always 0** (no reply-text offsets; offset-based citation rendering is
+out), and they arrive **spread across multiple mid-stream delta chunks** (one annotation
+per chunk as the model writes), not on a single trailing chunk. On the MEAI streaming
+path they are invisible to the typed surface and recover via the raw update's Patch at
+**`$.choices[0].delta.annotations`** — note the full path from the chunk root;
+`$.annotations` misses (#254 assumed the shorter path). Recovery must accumulate across
+all updates of the round.
+
+### What the epic should spec
+
+1. Append the server tool in `OpenRouterChatOptions.BuildRawRepresentation` (every round,
+   config-gated, pin `engine:"exa"` + `max_results`), via `Patch.Append("$.tools"…)`.
+2. Citation recovery in the streaming sink: accumulate `$.choices[0].delta.annotations`
+   from each raw update; render as markdown links (the model already emits inline
+   domain-named links in its text; annotations carry the structured source list).
+3. Ledger: keep reading `usage.cost`; optionally also record
+   `cost_details.upstream_inference_cost` and `server_tool_use_details.web_search_requests`
+   to itemise search spend.
+4. No loop changes: mixed rounds (text + app tool call + server search,
+   `finish_reason=stop`) are already handled by the has-tool-calls round classifier.
+
+Spike artifacts (raw chunk dumps, harnesses) were session-scratchpad throwaways; the raw
+JSONL digests are summarised above.
