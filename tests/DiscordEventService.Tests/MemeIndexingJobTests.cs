@@ -162,6 +162,79 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
+    public async Task ExecuteAsync_RefreshBatchFailure_MarksFailedAndLaterRunHeals()
+    {
+        // A transient refresh-urls failure (5xx/timeout) must not mark the
+        // batch Skipped — Skipped is terminal and the memes would be silently
+        // lost from search forever. It also must not burn a retry attempt:
+        // the attachment itself was never actually processed.
+        AddMessage(1001UL, Attachment(11UL, "a.png"), Attachment(12UL, "b.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.SetImage(12UL, Png(2));
+        _http.RefreshFailuresRemaining = 1;
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        var rows = await verify.MemeIndex.ToListAsync();
+        Assert.Equal(2, rows.Count);
+        Assert.All(rows, r =>
+        {
+            Assert.Equal(MemeIndexStatus.Failed, r.Status);
+            Assert.Equal(0, r.AttemptCount);
+        });
+        Assert.Equal(0, _http.ModelCalls);
+
+        // Next run: refresh succeeds, both rows index normally.
+        await RunJobAsync();
+
+        await using var verify2 = NewContext();
+        var healed = await verify2.MemeIndex.ToListAsync();
+        Assert.All(healed, r => Assert.Equal(MemeIndexStatus.Indexed, r.Status));
+        Assert.Equal(2, _http.ModelCalls);
+    }
+
+    [Fact]
+    public async Task ExecuteSweepAsync_RefreshBatchFailures_NeverExhaustAttemptCap()
+    {
+        // The sweep abandons rows at SweepMaxFailedAttempts — repeated batch
+        // failures must stay below it so a flaky week can't orphan a meme.
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        for (var i = 0; i < MemeIndexingJob.SweepMaxFailedAttempts + 1; i++)
+        {
+            _http.RefreshFailuresRemaining = 1;
+            await RunSweepAsync();
+        }
+
+        await RunSweepAsync();
+
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 11UL);
+        Assert.Equal(MemeIndexStatus.Indexed, row.Status);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UrlDeclinedByDiscord_StaysSkipped()
+    {
+        // Contrast case: a 2xx refresh response that omits the URL means the
+        // attachment is genuinely gone — terminal Skip remains correct.
+        AddMessage(1001UL, Attachment(11UL, "deleted.png"));
+        await _db.SaveChangesAsync();
+        _http.DeadAttachments.Add(11UL);
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 11UL);
+        Assert.Equal(MemeIndexStatus.Skipped, row.Status);
+        Assert.StartsWith("dead attachment", row.Error);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_StrandedPendingRow_IsReprocessed()
     {
         // A mid-attachment interruption leaves a committed Pending row behind
@@ -244,7 +317,11 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal(3, _http.ModelCalls);
     }
 
-    private async Task RunJobAsync(int maxImagesPerRun = 500)
+    private Task RunJobAsync(int maxImagesPerRun = 500) => RunAsync(maxImagesPerRun, sweep: false);
+
+    private Task RunSweepAsync() => RunAsync(maxImagesPerRun: 500, sweep: true);
+
+    private async Task RunAsync(int maxImagesPerRun, bool sweep)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -273,8 +350,11 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
 
         await using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
-        await scope.ServiceProvider.GetRequiredService<MemeIndexingJob>()
-            .ExecuteAsync(GuildDiscordId, CancellationToken.None);
+        var job = scope.ServiceProvider.GetRequiredService<MemeIndexingJob>();
+        if (sweep)
+            await job.ExecuteSweepAsync(GuildDiscordId, CancellationToken.None);
+        else
+            await job.ExecuteAsync(GuildDiscordId, CancellationToken.None);
     }
 
     private void AddMessage(ulong discordId, params string[] attachments)
@@ -316,6 +396,7 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
     public HashSet<ulong> DeadAttachments { get; } = [];
     public List<byte[]> RefusalFor { get; } = [];
     public List<byte[]> TransientErrorFor { get; } = [];
+    public int RefreshFailuresRemaining { get; set; }
     public int ModelCalls { get; private set; }
 
     public void SetImage(ulong attachmentId, byte[] bytes) => _imagesByAttachment[attachmentId] = bytes;
@@ -335,6 +416,12 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
 
     private async Task<HttpResponseMessage> HandleRefreshAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        if (RefreshFailuresRemaining > 0)
+        {
+            RefreshFailuresRemaining--;
+            return Json(HttpStatusCode.InternalServerError, """{"message":"upstream exploded"}""");
+        }
+
         var body = await request.Content!.ReadAsStringAsync(cancellationToken);
         var urls = JsonDocument.Parse(body).RootElement.GetProperty("attachment_urls");
 

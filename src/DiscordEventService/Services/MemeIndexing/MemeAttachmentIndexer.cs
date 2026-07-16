@@ -55,22 +55,32 @@ internal sealed class MemeAttachmentIndexer(
         DiscordDbContext db,
         MemeIndexEntity row,
         MemeSampleItem item,
-        Dictionary<string, string> freshUrls,
+        AttachmentUrlRefreshResult freshUrls,
         MemeIndexRunCounters counters,
         CancellationToken cancellationToken)
     {
         var memeOptions = memeIndexOptions.Value;
         var openRouter = openRouterOptions.Value;
 
+        var refreshOutcome = freshUrls.GetFreshUrl(item.StoredUrl, out var freshUrl);
+        if (refreshOutcome == AttachmentUrlRefreshOutcome.BatchFailed)
+        {
+            // Transient refresh failure — the attachment itself was never
+            // attempted, so this must stay retryable without burning one of
+            // the sweep's capped attempts.
+            Fail(row, counters, "transient: refresh-urls batch failed");
+            return;
+        }
+
         row.AttemptCount++;
 
-        if (!freshUrls.TryGetValue(AttachmentUrlRefreshService.StripQuery(item.StoredUrl), out var freshUrl))
+        if (refreshOutcome == AttachmentUrlRefreshOutcome.Declined)
         {
             Skip(row, counters, "dead attachment: refresh-urls declined to re-sign");
             return;
         }
 
-        var imageBytes = await DownloadImageAsync(freshUrl, row, counters, cancellationToken);
+        var imageBytes = await DownloadImageAsync(freshUrl!, row, counters, cancellationToken);
         if (imageBytes is null) return;
 
         row.FileSizeBytes = imageBytes.Length;

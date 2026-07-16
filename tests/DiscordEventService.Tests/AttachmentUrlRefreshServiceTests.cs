@@ -30,14 +30,14 @@ public sealed class AttachmentUrlRefreshServiceTests
             .Select(i => $"https://cdn.discordapp.com/attachments/1/{i}/f{i}.png?ex=old&hm=sig")
             .ToList();
 
-        var map = await service.RefreshAsync(stored, CancellationToken.None);
+        var result = await service.RefreshAsync(stored, CancellationToken.None);
 
         Assert.Equal(3, requests.Count);
         Assert.All(requests, batch => Assert.True(batch.Count <= 50));
         Assert.All(requests.SelectMany(b => b), url => Assert.DoesNotContain("?", url));
-        Assert.Equal(120, map.Count);
-        var key = AttachmentUrlRefreshService.StripQuery(stored[7]);
-        Assert.Equal(key + "?ex=fresh", map[key]);
+        Assert.Equal(120, result.RefreshedCount);
+        Assert.Equal(AttachmentUrlRefreshOutcome.Refreshed, result.GetFreshUrl(stored[7], out var freshUrl));
+        Assert.Equal(AttachmentUrlRefreshService.StripQuery(stored[7]) + "?ex=fresh", freshUrl);
     }
 
     [Fact]
@@ -61,10 +61,27 @@ public sealed class AttachmentUrlRefreshServiceTests
             .Select(i => $"https://cdn.discordapp.com/attachments/1/{i}/f{i}.png")
             .ToList();
 
-        var map = await service.RefreshAsync(stored, CancellationToken.None);
+        var result = await service.RefreshAsync(stored, CancellationToken.None);
 
-        // First batch of 50 lost, second batch of 10 mapped.
-        Assert.Equal(10, map.Count);
+        // First batch of 50 failed but stays retryable; second batch of 10 mapped.
+        Assert.Equal(10, result.RefreshedCount);
+        Assert.Equal(50, result.FailedBatchCount);
+        Assert.Equal(AttachmentUrlRefreshOutcome.BatchFailed, result.GetFreshUrl(stored[0], out _));
+        Assert.Equal(AttachmentUrlRefreshOutcome.Refreshed, result.GetFreshUrl(stored[59], out _));
+    }
+
+    [Fact]
+    public async Task RefreshAsync_TransportError_MarksBatchFailedNotDeclined()
+    {
+        var service = NewService(_ => throw new HttpRequestException("connection reset"));
+
+        var result = await service.RefreshAsync(
+            ["https://cdn.discordapp.com/a/1.png?ex=old"],
+            CancellationToken.None);
+
+        Assert.Equal(0, result.RefreshedCount);
+        Assert.Equal(AttachmentUrlRefreshOutcome.BatchFailed,
+            result.GetFreshUrl("https://cdn.discordapp.com/a/1.png?ex=old", out _));
     }
 
     [Fact]
@@ -79,11 +96,13 @@ public sealed class AttachmentUrlRefreshServiceTests
             return Json(HttpStatusCode.OK, JsonSerializer.Serialize(new { refreshed_urls = refreshed }));
         });
 
-        var map = await service.RefreshAsync(
+        var result = await service.RefreshAsync(
             ["https://cdn.discordapp.com/a/1.png", "https://cdn.discordapp.com/a/2.png"],
             CancellationToken.None);
 
-        Assert.Single(map);
+        Assert.Equal(1, result.RefreshedCount);
+        Assert.Equal(AttachmentUrlRefreshOutcome.Declined,
+            result.GetFreshUrl("https://cdn.discordapp.com/a/2.png", out _));
     }
 
     private static AttachmentUrlRefreshService NewService(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) =>
