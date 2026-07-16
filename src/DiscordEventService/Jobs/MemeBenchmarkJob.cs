@@ -98,11 +98,18 @@ internal sealed class MemeBenchmarkJob(
     private async Task<BenchmarkItem> BenchmarkOneAsync(
         MemeSampleItem sampleItem,
         string[] models,
-        Dictionary<string, string> freshUrls,
+        AttachmentUrlRefreshResult freshUrls,
         CancellationToken cancellationToken)
     {
-        if (!freshUrls.TryGetValue(AttachmentUrlRefreshService.StripQuery(sampleItem.StoredUrl), out var freshUrl))
-            return Skip(sampleItem, "URL refresh failed (attachment likely gone)");
+        // A benchmark sample is disposable either way — skip on both refresh
+        // outcomes, but keep the reasons distinguishable in the report.
+        switch (freshUrls.GetFreshUrl(sampleItem.StoredUrl, out var freshUrl))
+        {
+            case AttachmentUrlRefreshOutcome.Declined:
+                return Skip(sampleItem, "URL refresh declined (attachment likely gone)");
+            case AttachmentUrlRefreshOutcome.BatchFailed:
+                return Skip(sampleItem, "URL refresh batch failed (transient)");
+        }
 
         byte[] imageBytes;
         try

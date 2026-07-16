@@ -6,6 +6,40 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
+// Declined (2xx response omitting the URL — attachment genuinely gone, terminal)
+// must stay distinct from BatchFailed (transport error or non-2xx — says nothing
+// about the attachment, retryable): conflating them silently loses memes.
+internal enum AttachmentUrlRefreshOutcome
+{
+    Refreshed,
+    Declined,
+    BatchFailed,
+}
+
+internal sealed class AttachmentUrlRefreshResult
+{
+    private readonly Dictionary<string, string> _refreshedByBareUrl = [];
+    private readonly HashSet<string> _failedBatchBareUrls = [];
+
+    public int RefreshedCount => _refreshedByBareUrl.Count;
+    public int FailedBatchCount => _failedBatchBareUrls.Count;
+
+    public AttachmentUrlRefreshOutcome GetFreshUrl(string storedUrl, out string? freshUrl)
+    {
+        var bareUrl = AttachmentUrlRefreshService.StripQuery(storedUrl);
+        if (_refreshedByBareUrl.TryGetValue(bareUrl, out freshUrl))
+            return AttachmentUrlRefreshOutcome.Refreshed;
+
+        return _failedBatchBareUrls.Contains(bareUrl)
+            ? AttachmentUrlRefreshOutcome.BatchFailed
+            : AttachmentUrlRefreshOutcome.Declined;
+    }
+
+    internal void AddRefreshed(string bareUrl, string freshUrl) => _refreshedByBareUrl[bareUrl] = freshUrl;
+
+    internal void MarkBatchFailed(IEnumerable<string> bareUrls) => _failedBatchBareUrls.UnionWith(bareUrls);
+}
+
 internal sealed class AttachmentUrlRefreshService(
     IHttpClientFactory httpClientFactory,
     IOptions<DiscordOptions> discordOptions,
@@ -16,11 +50,11 @@ internal sealed class AttachmentUrlRefreshService(
     private const int BatchSize = 50;
     private static readonly TimeSpan DelayBetweenBatches = TimeSpan.FromMilliseconds(300);
 
-    public async Task<Dictionary<string, string>> RefreshAsync(
+    public async Task<AttachmentUrlRefreshResult> RefreshAsync(
         IReadOnlyCollection<string> storedUrls,
         CancellationToken cancellationToken)
     {
-        var result = new Dictionary<string, string>();
+        var result = new AttachmentUrlRefreshResult();
         var distinct = storedUrls.Select(StripQuery).Distinct().ToList();
 
         for (var offset = 0; offset < distinct.Count; offset += BatchSize)
@@ -34,7 +68,8 @@ internal sealed class AttachmentUrlRefreshService(
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
             {
-                // Lose this batch only; its URLs surface downstream as skips.
+                // Lose this batch only; its URLs surface downstream as retryable failures.
+                result.MarkBatchFailed(batch);
                 logger.LogWarning(ex, "Attachment URL refresh batch failed for {UrlCount} urls", batch.Count);
             }
 
@@ -42,7 +77,9 @@ internal sealed class AttachmentUrlRefreshService(
                 await Task.Delay(DelayBetweenBatches, cancellationToken);
         }
 
-        logger.LogInformation("Refreshed {RefreshedCount} of {RequestedCount} attachment URLs", result.Count, distinct.Count);
+        logger.LogInformation(
+            "Refreshed {RefreshedCount} of {RequestedCount} attachment URLs ({FailedBatchCount} in failed batches)",
+            result.RefreshedCount, distinct.Count, result.FailedBatchCount);
         return result;
     }
 
@@ -55,7 +92,7 @@ internal sealed class AttachmentUrlRefreshService(
 
     private async Task RefreshBatchAsync(
         List<string> batch,
-        Dictionary<string, string> result,
+        AttachmentUrlRefreshResult result,
         CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "attachments/refresh-urls");
@@ -71,6 +108,7 @@ internal sealed class AttachmentUrlRefreshService(
 
         if (!response.IsSuccessStatusCode)
         {
+            result.MarkBatchFailed(batch);
             logger.LogWarning("attachments/refresh-urls returned {StatusCode}: {Body}",
                 (int)response.StatusCode, body.Length <= 300 ? body : body[..300]);
             return;
@@ -80,7 +118,7 @@ internal sealed class AttachmentUrlRefreshService(
         foreach (var entry in parsed?.RefreshedUrls ?? [])
         {
             if (entry.Original is not null && !string.IsNullOrEmpty(entry.Refreshed))
-                result[StripQuery(entry.Original)] = entry.Refreshed;
+                result.AddRefreshed(StripQuery(entry.Original), entry.Refreshed);
         }
     }
 
