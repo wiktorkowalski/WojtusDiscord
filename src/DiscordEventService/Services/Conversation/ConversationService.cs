@@ -147,7 +147,7 @@ internal sealed class ConversationService(
 
                 // A failed attempt may still bill (partial stream): its own ledger row and
                 // its cost summed into the turn — but no conversation_message rows.
-                turnCostUsd += RecordRoundCost(sink, round, turn);
+                turnCostUsd += RecordRoundCost(sink, round, turn, outcome);
                 await memory.RecordUsageAsync(memoryTurn, context.InvokerId,
                     ExtractRoundUsage(sink, round, attempt, options.Model,
                         stopwatch.ElapsedMilliseconds, failed: true),
@@ -196,7 +196,7 @@ internal sealed class ConversationService(
             // well-formed for the next round.
             var response = sink.ToChatResponse();
             messages.AddRange(response.Messages);
-            turnCostUsd += RecordRoundCost(sink, round, turn);
+            turnCostUsd += RecordRoundCost(sink, round, turn, outcome);
 
             var roundUsage = ExtractRoundUsage(
                 sink, round, outcome.Attempt, options.Model, outcome.LatencyMs, failed: false);
@@ -254,7 +254,7 @@ internal sealed class ConversationService(
             yield break;
         }
 
-        turnCostUsd += RecordRoundCost(finalSink, options.MaxToolRounds + 1, turn);
+        turnCostUsd += RecordRoundCost(finalSink, options.MaxToolRounds + 1, turn, finalOutcome);
 
         var finalResponse = finalSink.ToChatResponse();
         var finalUsage = ExtractRoundUsage(
@@ -287,13 +287,17 @@ internal sealed class ConversationService(
     // The real OpenRouter `usage.cost` (USD) isn't in MEAI's typed UsageDetails — recover
     // it from the raw OpenAI ChatTokenUsage's JSON patch. Logged + traced per round here;
     // the §5 usage ledger persists it. Returns 0 when the provider didn't report a cost.
-    private double RecordRoundCost(List<ChatResponseUpdate> updates, int round, Activity? turn)
+    private double RecordRoundCost(
+        List<ChatResponseUpdate> updates, int round, Activity? turn, RoundOutcome outcome)
     {
         var cost = ExtractCostUsd(updates);
         if (cost is null)
             return 0;
 
-        turn?.SetTag($"conversation.round{round}.cost_usd", cost.Value);
+        // The round span tag carries the round's total over ALL attempts — a retried
+        // round's failed attempts may still bill; the ledger itemizes per attempt.
+        outcome.CostUsd += cost.Value;
+        turn?.SetTag($"conversation.round{round}.cost_usd", outcome.CostUsd);
         logger.LogDebug("Round {Round} model cost ${Cost}", round, cost.Value);
         return cost.Value;
     }
@@ -319,6 +323,7 @@ internal sealed class ConversationService(
         public bool Succeeded { get; set; }
         public int Attempt { get; set; }
         public long LatencyMs { get; set; }
+        public double CostUsd { get; set; }
         public Exception? Failure { get; set; }
     }
 
