@@ -10,7 +10,7 @@ internal sealed class ConversationOptions
 
     // The chat model — deliberately distinct from OpenRouterOptions.Model (the meme
     // vision model). Routing chat through the vision model would regress indexing.
-    public string Model { get; set; } = "anthropic/claude-sonnet-4.6";
+    public string Model { get; set; } = "anthropic/claude-sonnet-5";
 
     // OpenRouter `reasoning.effort` for the chat model: low | medium | high.
     public string ReasoningEffort { get; set; } = "medium";
