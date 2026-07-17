@@ -85,6 +85,9 @@ public sealed class DiscordDbContext(DbContextOptions<DiscordDbContext> options)
     public DbSet<ConversationMessageEntity> ConversationMessages => Set<ConversationMessageEntity>();
     public DbSet<ConversationUsageEntity> ConversationUsage => Set<ConversationUsageEntity>();
 
+    // Sent cost-cap alerts (#269) — the soft-cap dedup ledger + audit trail.
+    public DbSet<UsageAlertEntity> UsageAlerts => Set<UsageAlertEntity>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

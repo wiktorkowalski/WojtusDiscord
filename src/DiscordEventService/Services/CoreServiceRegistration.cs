@@ -26,6 +26,7 @@ internal static class CoreServiceRegistration
         typeof(ConversationToolRegistry),
         typeof(ConversationMemoryService),
         typeof(ConversationService),
+        typeof(UsageAlertService),
     ];
 
     public static IServiceCollection AddCoreServices(this IServiceCollection services)

@@ -94,4 +94,24 @@ internal sealed class ConversationOptions
     // always captures them regardless of this flag; prod opts in explicitly — the
     // Langfuse instance is LAN-only, so payloads never leave the home network.
     public bool EnableSensitiveData { get; set; }
+
+    // §3 soft cost-cap alerting (#269) over the conversation_usage ledger — alert-only,
+    // the loop never refuses a turn.
+    public CostAlertOptions CostAlerts { get; set; } = new();
+}
+
+// Conversation:CostAlerts:* (#269). Windows are calendar-UTC (month / date); sums
+// include failed and retried attempts (they may bill) and cover conversation spend
+// only — meme indexing is a different ledger. A cap set to 0 or null is disabled.
+internal sealed class CostAlertOptions
+{
+    public bool Enabled { get; set; } = true;
+
+    // Monthly caps warn at 80% and 100%; the daily runaway tripwire at 100% only.
+    public double? GlobalMonthlyUsd { get; set; } = 10;
+    public double? PerUserMonthlyUsd { get; set; } = 3;
+    public double? GlobalDailyUsd { get; set; } = 2;
+
+    // How many per-invoker sums a global-cap alert lists as the spend breakdown.
+    public int TopSpendersCount { get; set; } = 5;
 }
