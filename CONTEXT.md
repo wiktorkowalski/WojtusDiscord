@@ -85,7 +85,7 @@ _Avoid_: "turn" for a single recorded entry — that is a Conversation message.
 One recorded entry in a Conversation's append-only history — a member message, an assistant reply (possibly bundling its tool calls), or a tool result. Several Conversation messages make up one Turn. Not a Structured event (gateway projection) and not a Discord message (see Flagged ambiguities).
 
 **Assistant reply**:
-The bot's natural-language output Turn (as opposed to an assistant tool-call Turn) — the text a member reads.
+The bot's natural-language output — the text a member reads; the Conversation message that ends a Turn (as opposed to an assistant message that only carries tool calls).
 
 **Round**:
 One model invocation inside a Conversation turn's agentic loop. A round either requests tools (loop continues) or yields a final Assistant reply. Each round is surfaced visibly — interim message → tool calls → next round — rather than collapsed into one reply.
