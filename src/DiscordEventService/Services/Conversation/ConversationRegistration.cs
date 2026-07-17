@@ -99,7 +99,8 @@ internal static class ConversationRegistration
             .AsBuilder()
             .UseOpenTelemetry(
                 sourceName: ConversationTelemetry.SourceName,
-                configure: client => client.EnableSensitiveData = environment.IsDevelopment())
+                configure: client => client.EnableSensitiveData =
+                    conversation.EnableSensitiveData || environment.IsDevelopment())
             .Build();
     }
 
