@@ -79,4 +79,9 @@ internal sealed class ConversationOptions
         !string.IsNullOrWhiteSpace(LangfuseHost)
         && !string.IsNullOrWhiteSpace(LangfusePublicKey)
         && !string.IsNullOrWhiteSpace(LangfuseSecretKey);
+
+    // Include full prompts, tool arguments and results in traces (#257). Development
+    // always captures them regardless of this flag; prod opts in explicitly — the
+    // Langfuse instance is LAN-only, so payloads never leave the home network.
+    public bool EnableSensitiveData { get; set; }
 }
