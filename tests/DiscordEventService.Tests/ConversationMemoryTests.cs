@@ -235,6 +235,26 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         Assert.DoesNotContain(replayed.Contents, c => c is TextReasoningContent);
     }
 
+    [Fact]
+    public async Task ReasoningOnlyAssistantRow_IsNotReplayedAsAnEmptyMessage()
+    {
+        var memory = BuildMemory();
+        var turn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        await memory.PersistUserMessageAsync(turn, "pytanie", CancellationToken.None);
+        // Degenerate round: reasoning but no visible text and no tool call.
+        await memory.PersistAssistantMessagesAsync(turn,
+            [new ChatMessage(ChatRole.Assistant, [new TextReasoningContent("tylko rozumowanie")])],
+            null, null, CancellationToken.None);
+
+        var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        // The row is persisted for the record but must not replay as an empty message.
+        Assert.Equal(2, await _db.ConversationMessages.CountAsync());
+        var replayed = Assert.Single(next.Window);
+        Assert.Equal("pytanie", replayed.Text);
+    }
+
     private static ConversationContext Context() =>
         new(GuildDiscordId, InvokerId, "tester", IsAdmin: false, ChannelId: ThreadChannelId);
 

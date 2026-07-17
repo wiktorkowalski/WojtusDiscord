@@ -56,16 +56,22 @@ internal sealed class ConversationMemoryService(
             .SingleOrDefaultAsync(c => c.ChannelDiscordId == channelDiscordId, cancellationToken);
         if (conversation is null)
         {
-            conversation = new ConversationEntity
-            {
-                ChannelDiscordId = channelDiscordId,
-                GuildDiscordId = guildDiscordId,
-                CreatedAtUtc = DateTime.UtcNow,
-                LastActivityAtUtc = DateTime.UtcNow,
-            };
-            db.Conversations.Add(conversation);
-            await db.SaveChangesAsync(cancellationToken);
-            logger.LogDebug("Started conversation store for channel {ChannelId}", channelDiscordId);
+            // The first two messages of a brand-new conversation can race this create;
+            // GetOrInsertAsync resolves the unique-index conflict to the winner's row.
+            var (existing, inserted) = await db.Conversations.GetOrInsertAsync(
+                c => c.ChannelDiscordId == channelDiscordId,
+                () => new ConversationEntity
+                {
+                    ChannelDiscordId = channelDiscordId,
+                    GuildDiscordId = guildDiscordId,
+                    CreatedAtUtc = DateTime.UtcNow,
+                    LastActivityAtUtc = DateTime.UtcNow,
+                },
+                cancellationToken);
+            conversation = existing ?? throw new InvalidOperationException(
+                $"Conversation row for channel {channelDiscordId} vanished during get-or-insert");
+            if (inserted)
+                logger.LogDebug("Started conversation store for channel {ChannelId}", channelDiscordId);
         }
 
         var lastTurnIndex = await db.ConversationMessages
@@ -246,6 +252,9 @@ internal sealed class ConversationMemoryService(
         return included
             .SelectMany(group => group)
             .Select(Rehydrate)
+            // A reasoning-only assistant row rehydrates to zero contents (reasoning is
+            // stripped) — don't replay an empty message some providers could reject.
+            .Where(message => message.Contents.Count > 0)
             .ToList();
     }
 
