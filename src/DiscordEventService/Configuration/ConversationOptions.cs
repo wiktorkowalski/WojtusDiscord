@@ -58,6 +58,14 @@ internal sealed class ConversationOptions
     // Hard ceiling on a single turn's model round-trip.
     public int RequestTimeoutSeconds { get; set; } = 120;
 
+    // Conversation memory replay window (#267). The budget is summed over locally
+    // estimated message sizes (chars/4 — OpenRouter normalizes counts to a GPT
+    // tokenizer, so it's a fair proxy; the per-request provider usage can't size a
+    // per-message window). WindowMaxMessages is the row backstop against a few huge
+    // tool dumps blowing the estimate.
+    public int WindowTokenBudget { get; set; } = 12000;
+    public int WindowMaxMessages { get; set; } = 40;
+
     // query_database (#238 §4). The query runs inside a read-only transaction that first drops to
     // QueryRoleName via SET LOCAL ROLE — a non-superuser, SELECT-only role — so the model's SQL can
     // neither write nor reach privileged/file functions (the app login is a superuser; the read-only

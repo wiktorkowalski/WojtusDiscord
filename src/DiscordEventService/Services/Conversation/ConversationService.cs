@@ -16,6 +16,7 @@ namespace DiscordEventService.Services.Conversation;
 internal sealed class ConversationService(
     IChatClient chatClient,
     ConversationToolRegistry toolRegistry,
+    ConversationMemoryService memory,
     IOptions<ConversationOptions> conversationOptions,
     IOptions<OpenRouterOptions> openRouterOptions,
     ILogger<ConversationService> logger)
@@ -50,9 +51,16 @@ internal sealed class ConversationService(
         var chatOptions = OpenRouterChatOptions.Create(options.ReasoningEffort);
         chatOptions.Tools = toolset.Tools;
 
+        // Durable memory (#267): rehydrate the conversation's stored window, then persist
+        // the incoming user message — awaited, inside the turn, so a crash mid-turn
+        // leaves a consistent prefix. The channel snowflake is the conversation key.
+        var memoryTurn = await memory.BeginTurnAsync(context.ChannelId, context.GuildId, cancellationToken);
+        await memory.PersistUserMessageAsync(memoryTurn, userMessage ?? string.Empty, cancellationToken);
+
         List<ChatMessage> messages =
         [
             new(ChatRole.System, BuildSystemPrompt(options)),
+            .. memoryTurn.Window,
             new(ChatRole.User, userMessage ?? string.Empty),
         ];
 
@@ -82,8 +90,10 @@ internal sealed class ConversationService(
         for (var round = 1; round <= options.MaxToolRounds; round++)
         {
             var sink = new List<ChatResponseUpdate>();
+            var roundStopwatch = Stopwatch.StartNew();
             await foreach (var renderEvent in StreamRoundAsync(chatOptions, sink))
                 yield return renderEvent;
+            roundStopwatch.Stop();
 
             // MEAI assembles the streamed tool-calls for us — act on the assembled response,
             // never reassemble fragments by index. Append the assistant turn (text + any
@@ -92,6 +102,11 @@ internal sealed class ConversationService(
             var response = sink.ToChatResponse();
             messages.AddRange(response.Messages);
             turnCostUsd += RecordRoundCost(sink, round, turn);
+
+            var roundUsage = ExtractRoundUsage(sink, round, options.Model, roundStopwatch.ElapsedMilliseconds);
+            await memory.PersistAssistantMessagesAsync(memoryTurn, response.Messages,
+                roundUsage.PromptTokens, roundUsage.CompletionTokens, cancellationToken);
+            await memory.RecordUsageAsync(memoryTurn, context.InvokerId, roundUsage, cancellationToken);
 
             var toolCalls = response.Messages
                 .SelectMany(message => message.Contents)
@@ -118,6 +133,7 @@ internal sealed class ConversationService(
             {
                 var result = await toolset.InvokeAsync(call, cancellationToken);
                 messages.Add(new ChatMessage(ChatRole.Tool, [result]));
+                await memory.PersistToolResultAsync(memoryTurn, call.Name, result, cancellationToken);
             }
 
             yield return new ConversationUpdate.ToolBatchSummary(SummarizeToolBatch(toolCalls));
@@ -130,9 +146,19 @@ internal sealed class ConversationService(
         turn?.SetTag("conversation.hit_round_cap", true);
 
         var finalSink = new List<ChatResponseUpdate>();
+        var finalStopwatch = Stopwatch.StartNew();
         await foreach (var renderEvent in StreamRoundAsync(OpenRouterChatOptions.Create(options.ReasoningEffort), finalSink))
             yield return renderEvent;
+        finalStopwatch.Stop();
         turnCostUsd += RecordRoundCost(finalSink, options.MaxToolRounds + 1, turn);
+
+        var finalResponse = finalSink.ToChatResponse();
+        var finalUsage = ExtractRoundUsage(
+            finalSink, options.MaxToolRounds + 1, options.Model, finalStopwatch.ElapsedMilliseconds);
+        await memory.PersistAssistantMessagesAsync(memoryTurn, finalResponse.Messages,
+            finalUsage.PromptTokens, finalUsage.CompletionTokens, cancellationToken);
+        await memory.RecordUsageAsync(memoryTurn, context.InvokerId, finalUsage, cancellationToken);
+
         if (!HadText(finalSink))
             yield return new ConversationUpdate.AssistantTextDelta(CapReachedFallback);
         turn?.SetTag("conversation.cost_usd", turnCostUsd);
@@ -179,6 +205,37 @@ internal sealed class ConversationService(
 #pragma warning disable SCME0001 // ChatTokenUsage.Patch (JsonPatch) is experimental.
         return raw.Patch.TryGetValue("$.cost"u8, out double cost) ? cost : null;
 #pragma warning restore SCME0001
+    }
+
+    // Everything one ledger row needs from a round's streamed updates (#267): MEAI's
+    // typed token counts plus the OpenRouter extras recovered from the raw usage patch
+    // (`cost`, and the §5 itemisation fields when the provider reports them). §1 always
+    // records attempt 1 / not-failed; the §2 retry policy widens both.
+    private static ConversationRoundUsage ExtractRoundUsage(
+        List<ChatResponseUpdate> updates, int round, string model, long latencyMs)
+    {
+        var usage = updates
+            .SelectMany(update => update.Contents)
+            .OfType<UsageContent>()
+            .LastOrDefault();
+
+        double? upstreamCostUsd = null;
+        int? webSearchRequests = null;
+        if (usage?.RawRepresentation is ChatTokenUsage raw)
+        {
+#pragma warning disable SCME0001 // ChatTokenUsage.Patch (JsonPatch) is experimental.
+            if (raw.Patch.TryGetValue("$.cost_details.upstream_inference_cost"u8, out double upstream))
+                upstreamCostUsd = upstream;
+            if (raw.Patch.TryGetValue("$.server_tool_use.web_search_requests"u8, out int searches))
+                webSearchRequests = searches;
+#pragma warning restore SCME0001
+        }
+
+        return new ConversationRoundUsage(
+            round, Attempt: 1, model,
+            (int?)usage?.Details.InputTokenCount, (int?)usage?.Details.OutputTokenCount,
+            ExtractCostUsd(updates), upstreamCostUsd, webSearchRequests,
+            latencyMs, Failed: false);
     }
 
     private static string BuildSystemPrompt(ConversationOptions options) =>

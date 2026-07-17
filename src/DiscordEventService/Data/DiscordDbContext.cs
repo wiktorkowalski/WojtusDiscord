@@ -1,3 +1,4 @@
+using DiscordEventService.Data.Entities.Conversations;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using Microsoft.EntityFrameworkCore;
@@ -77,6 +78,12 @@ public sealed class DiscordDbContext(DbContextOptions<DiscordDbContext> options)
 
     // Indexed memes (#218): vision metadata per meme-channel image attachment
     public DbSet<MemeIndexEntity> MemeIndex => Set<MemeIndexEntity>();
+
+    // Conversational assistant memory + usage ledger (#267) — the assistant's replay
+    // store, deliberately separate from the ingestion tables above.
+    public DbSet<ConversationEntity> Conversations => Set<ConversationEntity>();
+    public DbSet<ConversationMessageEntity> ConversationMessages => Set<ConversationMessageEntity>();
+    public DbSet<ConversationUsageEntity> ConversationUsage => Set<ConversationUsageEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

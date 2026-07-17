@@ -87,8 +87,10 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
             new DatabaseSchemaHint("schema hint"),
             conversationOptions,
             NullLogger<ConversationToolRegistry>.Instance);
+        var memory = new ConversationMemoryService(
+            NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance);
         var service = new ConversationService(
-            chatClient, registry, conversationOptions, openRouterOptions, NullLogger<ConversationService>.Instance);
+            chatClient, registry, memory, conversationOptions, openRouterOptions, NullLogger<ConversationService>.Instance);
 
         var context = new ConversationContext(GuildDiscordId, InvokerId: 1UL, "tester", IsAdmin: false, ChannelId: 9UL);
 
