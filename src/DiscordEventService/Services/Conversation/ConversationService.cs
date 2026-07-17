@@ -28,10 +28,6 @@ internal sealed class ConversationService(
     private const string CapReachedFallback =
         "I hit my step limit before I could finish — try narrowing the question.";
 
-    // Used only when InterimNarrations is configured empty — a tool round must still
-    // render a visible "working" cue.
-    private const string DefaultInterimNarration = "-# 🔍 już sprawdzam…";
-
     // Whether the chat client has a usable OpenRouter key — the handler checks this before
     // doing anything visible (e.g. spawning a thread) so an unconfigured bot stays inert.
     public bool IsConfigured => openRouterOptions.Value.IsConfigured;
@@ -129,10 +125,9 @@ internal sealed class ConversationService(
                 yield break;
             }
 
-            // Guarantee a visible interim cue even when the model called a tool silently.
-            if (!HadText(sink))
-                yield return new ConversationUpdate.AssistantTextDelta(PickInterimNarration(options));
-
+            // No injected canned cue when the model calls a tool silently (#274): the
+            // progress note is the model's own (the system prompt demands one before every
+            // tool call), and a silent round still renders its tool-batch summary message.
             logger.LogDebug("Round {Round}: model requested {Count} tool call(s)", round, toolCalls.Count);
             foreach (var call in toolCalls)
             {
@@ -169,16 +164,10 @@ internal sealed class ConversationService(
         turn?.SetTag("conversation.cost_usd", turnCostUsd);
     }
 
-    // Vary the cue copy so back-to-back silent tool rounds don't repeat verbatim (#274).
-    private static string PickInterimNarration(ConversationOptions options) =>
-        options.InterimNarrations.Length > 0
-            ? options.InterimNarrations[Random.Shared.Next(options.InterimNarrations.Length)]
-            : DefaultInterimNarration;
-
     // Whitespace-only counts as no visible text — stays consistent with the handler's
-    // DiscordTurnRenderer post guard, so an all-whitespace round still triggers the
-    // interim narration / empty-answer fallback (which renders) instead of silently
-    // yielding a message the guard would drop.
+    // DiscordTurnRenderer post guard, so an all-whitespace final round still triggers the
+    // empty-answer fallback (which renders) instead of silently yielding a message the
+    // guard would drop.
     private static bool HadText(IEnumerable<ChatResponseUpdate> updates) =>
         updates.Any(update => !string.IsNullOrWhiteSpace(update.Text));
 
@@ -264,8 +253,10 @@ internal sealed class ConversationService(
               questions (counts, activity over time, who-did-what) that the curated tools can't
               answer, call query_database with a single read-only SQL SELECT and summarize the rows.
 
-              When you are about to use a tool, first write one short sentence (in the user's language)
-              saying what you are checking, then call the tool — keep these progress notes brief.
+              Before EVERY tool call, first write one short progress note (in the user's language)
+              saying what you are about to check — e.g. "okej, sprawdzam memy…", "daj mi sekundę,
+              zajrzę do bazy…". Never skip it, keep it to one brief sentence, and vary the phrasing
+              naturally from round to round instead of repeating the same words.
 
               You also have action tools that change the server (reactions, pins, roles, timeouts,
               kicks, bans, deleting messages). These are ADMIN ONLY and the bot enforces that in code:

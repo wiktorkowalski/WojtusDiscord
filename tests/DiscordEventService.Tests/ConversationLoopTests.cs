@@ -14,17 +14,17 @@ namespace DiscordEventService.Tests;
 
 // Exercises the §3 streaming contract end-to-end against a real Postgres + real
 // MemeSearchService, with the model itself faked by a scripted streaming IChatClient.
-// Proves the model->tool->model loop AND its render cadence: text deltas streamed live,
-// an interim narration per tool round, a tool-batch summary that seals the round's
-// message, the tool result fed back into the next model call, a final answer accumulated
-// from deltas, and the round cap terminating the loop with tools withheld.
+// Proves the model->tool->model loop AND its render events: text deltas yielded as they
+// stream, a tool-batch summary closing each tool round (with no injected canned cue —
+// the model's own narration is the progress note, #274), the tool result fed back into
+// the next model call, a final answer accumulated from deltas, and the round cap
+// terminating the loop with tools withheld.
 public sealed class ConversationLoopTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private const ulong GuildDiscordId = 1UL;
     private const ulong ChannelDiscordId = 2UL;
     private const ulong MemeMessageId = 1301UL;
-    private const string Interim = "-# interim";
 
     private DiscordDbContext _db = null!;
     private GuildEntity _guild = null!;
@@ -69,7 +69,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task GenerateReplyAsync_SilentToolCallThenAnswer_NarratesFeedsResultBackAndStreamsAnswer()
+    public async Task GenerateReplyAsync_SilentToolCallThenAnswer_SummaryAloneFeedsResultBackAndStreamsAnswer()
     {
         const string finalAnswer = "Found the turtle meme for you.";
         // Round 0 calls the tool with no narration text; round 1 streams the answer in two
@@ -86,13 +86,12 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
 
         var events = await CollectAsync(service.GenerateReplyAsync("znajdz mema o zolwiu", context, CancellationToken.None));
 
-        // The model was silent before the tool, so the loop injects the interim narration
-        // as the round's first (and only) text before the tool-batch summary.
-        Assert.Equal(Interim, FirstDelta(events));
+        // The model was silent before the tool, and the loop no longer injects a canned
+        // cue (#274) — the tool-batch summary is the round's only render event.
         var summary = Assert.Single(events.OfType<ConversationUpdate.ToolBatchSummary>());
         Assert.Contains("meme_search", summary.Text);
-        // The interim narration precedes the tool-batch summary.
-        Assert.True(IndexOf<ConversationUpdate.AssistantTextDelta>(events) < IndexOf<ConversationUpdate.ToolBatchSummary>(events));
+        Assert.True(IndexOf<ConversationUpdate.AssistantTextDelta>(events) > IndexOf<ConversationUpdate.ToolBatchSummary>(events),
+            "a silent tool round should yield no text before its summary");
         // The answer is the deltas after the summary, accumulated into one message.
         Assert.Equal(finalAnswer, FinalAnswer(events));
 
@@ -140,10 +139,9 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
 
         var events = await CollectAsync(service.GenerateReplyAsync("memy?", context, CancellationToken.None));
 
-        // The model's own narration is surfaced (NOT the injected interim) and precedes the
-        // tool-batch summary.
+        // The model's own narration is surfaced and precedes the tool-batch summary.
         Assert.Equal("Sprawdzam memy. ", FirstDelta(events));
-        Assert.DoesNotContain(events.OfType<ConversationUpdate.AssistantTextDelta>(), d => d.Text == Interim);
+        Assert.True(IndexOf<ConversationUpdate.AssistantTextDelta>(events) < IndexOf<ConversationUpdate.ToolBatchSummary>(events));
         Assert.Single(events.OfType<ConversationUpdate.ToolBatchSummary>());
         // The answer is accumulated from its deltas.
         Assert.Equal("Oto co znalazłem.", FinalAnswer(events));
@@ -178,7 +176,6 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         {
             MaxToolRounds = maxToolRounds,
             ReasoningEffort = "low",
-            InterimNarrations = [Interim],
         });
         var openRouterOptions = Options.Create(new OpenRouterOptions { ApiKey = "test-key" });
 
