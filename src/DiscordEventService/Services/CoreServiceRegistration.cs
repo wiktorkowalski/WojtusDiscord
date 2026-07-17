@@ -24,6 +24,7 @@ internal static class CoreServiceRegistration
         typeof(GuildStatsService),
         typeof(DatabaseQueryService),
         typeof(ConversationToolRegistry),
+        typeof(ConversationMemoryService),
         typeof(ConversationService),
     ];
 

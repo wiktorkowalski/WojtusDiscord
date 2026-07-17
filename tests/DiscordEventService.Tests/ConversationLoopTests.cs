@@ -41,6 +41,11 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         await _db.Channels.ExecuteDeleteAsync();
         await _db.Users.ExecuteDeleteAsync();
         await _db.Guilds.ExecuteDeleteAsync();
+        // #267: the loop now persists into the conversation store; without cleanup a prior
+        // test's history replays into the next test's transcript.
+        await _db.ConversationMessages.ExecuteDeleteAsync();
+        await _db.ConversationUsage.ExecuteDeleteAsync();
+        await _db.Conversations.ExecuteDeleteAsync();
 
         _guild = new GuildEntity { DiscordId = GuildDiscordId, Name = "g" };
         _db.Guilds.Add(_guild);
@@ -190,6 +195,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         return new ConversationService(
             client,
             registry,
+            new ConversationMemoryService(NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance),
             conversationOptions,
             openRouterOptions,
             NullLogger<ConversationService>.Instance);
