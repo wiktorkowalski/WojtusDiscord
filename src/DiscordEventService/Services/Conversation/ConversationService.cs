@@ -10,9 +10,10 @@ namespace DiscordEventService.Services.Conversation;
 // Owns the agentic loop for a conversation turn (#238 §2, streamed in §3): call the
 // model; if it asks for tools, dispatch them and loop; otherwise the answer is whatever
 // it streamed. The loop is hand-driven on purpose (NOT MEAI's .UseFunctionInvocation())
-// so the model->tool->model boundary stays visible — §3 surfaces it as interim Discord
-// messages and streams the final answer in live. The loop is Discord-free: it yields
-// ConversationUpdate render events that ConversationEventHandler turns into messages.
+// so the model->tool->model boundary stays visible — the handler surfaces it as interim
+// Discord messages (#274 renders discretely, one message per round). The loop is
+// Discord-free: it yields ConversationUpdate render events that ConversationEventHandler
+// turns into messages.
 internal sealed class ConversationService(
     IChatClient chatClient,
     ConversationToolRegistry toolRegistry,
@@ -124,10 +125,9 @@ internal sealed class ConversationService(
                 yield break;
             }
 
-            // Guarantee a visible interim line even when the model called a tool silently.
-            if (!HadText(sink))
-                yield return new ConversationUpdate.AssistantTextDelta(options.InterimNarration);
-
+            // No injected canned cue when the model calls a tool silently (#274): the
+            // progress note is the model's own (the system prompt demands one before every
+            // tool call), and a silent round still renders its tool-batch summary message.
             logger.LogDebug("Round {Round}: model requested {Count} tool call(s)", round, toolCalls.Count);
             foreach (var call in toolCalls)
             {
@@ -165,9 +165,9 @@ internal sealed class ConversationService(
     }
 
     // Whitespace-only counts as no visible text — stays consistent with the handler's
-    // DiscordStreamingMessage flush guard, so an all-whitespace round still triggers the
-    // interim narration / empty-answer fallback (which renders) instead of silently
-    // yielding a bubble the guard would drop.
+    // DiscordTurnRenderer post guard, so an all-whitespace final round still triggers the
+    // empty-answer fallback (which renders) instead of silently yielding a message the
+    // guard would drop.
     private static bool HadText(IEnumerable<ChatResponseUpdate> updates) =>
         updates.Any(update => !string.IsNullOrWhiteSpace(update.Text));
 
@@ -253,8 +253,10 @@ internal sealed class ConversationService(
               questions (counts, activity over time, who-did-what) that the curated tools can't
               answer, call query_database with a single read-only SQL SELECT and summarize the rows.
 
-              When you are about to use a tool, first write one short sentence (in the user's language)
-              saying what you are checking, then call the tool — keep these progress notes brief.
+              Before EVERY tool call, first write one short progress note (in the user's language)
+              saying what you are about to check — e.g. "okej, sprawdzam memy…", "daj mi sekundę,
+              zajrzę do bazy…". Never skip it, keep it to one brief sentence, and vary the phrasing
+              naturally from round to round instead of repeating the same words.
 
               You also have action tools that change the server (reactions, pins, roles, timeouts,
               kicks, bans, deleting messages). These are ADMIN ONLY and the bot enforces that in code:
