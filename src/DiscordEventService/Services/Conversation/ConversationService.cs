@@ -10,9 +10,10 @@ namespace DiscordEventService.Services.Conversation;
 // Owns the agentic loop for a conversation turn (#238 §2, streamed in §3): call the
 // model; if it asks for tools, dispatch them and loop; otherwise the answer is whatever
 // it streamed. The loop is hand-driven on purpose (NOT MEAI's .UseFunctionInvocation())
-// so the model->tool->model boundary stays visible — §3 surfaces it as interim Discord
-// messages and streams the final answer in live. The loop is Discord-free: it yields
-// ConversationUpdate render events that ConversationEventHandler turns into messages.
+// so the model->tool->model boundary stays visible — the handler surfaces it as interim
+// Discord messages (#274 renders discretely, one message per round). The loop is
+// Discord-free: it yields ConversationUpdate render events that ConversationEventHandler
+// turns into messages.
 internal sealed class ConversationService(
     IChatClient chatClient,
     ConversationToolRegistry toolRegistry,
@@ -26,6 +27,10 @@ internal sealed class ConversationService(
     private const string EmptyAnswerFallback = "Hmm, nie wiem, jak na to odpowiedzieć.";
     private const string CapReachedFallback =
         "I hit my step limit before I could finish — try narrowing the question.";
+
+    // Used only when InterimNarrations is configured empty — a tool round must still
+    // render a visible "working" cue.
+    private const string DefaultInterimNarration = "-# 🔍 już sprawdzam…";
 
     // Whether the chat client has a usable OpenRouter key — the handler checks this before
     // doing anything visible (e.g. spawning a thread) so an unconfigured bot stays inert.
@@ -124,9 +129,9 @@ internal sealed class ConversationService(
                 yield break;
             }
 
-            // Guarantee a visible interim line even when the model called a tool silently.
+            // Guarantee a visible interim cue even when the model called a tool silently.
             if (!HadText(sink))
-                yield return new ConversationUpdate.AssistantTextDelta(options.InterimNarration);
+                yield return new ConversationUpdate.AssistantTextDelta(PickInterimNarration(options));
 
             logger.LogDebug("Round {Round}: model requested {Count} tool call(s)", round, toolCalls.Count);
             foreach (var call in toolCalls)
@@ -164,10 +169,16 @@ internal sealed class ConversationService(
         turn?.SetTag("conversation.cost_usd", turnCostUsd);
     }
 
+    // Vary the cue copy so back-to-back silent tool rounds don't repeat verbatim (#274).
+    private static string PickInterimNarration(ConversationOptions options) =>
+        options.InterimNarrations.Length > 0
+            ? options.InterimNarrations[Random.Shared.Next(options.InterimNarrations.Length)]
+            : DefaultInterimNarration;
+
     // Whitespace-only counts as no visible text — stays consistent with the handler's
-    // DiscordStreamingMessage flush guard, so an all-whitespace round still triggers the
+    // DiscordTurnRenderer post guard, so an all-whitespace round still triggers the
     // interim narration / empty-answer fallback (which renders) instead of silently
-    // yielding a bubble the guard would drop.
+    // yielding a message the guard would drop.
     private static bool HadText(IEnumerable<ChatResponseUpdate> updates) =>
         updates.Any(update => !string.IsNullOrWhiteSpace(update.Text));
 

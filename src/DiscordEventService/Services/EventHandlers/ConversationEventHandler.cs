@@ -78,48 +78,43 @@ internal sealed class ConversationEventHandler(
             options.Value.IsAdmin(e.Author.Id),
             target.Id);
 
-        // Render the agentic loop's events into Discord (#241): each round streams into its
-        // own message (edited in place, throttled); a tool-batch summary seals that round's
-        // message so the next delta opens a fresh one. The final round's message is the
-        // answer typed in live.
-        var throttle = TimeSpan.FromMilliseconds(options.Value.StreamEditThrottleMs);
-        DiscordStreamingMessage? bubble = null;
-        var messagesSent = 0;
+        // Render the agentic loop's events into Discord as discrete messages (#274): deltas
+        // are buffered, each tool round posts one standalone cue+summary message, and the
+        // final answer is posted complete when the round finishes — no edit-in-place.
+        var renderer = new DiscordTurnRenderer(target);
         try
         {
+            // Show the bot working before the first model token arrives.
+            await renderer.TriggerTypingAsync();
+
             await foreach (var update in conversation.GenerateReplyAsync(e.Message.Content, context, cts.Token))
             {
                 switch (update)
                 {
                     case ConversationUpdate.AssistantTextDelta delta:
-                        bubble ??= new DiscordStreamingMessage(target, throttle);
-                        await bubble.AppendDeltaAsync(delta.Text, cts.Token);
+                        await renderer.AppendDeltaAsync(delta.Text);
                         break;
 
                     case ConversationUpdate.ToolBatchSummary summary:
-                        bubble ??= new DiscordStreamingMessage(target, throttle);
-                        await bubble.AppendLineAsync(summary.Text, cts.Token);
-                        messagesSent += bubble.MessageCount; // seal the round's message; next delta starts fresh
-                        bubble = null;
+                        await renderer.CompleteRoundAsync(summary.Text);
                         break;
                 }
             }
 
-            // Guaranteed final flush for the answer (the last bubble is never sealed by a
-            // tool summary).
-            if (bubble is not null)
-            {
-                await bubble.FlushAsync(cts.Token);
-                messagesSent += bubble.MessageCount;
-            }
+            // The deltas after the last tool round are the answer.
+            await renderer.CompleteTurnAsync();
 
             logger.LogInformation("Conversation reply for {Author} sent {MessageCount} message(s)",
-                context.InvokerDisplayName, messagesSent);
+                context.InvokerDisplayName, renderer.MessageCount);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
             logger.LogWarning("Conversation turn timed out after {Timeout}s for message {MessageId}",
                 options.Value.RequestTimeoutSeconds, e.Message.Id);
+
+            // Best-effort: post whatever the model had streamed so the user isn't left with
+            // silence after the wait (the buffer holds it; posting doesn't need the token).
+            await renderer.CompleteTurnAsync();
         }
     }
 

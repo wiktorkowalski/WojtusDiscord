@@ -178,7 +178,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         {
             MaxToolRounds = maxToolRounds,
             ReasoningEffort = "low",
-            InterimNarration = Interim,
+            InterimNarrations = [Interim],
         });
         var openRouterOptions = Options.Create(new OpenRouterOptions { ApiKey = "test-key" });
 

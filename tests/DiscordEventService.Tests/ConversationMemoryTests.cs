@@ -277,7 +277,7 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         {
             ReasoningEffort = "low",
             PrimaryGuildId = GuildDiscordId,
-            InterimNarration = "-# interim",
+            InterimNarrations = ["-# interim"],
         });
         var openRouterOptions = Options.Create(new OpenRouterOptions { ApiKey = "test-key" });
 
