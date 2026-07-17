@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Text;
 using DiscordEventService.Configuration;
 using DiscordEventService.Infrastructure;
@@ -91,7 +92,15 @@ internal static class ConversationRegistration
         var apiKey = string.IsNullOrWhiteSpace(openRouter.ApiKey) ? "unconfigured" : openRouter.ApiKey;
         var openAiClient = new OpenAIClient(
             new ApiKeyCredential(apiKey),
-            new OpenAIClientOptions { Endpoint = new Uri(openRouter.BaseUrl) });
+            new OpenAIClientOptions
+            {
+                Endpoint = new Uri(openRouter.BaseUrl),
+                // The §2 per-round policy (#268) is the single owner of retries: it
+                // ledgers every attempt and honors Retry-After itself. The SDK
+                // pipeline's default 3 silent retries would stack under it (3×3
+                // network attempts) and under-count the ledger.
+                RetryPolicy = new ClientRetryPolicy(maxRetries: 0),
+            });
 
         return openAiClient
             .GetChatClient(conversation.Model)

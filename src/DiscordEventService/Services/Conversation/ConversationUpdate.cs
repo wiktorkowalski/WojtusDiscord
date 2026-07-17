@@ -20,4 +20,9 @@ internal abstract record ConversationUpdate
     // that closes the round — the handler posts the buffered narration plus this line as
     // one message, and the next AssistantTextDelta starts the next round's buffer.
     public sealed record ToolBatchSummary(string Text) : ConversationUpdate;
+
+    // A round attempt failed after streaming partial text (#268): the handler drops the
+    // current round's buffered deltas so the retried stream (or the failure line)
+    // renders exactly once — never appended after the discarded partial.
+    public sealed record RoundReset : ConversationUpdate;
 }

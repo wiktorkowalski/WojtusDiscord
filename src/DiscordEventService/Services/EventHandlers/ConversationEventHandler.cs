@@ -98,6 +98,10 @@ internal sealed class ConversationEventHandler(
                     case ConversationUpdate.ToolBatchSummary summary:
                         await renderer.CompleteRoundAsync(summary.Text);
                         break;
+
+                    case ConversationUpdate.RoundReset:
+                        renderer.ResetRound();
+                        break;
                 }
             }
 
