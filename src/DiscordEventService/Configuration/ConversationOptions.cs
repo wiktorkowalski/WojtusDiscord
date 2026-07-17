@@ -49,6 +49,17 @@ internal sealed class ConversationOptions
     // Hard ceiling on a single turn's model round-trip.
     public int RequestTimeoutSeconds { get; set; } = 120;
 
+    // §2 per-round model-call retry (#268): attempts per round (1 initial + retries),
+    // exponential backoff with full jitter between transient failures. Worst case
+    // (3 attempts, ≤1s+2s backoff) stays well under RequestTimeoutSeconds.
+    public int RetryMaxAttempts { get; set; } = 3;
+    public int RetryBaseDelayMs { get; set; } = 1000;
+    public int RetryMaxDelayMs { get; set; } = 8000;
+
+    // The visible localized failure line posted when a round's retries exhaust (or the
+    // failure is terminal) — never fail a turn silently (#268).
+    public string FailureMessage { get; set; } = "-# 💥 Coś się wysypało — spróbuj jeszcze raz.";
+
     // Conversation memory replay window (#267). The budget is summed over locally
     // estimated message sizes (chars/4 — OpenRouter normalizes counts to a GPT
     // tokenizer, so it's a fair proxy; the per-request provider usage can't size a

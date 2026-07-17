@@ -44,6 +44,11 @@ internal sealed class DiscordTurnRenderer(DiscordChannel channel)
     // posted complete (chunked past the message cap).
     public Task CompleteTurnAsync() => PostAsync(TakeBuffer());
 
+    // A round attempt failed after streaming partial deltas (#268): drop them so the
+    // retried stream (or the failure line) renders exactly once. The buffer only ever
+    // holds the current round — every round boundary already flushes it.
+    public void ResetRound() => _text.Clear();
+
     public Task TriggerTypingAsync() => TriggerTypingAsync(force: true);
 
     // The round message: narration first, summary as the closing subtext line. A round

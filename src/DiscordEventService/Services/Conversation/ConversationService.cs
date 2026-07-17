@@ -71,30 +71,124 @@ internal sealed class ConversationService(
         turn?.SetTag("conversation.invoker_id", context.InvokerId);
         turn?.SetTag("conversation.guild_id", context.GuildId);
 
-        // Streams one round into the transcript sink and yields its text deltas live.
-        // Captures `messages` (current at call time) and the turn's cancellation token.
+        var turnCostUsd = 0d;
+
+        // Streams one round into the transcript sink under the §2 retry policy (#268):
+        // up to RetryMaxAttempts calls over the same intact `messages` prefix (a failed
+        // attempt appended nothing and dispatched no tools), full-jitter backoff between
+        // transient failures, one ledger row per failed attempt. Mid-stream error frames
+        // are normalized to MidStreamErrorException (see ConversationRetryPolicy for the
+        // two SDK surfaces). Reports through `outcome` — an iterator cannot return.
         async IAsyncEnumerable<ConversationUpdate> StreamRoundAsync(
-            ChatOptions roundOptions, List<ChatResponseUpdate> sink)
+            ChatOptions roundOptions, int round, List<ChatResponseUpdate> sink, RoundOutcome outcome)
         {
-            await foreach (var update in chatClient.GetStreamingResponseAsync(messages, roundOptions, cancellationToken))
+            for (var attempt = 1; ; attempt++)
             {
-                sink.Add(update);
-                // .Text excludes reasoning content, so a live "thinking" display stays out
-                // of scope; tool-call fragments carry no text and yield nothing here.
-                if (!string.IsNullOrEmpty(update.Text))
-                    yield return new ConversationUpdate.AssistantTextDelta(update.Text);
+                sink.Clear();
+                var streamedVisibleText = false;
+                Exception? failure = null;
+                var stopwatch = Stopwatch.StartNew();
+
+                var updates = chatClient
+                    .GetStreamingResponseAsync(messages, roundOptions, cancellationToken)
+                    .GetAsyncEnumerator(cancellationToken);
+                try
+                {
+                    while (failure is null)
+                    {
+                        ChatResponseUpdate update;
+                        try
+                        {
+                            if (!await updates.MoveNextAsync())
+                                break;
+                            update = updates.Current;
+                        }
+                        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                        {
+                            // The turn's own budget, not a provider fault — never retried;
+                            // the handler's timeout path owns what happens next.
+                            throw;
+                        }
+                        catch (Exception thrown)
+                        {
+                            failure = ConversationRetryPolicy.AsRoundFailure(thrown);
+                            break;
+                        }
+
+                        sink.Add(update);
+                        if (ConversationRetryPolicy.IsMidStreamErrorFrame(update))
+                        {
+                            failure = new MidStreamErrorException("mid-stream error frame ($.error chunk)");
+                            break;
+                        }
+
+                        // .Text excludes reasoning content, so a live "thinking" display stays
+                        // out of scope; tool-call fragments carry no text and yield nothing here.
+                        if (!string.IsNullOrEmpty(update.Text))
+                        {
+                            streamedVisibleText = true;
+                            yield return new ConversationUpdate.AssistantTextDelta(update.Text);
+                        }
+                    }
+                }
+                finally
+                {
+                    await updates.DisposeAsync();
+                }
+                stopwatch.Stop();
+
+                if (failure is null)
+                {
+                    outcome.Succeeded = true;
+                    outcome.Attempt = attempt;
+                    outcome.LatencyMs = stopwatch.ElapsedMilliseconds;
+                    yield break;
+                }
+
+                // A failed attempt may still bill (partial stream): its own ledger row and
+                // its cost summed into the turn — but no conversation_message rows.
+                turnCostUsd += RecordRoundCost(sink, round, turn, outcome);
+                await memory.RecordUsageAsync(memoryTurn, context.InvokerId,
+                    ExtractRoundUsage(sink, round, attempt, options.Model,
+                        stopwatch.ElapsedMilliseconds, failed: true),
+                    cancellationToken);
+
+                // Partial deltas already reached the handler's buffer; drop them so the
+                // retried stream (or the failure line) renders exactly once.
+                if (streamedVisibleText)
+                    yield return new ConversationUpdate.RoundReset();
+
+                if (!ConversationRetryPolicy.IsTransient(failure) || attempt >= options.RetryMaxAttempts)
+                {
+                    logger.LogError(failure, "Round {Round} failed after {Attempts} attempt(s)", round, attempt);
+                    outcome.Attempt = attempt;
+                    outcome.Failure = failure;
+                    yield break;
+                }
+
+                var delay = ConversationRetryPolicy.ComputeDelay(attempt, failure, options, Random.Shared);
+                logger.LogWarning(failure,
+                    "Round {Round} attempt {Attempt} failed transiently; retrying in {DelayMs}ms",
+                    round, attempt, (int)delay.TotalMilliseconds);
+                await Task.Delay(delay, cancellationToken);
             }
         }
-
-        var turnCostUsd = 0d;
 
         for (var round = 1; round <= options.MaxToolRounds; round++)
         {
             var sink = new List<ChatResponseUpdate>();
-            var roundStopwatch = Stopwatch.StartNew();
-            await foreach (var renderEvent in StreamRoundAsync(chatOptions, sink))
+            var outcome = new RoundOutcome();
+            await foreach (var renderEvent in StreamRoundAsync(chatOptions, round, sink, outcome))
                 yield return renderEvent;
-            roundStopwatch.Stop();
+
+            if (!outcome.Succeeded)
+            {
+                yield return new ConversationUpdate.AssistantTextDelta(options.FailureMessage);
+                turn?.SetTag("conversation.failed", true);
+                turn?.SetTag("conversation.rounds", round);
+                turn?.SetTag("conversation.cost_usd", turnCostUsd);
+                yield break;
+            }
 
             // MEAI assembles the streamed tool-calls for us — act on the assembled response,
             // never reassemble fragments by index. Append the assistant turn (text + any
@@ -102,9 +196,10 @@ internal sealed class ConversationService(
             // well-formed for the next round.
             var response = sink.ToChatResponse();
             messages.AddRange(response.Messages);
-            turnCostUsd += RecordRoundCost(sink, round, turn);
+            turnCostUsd += RecordRoundCost(sink, round, turn, outcome);
 
-            var roundUsage = ExtractRoundUsage(sink, round, options.Model, roundStopwatch.ElapsedMilliseconds);
+            var roundUsage = ExtractRoundUsage(
+                sink, round, outcome.Attempt, options.Model, outcome.LatencyMs, failed: false);
             await memory.PersistAssistantMessagesAsync(memoryTurn, response.Messages,
                 roundUsage.PromptTokens, roundUsage.CompletionTokens, cancellationToken);
             await memory.RecordUsageAsync(memoryTurn, context.InvokerId, roundUsage, cancellationToken);
@@ -146,15 +241,25 @@ internal sealed class ConversationService(
         turn?.SetTag("conversation.hit_round_cap", true);
 
         var finalSink = new List<ChatResponseUpdate>();
-        var finalStopwatch = Stopwatch.StartNew();
-        await foreach (var renderEvent in StreamRoundAsync(OpenRouterChatOptions.Create(options.ReasoningEffort), finalSink))
+        var finalOutcome = new RoundOutcome();
+        await foreach (var renderEvent in StreamRoundAsync(
+            OpenRouterChatOptions.Create(options.ReasoningEffort), options.MaxToolRounds + 1, finalSink, finalOutcome))
             yield return renderEvent;
-        finalStopwatch.Stop();
-        turnCostUsd += RecordRoundCost(finalSink, options.MaxToolRounds + 1, turn);
+
+        if (!finalOutcome.Succeeded)
+        {
+            yield return new ConversationUpdate.AssistantTextDelta(options.FailureMessage);
+            turn?.SetTag("conversation.failed", true);
+            turn?.SetTag("conversation.cost_usd", turnCostUsd);
+            yield break;
+        }
+
+        turnCostUsd += RecordRoundCost(finalSink, options.MaxToolRounds + 1, turn, finalOutcome);
 
         var finalResponse = finalSink.ToChatResponse();
         var finalUsage = ExtractRoundUsage(
-            finalSink, options.MaxToolRounds + 1, options.Model, finalStopwatch.ElapsedMilliseconds);
+            finalSink, options.MaxToolRounds + 1, finalOutcome.Attempt, options.Model,
+            finalOutcome.LatencyMs, failed: false);
         await memory.PersistAssistantMessagesAsync(memoryTurn, finalResponse.Messages,
             finalUsage.PromptTokens, finalUsage.CompletionTokens, cancellationToken);
         await memory.RecordUsageAsync(memoryTurn, context.InvokerId, finalUsage, cancellationToken);
@@ -182,13 +287,17 @@ internal sealed class ConversationService(
     // The real OpenRouter `usage.cost` (USD) isn't in MEAI's typed UsageDetails — recover
     // it from the raw OpenAI ChatTokenUsage's JSON patch. Logged + traced per round here;
     // the §5 usage ledger persists it. Returns 0 when the provider didn't report a cost.
-    private double RecordRoundCost(List<ChatResponseUpdate> updates, int round, Activity? turn)
+    private double RecordRoundCost(
+        List<ChatResponseUpdate> updates, int round, Activity? turn, RoundOutcome outcome)
     {
         var cost = ExtractCostUsd(updates);
         if (cost is null)
             return 0;
 
-        turn?.SetTag($"conversation.round{round}.cost_usd", cost.Value);
+        // The round span tag carries the round's total over ALL attempts — a retried
+        // round's failed attempts may still bill; the ledger itemizes per attempt.
+        outcome.CostUsd += cost.Value;
+        turn?.SetTag($"conversation.round{round}.cost_usd", outcome.CostUsd);
         logger.LogDebug("Round {Round} model cost ${Cost}", round, cost.Value);
         return cost.Value;
     }
@@ -207,12 +316,24 @@ internal sealed class ConversationService(
 #pragma warning restore SCME0001
     }
 
+    // Out-channel for StreamRoundAsync (an iterator cannot return a value): whether the
+    // round ultimately succeeded, on which attempt, and the winning attempt's latency.
+    private sealed class RoundOutcome
+    {
+        public bool Succeeded { get; set; }
+        public int Attempt { get; set; }
+        public long LatencyMs { get; set; }
+        public double CostUsd { get; set; }
+        public Exception? Failure { get; set; }
+    }
+
     // Everything one ledger row needs from a round's streamed updates (#267): MEAI's
     // typed token counts plus the OpenRouter extras recovered from the raw usage patch
-    // (`cost`, and the §5 itemisation fields when the provider reports them). §1 always
-    // records attempt 1 / not-failed; the §2 retry policy widens both.
+    // (`cost`, and the §5 itemisation fields when the provider reports them). The §2
+    // retry policy (#268) writes one row per attempt — failed rows keep whatever
+    // partial usage the stream reported before dying (mid-stream failures still bill).
     private static ConversationRoundUsage ExtractRoundUsage(
-        List<ChatResponseUpdate> updates, int round, string model, long latencyMs)
+        List<ChatResponseUpdate> updates, int round, int attempt, string model, long latencyMs, bool failed)
     {
         var usage = updates
             .SelectMany(update => update.Contents)
@@ -232,10 +353,10 @@ internal sealed class ConversationService(
         }
 
         return new ConversationRoundUsage(
-            round, Attempt: 1, model,
+            round, attempt, model,
             (int?)usage?.Details.InputTokenCount, (int?)usage?.Details.OutputTokenCount,
             ExtractCostUsd(updates), upstreamCostUsd, webSearchRequests,
-            latencyMs, Failed: false);
+            latencyMs, failed);
     }
 
     private static string BuildSystemPrompt(ConversationOptions options) =>
