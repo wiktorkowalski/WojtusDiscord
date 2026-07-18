@@ -58,6 +58,79 @@ internal abstract class BackfillJobBase
         }
     }
 
+    private const int ArchivedThreadPageSize = 100;
+
+    // Threads never appear in GET /guilds/{id}/channels (Discord excludes them), so the backfill
+    // jobs must enumerate them explicitly (#283): all active threads guild-wide, plus per-parent
+    // archived pages. Private archived threads require ManageThreads — Unauthorized there just
+    // means none are visible to the bot, not a failure.
+    protected static async Task<List<DSharpPlus.Entities.DiscordThreadChannel>> ListGuildThreadsAsync(
+        DSharpPlus.Entities.DiscordGuild guild,
+        IReadOnlyList<DSharpPlus.Entities.DiscordChannel> channels,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        var threads = new Dictionary<ulong, DSharpPlus.Entities.DiscordThreadChannel>();
+
+        foreach (var thread in (await guild.ListActiveThreadsAsync()).Threads)
+            threads[thread.Id] = thread;
+
+        var threadParents = channels
+            .Where(c => c.Type is DSharpPlus.Entities.DiscordChannelType.Text
+                     or DSharpPlus.Entities.DiscordChannelType.News
+                     or DSharpPlus.Entities.DiscordChannelType.GuildForum
+                     or DSharpPlus.Entities.DiscordChannelType.GuildMedia)
+            .ToList();
+
+        foreach (var parent in threadParents)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await CollectArchivedThreadsAsync(
+                parent, before => parent.ListPublicArchivedThreadsAsync(before, ArchivedThreadPageSize),
+                "public", threads, logger, cancellationToken);
+            await CollectArchivedThreadsAsync(
+                parent, before => parent.ListPrivateArchivedThreadsAsync(before, ArchivedThreadPageSize),
+                "private", threads, logger, cancellationToken);
+        }
+
+        return [.. threads.Values];
+    }
+
+    private static async Task CollectArchivedThreadsAsync(
+        DSharpPlus.Entities.DiscordChannel parent,
+        Func<DateTimeOffset?, Task<DSharpPlus.Entities.ThreadQueryResult>> listPage,
+        string visibility,
+        Dictionary<ulong, DSharpPlus.Entities.DiscordThreadChannel> threads,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            DateTimeOffset? before = null;
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var page = await listPage(before);
+                foreach (var thread in page.Threads)
+                    threads[thread.Id] = thread;
+
+                // Archived listings page backwards by archive timestamp.
+                before = page.Threads.Count > 0 ? page.Threads[^1].ThreadMetadata?.ArchiveTimestamp : null;
+                if (!page.HasMore || before is null)
+                    break;
+            }
+        }
+        catch (DSharpPlus.Exceptions.UnauthorizedException)
+        {
+            logger.LogDebug("No permission to list {Visibility} archived threads in channel {ChannelId}", visibility, parent.Id);
+        }
+        catch (DSharpPlus.Exceptions.NotFoundException)
+        {
+            logger.LogDebug("Channel {ChannelId} not found while listing {Visibility} archived threads", parent.Id, visibility);
+        }
+    }
+
     // Drives the per-item resume-cursor loop shared by the history jobs (Messages, Reactions): skip to the
     // channel a genuinely-interrupted run stopped on (CurrentChannelId, reset to null by the executor after a
     // terminal run), then walk the rest, clearing the per-channel batch cursor (LastProcessedId) only AFTER an

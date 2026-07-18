@@ -7,7 +7,8 @@ namespace DiscordEventService.Jobs;
 
 internal sealed class ChannelsBackfillJob(
     DiscordClient discordClient,
-    BackfillJobExecutor executor) : BackfillJobBase, IBackfillJob
+    BackfillJobExecutor executor,
+    ILogger<ChannelsBackfillJob> logger) : BackfillJobBase, IBackfillJob
 {
     private const int SaveProgressInterval = 50;
 
@@ -23,10 +24,17 @@ internal sealed class ChannelsBackfillJob(
             if (guildEntity is null)
                 return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
-            ctx.Checkpoint.TotalCount = channels.Count;
+            // Threads must be rows in channels too — Messages/Reactions backfill FK onto them (#283).
+            var threads = await ListGuildThreadsAsync(guild, channels, logger, cancellationToken);
+            var allChannels = channels
+                .Concat<DSharpPlus.Entities.DiscordChannel>(threads)
+                .DistinctBy(c => c.Id)
+                .ToList();
+
+            ctx.Checkpoint.TotalCount = allChannels.Count;
             await ctx.Db.SaveChangesAsync(cancellationToken);
 
-            foreach (var channel in channels)
+            foreach (var channel in allChannels)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
