@@ -17,6 +17,7 @@ internal sealed class ConversationToolRegistry(
     MemeSearchService memeSearch,
     GuildStatsService guildStats,
     DatabaseQueryService databaseQuery,
+    IGuildLiveStateService liveState,
     IGuildActionService guildActions,
     IConfirmationService confirmations,
     DatabaseSchemaHint schemaHint,
@@ -58,6 +59,10 @@ internal sealed class ConversationToolRegistry(
                 BuildMemeSearchTool(context),
                 BuildTopPostersTool(context),
                 BuildQueryDatabaseTool(context),
+                // Live-state read tools (#270 §4) — gateway-cache truth for right-now questions.
+                BuildVoiceOccupantsTool(context),
+                BuildMemberInfoTool(context),
+                BuildServerInfoTool(context),
                 // Action tools — admin-only (§6); the irreversible ones stage behind a confirm button.
                 BuildAddReactionTool(context),
                 BuildPinMessageTool(context),
@@ -222,6 +227,103 @@ internal sealed class ConversationToolRegistry(
 
     private static string Truncate(string text, int maxLength) =>
         text.Length <= maxLength ? text : text[..(maxLength - 1)] + "…";
+
+    // ─────────────────────── Live-state read tools (#270 §4) ───────────────────────
+    // Open to everyone incl. DMs (a DM resolves the guild via PrimaryGuildId, like the other
+    // read tools) — restricting them would be theater, the same data is already reachable
+    // through query_database's ingested copies. These answer from the gateway caches, which
+    // DiscordIntents.All keeps warm; the one REST call is the member-by-id cache miss.
+
+    private const string NoLiveGuildMessage =
+        "This conversation isn't tied to a server, so I can't check its live state here.";
+
+    private const string GuildNotVisibleMessage =
+        "I can't see that server right now — I may be disconnected or no longer in it.";
+
+    private AIFunction BuildVoiceOccupantsTool(ConversationContext context) =>
+        AIFunctionFactory.Create(
+            () => VoiceOccupants(context),
+            new AIFunctionFactoryOptions
+            {
+                Name = "voice_occupants",
+                Description =
+                    "LIVE: who is in the server's voice channels RIGHT NOW — every non-empty voice "
+                    + "channel with its occupants and their state (muted/deafened/streaming/camera) plus "
+                    + "a jump link. Prefer this over query_database for right-now voice questions; the "
+                    + "database copy lags behind live state.",
+                JsonSchemaCreateOptions = StrictSchema,
+            });
+
+    private string VoiceOccupants(ConversationContext context)
+    {
+        if (!TryResolveGuild(context, out var guildId))
+            return NoLiveGuildMessage;
+
+        var channels = liveState.GetVoiceOccupants(guildId);
+        if (channels is null)
+            return GuildNotVisibleMessage;
+        return channels.Count == 0
+            ? "Nobody is in any voice channel right now."
+            : LiveStateFormatter.FormatVoiceChannels(channels);
+    }
+
+    private AIFunction BuildMemberInfoTool(ConversationContext context) =>
+        AIFunctionFactory.Create(
+            ([Description("Who to look up: a user id (snowflake string), or a fragment of their "
+                + "username/display name.")] string member,
+                CancellationToken ct) => MemberInfoAsync(context, member, ct),
+            new AIFunctionFactoryOptions
+            {
+                Name = "member_info",
+                Description =
+                    "LIVE: a member's current state RIGHT NOW — presence (online/idle/dnd/offline), "
+                    + "activities, voice channel, roles, join date, boost status. Prefer this over "
+                    + "query_database for right-now questions about a person. Accepts a user id or a "
+                    + "name fragment; an ambiguous fragment returns the matching candidates.",
+                JsonSchemaCreateOptions = StrictSchema,
+            });
+
+    private async Task<string> MemberInfoAsync(
+        ConversationContext context, string member, CancellationToken ct)
+    {
+        if (!TryResolveGuild(context, out var guildId))
+            return NoLiveGuildMessage;
+        if (string.IsNullOrWhiteSpace(member))
+            return "Provide a user id or a fragment of the member's name.";
+
+        var lookup = await liveState.FindMemberAsync(guildId, member, ct);
+        if (lookup is null)
+            return GuildNotVisibleMessage;
+
+        return lookup.Outcome switch
+        {
+            MemberLookupOutcome.Found => LiveStateFormatter.FormatMember(lookup.Member!),
+            MemberLookupOutcome.Ambiguous => LiveStateFormatter.FormatCandidates(member.Trim(), lookup.Candidates),
+            _ => $"No member matching \"{member.Trim()}\" in this server.",
+        };
+    }
+
+    private AIFunction BuildServerInfoTool(ConversationContext context) =>
+        AIFunctionFactory.Create(
+            () => ServerInfo(context),
+            new AIFunctionFactoryOptions
+            {
+                Name = "server_info",
+                Description =
+                    "LIVE: the server's current shape RIGHT NOW — live member count, boost tier and "
+                    + "count, created date, and channel/role/emoji counts. Prefer this over "
+                    + "query_database for right-now questions about the server itself.",
+                JsonSchemaCreateOptions = StrictSchema,
+            });
+
+    private string ServerInfo(ConversationContext context)
+    {
+        if (!TryResolveGuild(context, out var guildId))
+            return NoLiveGuildMessage;
+
+        var server = liveState.GetServerInfo(guildId);
+        return server is null ? GuildNotVisibleMessage : LiveStateFormatter.FormatServerInfo(server);
+    }
 
     // ───────────────────────── Action tools (#238 §6) ─────────────────────────
     // Every action tool first checks context.IsAdmin (the un-promptable gate). Reversible ones

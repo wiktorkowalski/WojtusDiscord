@@ -240,6 +240,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         new(new MemeSearchService(NewContext()),
             new GuildStatsService(NewContext()),
             new DatabaseQueryService(NewContext(), conversationOptions, NullLogger<DatabaseQueryService>.Instance),
+            new FakeGuildLiveStateService(),
             new FakeGuildActionService(),
             new FakeConfirmationService(),
             new DatabaseSchemaHint("schema hint"),
