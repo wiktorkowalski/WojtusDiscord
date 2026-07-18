@@ -374,6 +374,14 @@ internal sealed class ConversationService(
               questions (counts, activity over time, who-did-what) that the curated tools can't
               answer, call query_database with a single read-only SQL SELECT and summarize the rows.
 
+              For RIGHT-NOW questions use the LIVE tools instead of the database — the database is
+              an ingested copy and can lag. voice_occupants tells you who is sitting in which voice
+              channel this moment; member_info gives one member's current presence, activity, voice
+              state, roles and join/boost dates (by id or name fragment — if it returns several
+              candidates, ask the user which one they meant); server_info gives the server's live
+              member count, boosts and channel/role/emoji counts. For historical or aggregate
+              questions (who was in voice yesterday, activity over time), stick to query_database.
+
               Before EVERY tool call, first write one short progress note (in the user's language)
               saying what you are about to check — e.g. "okej, sprawdzam memy…", "daj mi sekundę,
               zajrzę do bazy…". Never skip it, keep it to one brief sentence, and vary the phrasing

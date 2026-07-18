@@ -155,6 +155,7 @@ public sealed class ConversationActionToolTests
             memeSearch: null!,
             guildStats: null!,
             databaseQuery: null!,
+            new FakeGuildLiveStateService(),
             actions,
             confirmations,
             new DatabaseSchemaHint("schema"),

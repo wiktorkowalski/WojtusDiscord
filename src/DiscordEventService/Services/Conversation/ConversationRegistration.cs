@@ -41,6 +41,9 @@ internal static class ConversationRegistration
         services.AddSingleton<IGuildActionService, GuildActionService>();
         services.AddSingleton<IConfirmationService, ConfirmationService>();
 
+        // §4 live-state read seam (#270): cache-first Discord reads, same accessor rule.
+        services.AddSingleton<IGuildLiveStateService, GuildLiveStateService>();
+
         // §3 cost-cap alert transport (#269): DMs admins via the accessor, same
         // no-DiscordClient-in-DI rule as the action services.
         services.AddSingleton<IUsageAlertNotifier, DiscordUsageAlertNotifier>();
@@ -83,6 +86,10 @@ internal static class ConversationRegistration
         // container, so they share this single instance.
         services.AddSingleton<IGuildActionService, GuildActionService>();
         services.AddSingleton<IConfirmationService, ConfirmationService>();
+
+        // §4: the scoped ConversationToolRegistry (CoreServiceTypes) resolves the live-state
+        // read seam here.
+        services.AddSingleton<IGuildLiveStateService, GuildLiveStateService>();
 
         // §3: the scoped UsageAlertService (CoreServiceTypes) resolves its notifier here.
         services.AddSingleton<IUsageAlertNotifier, DiscordUsageAlertNotifier>();
