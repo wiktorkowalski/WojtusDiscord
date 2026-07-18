@@ -35,12 +35,15 @@ internal sealed class MessagesBackfillJob(
             if (guildEntity is null)
                 return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
-            var textChannels = channels
+            var threads = await ListGuildThreadsAsync(guild, channels, logger, cancellationToken);
+
+            var textChannels = channels.Concat<DiscordChannel>(threads)
                 .Where(c => c.Type is DSharpPlus.Entities.DiscordChannelType.Text
                          or DSharpPlus.Entities.DiscordChannelType.News
                          or DSharpPlus.Entities.DiscordChannelType.PublicThread
                          or DSharpPlus.Entities.DiscordChannelType.PrivateThread
                          or DSharpPlus.Entities.DiscordChannelType.NewsThread)
+                .DistinctBy(c => c.Id)
                 .OrderBy(c => c.Id)
                 .ToList();
 

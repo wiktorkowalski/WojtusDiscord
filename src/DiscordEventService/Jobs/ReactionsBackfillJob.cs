@@ -34,12 +34,15 @@ internal sealed class ReactionsBackfillJob(
             if (guildEntity is null)
                 return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
-            var textChannels = channels
+            var threads = await ListGuildThreadsAsync(guild, channels, logger, cancellationToken);
+
+            var textChannels = channels.Concat<DiscordChannel>(threads)
                 .Where(c => c.Type is DiscordChannelType.Text
                          or DiscordChannelType.News
                          or DiscordChannelType.PublicThread
                          or DiscordChannelType.PrivateThread
                          or DiscordChannelType.NewsThread)
+                .DistinctBy(c => c.Id)
                 .OrderBy(c => c.Id)
                 .ToList();
 
