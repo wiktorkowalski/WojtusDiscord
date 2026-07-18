@@ -13,6 +13,7 @@ namespace DiscordEventService.Services.EventHandlers;
 // turn is not an ingested event (no raw_event row) and a DM has no guild id.
 internal sealed class ConversationEventHandler(
     ConversationService conversation,
+    UsageAlertService usageAlerts,
     IOptions<ConversationOptions> options,
     ILogger<ConversationEventHandler> logger) : IEventHandler<MessageCreatedEventArgs>
 {
@@ -119,6 +120,14 @@ internal sealed class ConversationEventHandler(
             // Best-effort: post whatever the model had streamed so the user isn't left with
             // silence after the wait (the buffer holds it; posting doesn't need the token).
             await renderer.CompleteTurnAsync();
+        }
+        finally
+        {
+            // §3 post-turn cost-cap check (#269): the ledger rows exist on every exit
+            // path of GenerateReplyAsync (answer, round cap, retry exhaustion, timeout),
+            // so this finally covers them all. Never throws, and runs on its own
+            // timeout — the turn token may already be cancelled here.
+            await usageAlerts.CheckAndAlertAsync(context.InvokerId);
         }
     }
 

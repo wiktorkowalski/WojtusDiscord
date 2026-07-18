@@ -41,6 +41,10 @@ internal static class ConversationRegistration
         services.AddSingleton<IGuildActionService, GuildActionService>();
         services.AddSingleton<IConfirmationService, ConfirmationService>();
 
+        // §3 cost-cap alert transport (#269): DMs admins via the accessor, same
+        // no-DiscordClient-in-DI rule as the action services.
+        services.AddSingleton<IUsageAlertNotifier, DiscordUsageAlertNotifier>();
+
         AddLangfuseTracing(services, configuration);
         return services;
     }
@@ -79,6 +83,9 @@ internal static class ConversationRegistration
         // container, so they share this single instance.
         services.AddSingleton<IGuildActionService, GuildActionService>();
         services.AddSingleton<IConfirmationService, ConfirmationService>();
+
+        // §3: the scoped UsageAlertService (CoreServiceTypes) resolves its notifier here.
+        services.AddSingleton<IUsageAlertNotifier, DiscordUsageAlertNotifier>();
     }
 
     private static IChatClient CreateChatClient(IServiceProvider sp)

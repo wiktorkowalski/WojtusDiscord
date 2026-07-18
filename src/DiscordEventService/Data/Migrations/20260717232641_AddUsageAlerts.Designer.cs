@@ -3,6 +3,7 @@ using System;
 using DiscordEventService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using NpgsqlTypes;
@@ -12,9 +13,11 @@ using NpgsqlTypes;
 namespace DiscordEventService.Data.Migrations
 {
     [DbContext(typeof(DiscordDbContext))]
-    partial class DiscordDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260717232641_AddUsageAlerts")]
+    partial class AddUsageAlerts
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
