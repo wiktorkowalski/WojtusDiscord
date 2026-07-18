@@ -156,7 +156,7 @@ builder.Services.AddScoped<MemeIndexSweepJob>();
 // Langfuse OTel export. Registers the singleton chat client in the root container; the
 // DSharpPlus child container forwards to it (ConversationRegistration). ConversationService
 // is a shared scoped service (CoreServiceTypes); the handler lives in DiscordClientRegistration.
-builder.Services.AddConversationFeature(builder.Configuration);
+builder.Services.AddConversationFeature(builder.Configuration, builder.Environment);
 
 // Hangfire. With a fixed InvisibilityTimeout a job outliving it gets presumed
 // dead, re-queued, and the original execution cancelled — observed live on the

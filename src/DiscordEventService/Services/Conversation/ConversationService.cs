@@ -20,6 +20,7 @@ internal sealed class ConversationService(
     ConversationMemoryService memory,
     IOptions<ConversationOptions> conversationOptions,
     IOptions<OpenRouterOptions> openRouterOptions,
+    IHostEnvironment environment,
     ILogger<ConversationService> logger)
 {
     // The model sometimes answers a final round with no text (degenerate) or runs out of
@@ -72,6 +73,34 @@ internal sealed class ConversationService(
         turn?.SetTag("conversation.invoker_id", context.InvokerId);
         turn?.SetTag("conversation.guild_id", context.GuildId);
 
+        // Langfuse identity mapping: `user.id`/`session.id` on the root span become the
+        // trace's userId/sessionId (users + sessions views, filterable); the
+        // `langfuse.trace.metadata.*` keys become top-level filterable metadata, unlike
+        // our conversation.* tags which land in the unfilterable attribute bag.
+        turn?.SetTag("user.id", context.InvokerId.ToString());
+        turn?.SetTag("session.id", context.ChannelId.ToString());
+        turn?.SetTag("langfuse.trace.metadata.invoker_name", context.InvokerDisplayName);
+        turn?.SetTag("langfuse.trace.metadata.channel_id", context.ChannelId.ToString());
+        if (context.GuildId is { } guildId)
+            turn?.SetTag("langfuse.trace.metadata.guild_id", guildId.ToString());
+
+        // Mirrors the chat client's sensitive-data gate (ConversationRegistration): the
+        // turn's question/answer become the trace-level input/output only when prompt
+        // capture is on anyway.
+        var captureSensitiveData = options.EnableSensitiveData || environment.IsDevelopment();
+        if (captureSensitiveData)
+            turn?.SetTag("langfuse.trace.input", userMessage);
+
+        // This method and StreamRoundAsync are async iterators: after every `yield return`
+        // they resume on the consumer's execution context, where Activity.Current is no
+        // longer the turn span — anything started there (tool spans, round 2+ generations)
+        // would begin a fresh root trace. Re-anchor before starting any child span.
+        void ReanchorTurnSpan()
+        {
+            if (turn is not null && !ReferenceEquals(Activity.Current, turn))
+                Activity.Current = turn;
+        }
+
         var turnCostUsd = 0d;
 
         // The turn's web-search citations (#271), accumulated across every successful
@@ -95,6 +124,7 @@ internal sealed class ConversationService(
                 Exception? failure = null;
                 var stopwatch = Stopwatch.StartNew();
 
+                ReanchorTurnSpan();
                 var updates = chatClient
                     .GetStreamingResponseAsync(messages, roundOptions, cancellationToken)
                     .GetAsyncEnumerator(cancellationToken);
@@ -193,6 +223,8 @@ internal sealed class ConversationService(
                 turn?.SetTag("conversation.failed", true);
                 turn?.SetTag("conversation.rounds", round);
                 turn?.SetTag("conversation.cost_usd", turnCostUsd);
+                if (captureSensitiveData)
+                    turn?.SetTag("langfuse.trace.output", options.FailureMessage);
                 yield break;
             }
 
@@ -227,6 +259,9 @@ internal sealed class ConversationService(
                     round, context.InvokerDisplayName);
                 turn?.SetTag("conversation.rounds", round);
                 turn?.SetTag("conversation.cost_usd", turnCostUsd);
+                if (captureSensitiveData)
+                    turn?.SetTag("langfuse.trace.output",
+                        HadText(sink) ? response.Text : EmptyAnswerFallback);
                 yield break;
             }
 
@@ -234,6 +269,7 @@ internal sealed class ConversationService(
             // progress note is the model's own (the system prompt demands one before every
             // tool call), and a silent round still renders its tool-batch summary message.
             logger.LogDebug("Round {Round}: model requested {Count} tool call(s)", round, toolCalls.Count);
+            ReanchorTurnSpan();
             foreach (var call in toolCalls)
             {
                 var result = await toolset.InvokeAsync(call, cancellationToken);
@@ -262,6 +298,8 @@ internal sealed class ConversationService(
             yield return new ConversationUpdate.AssistantTextDelta(options.FailureMessage);
             turn?.SetTag("conversation.failed", true);
             turn?.SetTag("conversation.cost_usd", turnCostUsd);
+            if (captureSensitiveData)
+                turn?.SetTag("langfuse.trace.output", options.FailureMessage);
             yield break;
         }
 
@@ -282,6 +320,9 @@ internal sealed class ConversationService(
         if (WebSearchCitations.FormatSourceList(citations) is { } finalSources)
             yield return new ConversationUpdate.AssistantTextDelta($"\n{finalSources}");
         turn?.SetTag("conversation.cost_usd", turnCostUsd);
+        if (captureSensitiveData)
+            turn?.SetTag("langfuse.trace.output",
+                HadText(finalSink) ? finalResponse.Text : CapReachedFallback);
     }
 
     // Whitespace-only counts as no visible text — stays consistent with the handler's

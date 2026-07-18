@@ -91,7 +91,8 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
         var memory = new ConversationMemoryService(
             NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance);
         var service = new ConversationService(
-            chatClient, registry, memory, conversationOptions, openRouterOptions, NullLogger<ConversationService>.Instance);
+            chatClient, registry, memory, conversationOptions, openRouterOptions,
+            new TestHostEnvironment(), NullLogger<ConversationService>.Instance);
 
         var context = new ConversationContext(GuildDiscordId, InvokerId: 1UL, "tester", IsAdmin: false, ChannelId: 9UL);
 
