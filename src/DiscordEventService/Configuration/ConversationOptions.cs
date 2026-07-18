@@ -98,6 +98,24 @@ internal sealed class ConversationOptions
     // §3 soft cost-cap alerting (#269) over the conversation_usage ledger — alert-only,
     // the loop never refuses a turn.
     public CostAlertOptions CostAlerts { get; set; } = new();
+
+    // §5 OpenRouter `openrouter:web_search` server tool (#271). Attached to every loop
+    // round when enabled — safe because a search bills only when the model invokes one
+    // ($0.005 Exa per search), never per attached request.
+    public WebSearchOptions WebSearch { get; set; } = new();
+}
+
+// Conversation:WebSearch:* (#271). Engine pinned to Exa for the predictable flat
+// per-search rate (unset would fall through to native provider passthrough pricing);
+// MaxResults bounds results per search, not searches per request — the model controls
+// how many searches it runs, and #269's soft caps cover the tail.
+internal sealed class WebSearchOptions
+{
+    public bool Enabled { get; set; } = true;
+
+    public string Engine { get; set; } = "exa";
+
+    public int MaxResults { get; set; } = 3;
 }
 
 // Conversation:CostAlerts:* (#269). Windows are calendar-UTC (month / date); sums

@@ -47,9 +47,10 @@ internal sealed class ConversationService(
         var options = conversationOptions.Value;
         var toolset = toolRegistry.BuildToolset(context);
 
-        // Reuse the §1 helper for the provider pin + reasoning/usage patch, then hang the
-        // turn's tools off it; the OpenAI adapter merges Tools onto the patched body.
-        var chatOptions = OpenRouterChatOptions.Create(options.ReasoningEffort);
+        // Reuse the §1 helper for the provider pin + reasoning/usage/web-search patch,
+        // then hang the turn's tools off it; the OpenAI adapter merges Tools onto the
+        // patched body (the appended server tool lands after them).
+        var chatOptions = OpenRouterChatOptions.Create(options.ReasoningEffort, options.WebSearch);
         chatOptions.Tools = toolset.Tools;
 
         // Durable memory (#267): rehydrate the conversation's stored window, then persist
@@ -72,6 +73,11 @@ internal sealed class ConversationService(
         turn?.SetTag("conversation.guild_id", context.GuildId);
 
         var turnCostUsd = 0d;
+
+        // The turn's web-search citations (#271), accumulated across every successful
+        // round (a mixed tool round may also search) and rendered once under the answer.
+        // Failed attempts drop out naturally — the sink is cleared per attempt.
+        var citations = new List<WebSearchCitations.Citation>();
 
         // Streams one round into the transcript sink under the §2 retry policy (#268):
         // up to RetryMaxAttempts calls over the same intact `messages` prefix (a failed
@@ -197,9 +203,11 @@ internal sealed class ConversationService(
             var response = sink.ToChatResponse();
             messages.AddRange(response.Messages);
             turnCostUsd += RecordRoundCost(sink, round, turn, outcome);
+            WebSearchCitations.AccumulateRound(sink, citations);
 
             var roundUsage = ExtractRoundUsage(
                 sink, round, outcome.Attempt, options.Model, outcome.LatencyMs, failed: false);
+            RecordWebSearches(roundUsage, round, turn);
             await memory.PersistAssistantMessagesAsync(memoryTurn, response.Messages,
                 roundUsage.PromptTokens, roundUsage.CompletionTokens, cancellationToken);
             await memory.RecordUsageAsync(memoryTurn, context.InvokerId, roundUsage, cancellationToken);
@@ -213,6 +221,8 @@ internal sealed class ConversationService(
             {
                 if (!HadText(sink))
                     yield return new ConversationUpdate.AssistantTextDelta(EmptyAnswerFallback);
+                if (WebSearchCitations.FormatSourceList(citations) is { } sources)
+                    yield return new ConversationUpdate.AssistantTextDelta($"\n{sources}");
                 logger.LogDebug("Conversation answered in {Rounds} round(s) for {Author}",
                     round, context.InvokerDisplayName);
                 turn?.SetTag("conversation.rounds", round);
@@ -243,7 +253,8 @@ internal sealed class ConversationService(
         var finalSink = new List<ChatResponseUpdate>();
         var finalOutcome = new RoundOutcome();
         await foreach (var renderEvent in StreamRoundAsync(
-            OpenRouterChatOptions.Create(options.ReasoningEffort), options.MaxToolRounds + 1, finalSink, finalOutcome))
+            OpenRouterChatOptions.Create(options.ReasoningEffort, options.WebSearch),
+            options.MaxToolRounds + 1, finalSink, finalOutcome))
             yield return renderEvent;
 
         if (!finalOutcome.Succeeded)
@@ -255,17 +266,21 @@ internal sealed class ConversationService(
         }
 
         turnCostUsd += RecordRoundCost(finalSink, options.MaxToolRounds + 1, turn, finalOutcome);
+        WebSearchCitations.AccumulateRound(finalSink, citations);
 
         var finalResponse = finalSink.ToChatResponse();
         var finalUsage = ExtractRoundUsage(
             finalSink, options.MaxToolRounds + 1, finalOutcome.Attempt, options.Model,
             finalOutcome.LatencyMs, failed: false);
+        RecordWebSearches(finalUsage, options.MaxToolRounds + 1, turn);
         await memory.PersistAssistantMessagesAsync(memoryTurn, finalResponse.Messages,
             finalUsage.PromptTokens, finalUsage.CompletionTokens, cancellationToken);
         await memory.RecordUsageAsync(memoryTurn, context.InvokerId, finalUsage, cancellationToken);
 
         if (!HadText(finalSink))
             yield return new ConversationUpdate.AssistantTextDelta(CapReachedFallback);
+        if (WebSearchCitations.FormatSourceList(citations) is { } finalSources)
+            yield return new ConversationUpdate.AssistantTextDelta($"\n{finalSources}");
         turn?.SetTag("conversation.cost_usd", turnCostUsd);
     }
 
@@ -300,6 +315,19 @@ internal sealed class ConversationService(
         turn?.SetTag($"conversation.round{round}.cost_usd", outcome.CostUsd);
         logger.LogDebug("Round {Round} model cost ${Cost}", round, cost.Value);
         return cost.Value;
+    }
+
+    // Search spend itemisation (#271): the ledger row already carries the counts; the
+    // trace tag + log line make a searchy round visible without a DB query.
+    // `cost − upstream_inference_cost` is the round's search spend.
+    private void RecordWebSearches(ConversationRoundUsage usage, int round, Activity? turn)
+    {
+        if (usage.WebSearchRequests is not > 0)
+            return;
+
+        turn?.SetTag($"conversation.round{round}.web_search_requests", usage.WebSearchRequests);
+        logger.LogDebug("Round {Round} ran {Searches} web search(es), upstream model cost ${Upstream}",
+            round, usage.WebSearchRequests, usage.UpstreamInferenceCostUsd);
     }
 
     private static double? ExtractCostUsd(IEnumerable<ChatResponseUpdate> updates)
@@ -347,7 +375,9 @@ internal sealed class ConversationService(
 #pragma warning disable SCME0001 // ChatTokenUsage.Patch (JsonPatch) is experimental.
             if (raw.Patch.TryGetValue("$.cost_details.upstream_inference_cost"u8, out double upstream))
                 upstreamCostUsd = upstream;
-            if (raw.Patch.TryGetValue("$.server_tool_use.web_search_requests"u8, out int searches))
+            // `server_tool_use_details` is the field the #261 live spike observed on this
+            // exact stack (not Anthropic's native `server_tool_use` name).
+            if (raw.Patch.TryGetValue("$.server_tool_use_details.web_search_requests"u8, out int searches))
                 webSearchRequests = searches;
 #pragma warning restore SCME0001
         }
@@ -373,6 +403,11 @@ internal sealed class ConversationService(
               "who posts the most" ranking, call top_posters. For other analytical or statistical
               questions (counts, activity over time, who-did-what) that the curated tools can't
               answer, call query_database with a single read-only SQL SELECT and summarize the rows.
+
+              For questions about the world OUTSIDE this server — news, current events, facts
+              that may have changed recently — you can search the web (it runs automatically
+              when you use your web search tool); prefer searching over guessing when freshness
+              matters, and cite your sources.
 
               For RIGHT-NOW questions use the LIVE tools instead of the database — the database is
               an ingested copy and can lag. voice_occupants tells you who is sitting in which voice
