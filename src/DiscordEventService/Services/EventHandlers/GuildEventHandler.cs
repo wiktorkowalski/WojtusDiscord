@@ -120,7 +120,7 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
                     .SetProperty(c => c.Bitrate, channel.Bitrate)
                     .SetProperty(c => c.UserLimit, channel.UserLimit)
                     .SetProperty(c => c.RateLimitPerUser, channel.PerUserRateLimit)
-                    .SetProperty(c => c.IsNsfw, false)
+                    .SetProperty(c => c.IsNsfw, channel.IsNSFW)
                     .SetProperty(c => c.Position, channel.Position)
                     .SetProperty(c => c.IsDeleted, false)
                     .SetProperty(c => c.DeletedAtUtc, (DateTime?)null),
@@ -135,7 +135,7 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
                     Bitrate = channel.Bitrate,
                     UserLimit = channel.UserLimit,
                     RateLimitPerUser = channel.PerUserRateLimit,
-                    IsNsfw = false,
+                    IsNsfw = channel.IsNSFW,
                     Position = channel.Position,
                     IsDeleted = false,
                 },
