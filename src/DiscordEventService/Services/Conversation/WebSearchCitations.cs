@@ -15,7 +15,7 @@ namespace DiscordEventService.Services.Conversation;
 // recovery round-trips each chunk through ModelReaderWriter and reads the JSON.
 internal static class WebSearchCitations
 {
-    internal sealed record Citation(string Url, string Title);
+    internal sealed record Citation(string Url);
 
     // Collects the round's citations into `citations`, deduplicating by URL across the
     // whole turn (a later round may re-search what an earlier round already cited).
@@ -46,10 +46,7 @@ internal static class WebSearchCitations
                         continue;
 
                     if (!citations.Any(existing => existing.Url.Equals(urlValue, StringComparison.Ordinal)))
-                    {
-                        citations.Add(new Citation(urlValue,
-                            citation.TryGetProperty("title", out var title) ? title.GetString() ?? "" : ""));
-                    }
+                        citations.Add(new Citation(urlValue));
                 }
             }
         }
