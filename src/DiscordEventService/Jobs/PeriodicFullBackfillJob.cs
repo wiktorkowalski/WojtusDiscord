@@ -25,10 +25,20 @@ internal sealed class PeriodicFullBackfillJob(
             .ToListAsync();
         var inProgress = await db.BackfillCheckpoints
             .Where(c => c.Status == BackfillStatus.InProgress)
-            .Select(c => c.GuildDiscordId)
-            .Distinct()
             .ToListAsync();
-        var inProgressSet = inProgress.ToHashSet();
+
+        var now = DateTime.UtcNow;
+        foreach (var stale in inProgress.Where(c => !c.IsActivelyInProgress(now)))
+        {
+            logger.LogWarning(
+                "Ignoring stale InProgress {BackfillType} checkpoint for guild {GuildId}: no progress since {LastUpdatedUtc:O}",
+                stale.Type, stale.GuildDiscordId, stale.LastUpdatedUtc);
+        }
+
+        var inProgressSet = inProgress
+            .Where(c => c.IsActivelyInProgress(now))
+            .Select(c => c.GuildDiscordId)
+            .ToHashSet();
 
         var afterTimestamp = DateTime.UtcNow - BackfillWindow;
 
