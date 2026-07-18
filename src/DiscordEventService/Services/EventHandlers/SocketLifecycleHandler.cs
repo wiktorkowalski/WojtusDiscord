@@ -147,12 +147,21 @@ internal sealed class SocketLifecycleHandler(
             afterTimestamp = earliestAllowed;
         }
 
-        var inProgressGuilds = await db.BackfillCheckpoints
+        var inProgressCheckpoints = await db.BackfillCheckpoints
             .Where(c => c.Status == BackfillStatus.InProgress)
-            .Select(c => c.GuildDiscordId)
-            .Distinct()
             .ToListAsync();
-        var inProgressSet = inProgressGuilds.ToHashSet();
+
+        foreach (var stale in inProgressCheckpoints.Where(c => !c.IsActivelyInProgress(now)))
+        {
+            logger.LogWarning(
+                "Ignoring stale InProgress {BackfillType} checkpoint for guild {GuildId}: no progress since {LastUpdatedUtc:O}",
+                stale.Type, stale.GuildDiscordId, stale.LastUpdatedUtc);
+        }
+
+        var inProgressSet = inProgressCheckpoints
+            .Where(c => c.IsActivelyInProgress(now))
+            .Select(c => c.GuildDiscordId)
+            .ToHashSet();
 
         foreach (var guildId in guildIds)
         {

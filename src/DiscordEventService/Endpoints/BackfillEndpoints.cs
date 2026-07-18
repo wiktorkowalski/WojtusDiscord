@@ -36,8 +36,10 @@ internal static class BackfillEndpoints
         GuildBackfillOrchestrator orchestrator,
         DiscordDbContext db)
     {
-        var existingInProgress = await db.BackfillCheckpoints
-            .AnyAsync(c => c.GuildDiscordId == guildId && c.Status == BackfillStatus.InProgress);
+        var inProgressCheckpoints = await db.BackfillCheckpoints
+            .Where(c => c.GuildDiscordId == guildId && c.Status == BackfillStatus.InProgress)
+            .ToListAsync();
+        var existingInProgress = inProgressCheckpoints.Any(c => c.IsActivelyInProgress(DateTime.UtcNow));
 
         if (existingInProgress)
             return Results.BadRequest(new { error = "Backfill already in progress for this guild" });

@@ -22,6 +22,16 @@ public class BackfillCheckpointEntity : ITimestamped
     public DateTime? CompletedAtUtc { get; set; }
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastUpdatedUtc { get; set; }
+
+    public static readonly TimeSpan StaleInProgressAfter = TimeSpan.FromHours(1);
+
+    // LastUpdatedUtc is bumped on every SaveChanges (ITimestamped) and a live backfill saves at
+    // least once per batch, so it is a heartbeat: an InProgress row with no write for longer than
+    // StaleInProgressAfter belongs to a process that died before writing a terminal status (#282).
+    // Callers leave Status untouched — the next run's executor treats the surviving InProgress row
+    // as an interrupted run and resumes from its cursor.
+    public bool IsActivelyInProgress(DateTime nowUtc)
+        => Status == BackfillStatus.InProgress && nowUtc - LastUpdatedUtc < StaleInProgressAfter;
 }
 
 // Persisted as int in the DB — values are a data contract; never renumber or strip explicit values.
