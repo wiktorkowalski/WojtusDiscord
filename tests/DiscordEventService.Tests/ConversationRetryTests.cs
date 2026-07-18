@@ -233,6 +233,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
             new ConversationMemoryService(NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance),
             conversationOptions,
             Options.Create(new OpenRouterOptions { ApiKey = "test-key" }),
+            new TestHostEnvironment(),
             NullLogger<ConversationService>.Instance);
     }
 

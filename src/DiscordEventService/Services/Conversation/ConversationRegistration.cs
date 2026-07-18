@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using OpenAI;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 namespace DiscordEventService.Services.Conversation;
@@ -20,7 +21,7 @@ internal static class ConversationRegistration
 {
     // Root container: bind options, build the singleton IChatClient, wire Langfuse.
     public static IServiceCollection AddConversationFeature(
-        this IServiceCollection services, IConfiguration configuration)
+        this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         services.AddOptions<ConversationOptions>()
             .Bind(configuration.GetSection(ConversationOptions.SectionName));
@@ -48,7 +49,7 @@ internal static class ConversationRegistration
         // no-DiscordClient-in-DI rule as the action services.
         services.AddSingleton<IUsageAlertNotifier, DiscordUsageAlertNotifier>();
 
-        AddLangfuseTracing(services, configuration);
+        AddLangfuseTracing(services, configuration, environment);
         return services;
     }
 
@@ -127,7 +128,8 @@ internal static class ConversationRegistration
             .Build();
     }
 
-    private static void AddLangfuseTracing(IServiceCollection services, IConfiguration configuration)
+    private static void AddLangfuseTracing(
+        IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         var options = configuration.GetSection(ConversationOptions.SectionName).Get<ConversationOptions>()
             ?? new ConversationOptions();
@@ -139,7 +141,15 @@ internal static class ConversationRegistration
             Encoding.UTF8.GetBytes($"{options.LangfusePublicKey}:{options.LangfuseSecretKey}"));
 
         // HttpProtobuf, not gRPC — Langfuse's OTLP endpoint silently no-ops on gRPC.
+        // langfuse.environment separates dev and prod traces inside the one shared
+        // Langfuse project (both export with the same keys).
         services.AddOpenTelemetry().WithTracing(tracing => tracing
+            .ConfigureResource(resource => resource
+                .AddService("discord-event-service")
+                .AddAttributes(new Dictionary<string, object>
+                {
+                    ["langfuse.environment"] = environment.EnvironmentName.ToLowerInvariant(),
+                }))
             .AddSource(ConversationTelemetry.SourceName)
             .AddOtlpExporter(exporter =>
             {

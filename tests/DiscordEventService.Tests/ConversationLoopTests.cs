@@ -196,6 +196,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             new ConversationMemoryService(NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance),
             conversationOptions,
             openRouterOptions,
+            new TestHostEnvironment(),
             NullLogger<ConversationService>.Instance);
     }
 
