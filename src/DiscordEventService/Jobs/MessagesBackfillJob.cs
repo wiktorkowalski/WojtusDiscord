@@ -167,12 +167,17 @@ internal sealed class MessagesBackfillJob(
             return false;
         }
 
+        var exists = await db.Messages.AnyAsync(m => m.DiscordId == message.Id, cancellationToken);
+        if (exists) return false;
+
+        // Upsert the author only for messages we are about to insert (#297): re-scrolled batches
+        // contain already-stored messages whose author payloads can differ in shape between
+        // Discord surfaces (e.g. the deactivated Clyde bot flip-flops username casing and
+        // global_name presence), churning user_name_history on every run. Current members are
+        // kept fresh by MembersBackfillJob and live events.
         await userService.UpsertUserAsync(message.Author);
 
         var authorEntity = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == message.Author.Id, cancellationToken);
-
-        var exists = await db.Messages.AnyAsync(m => m.DiscordId == message.Id, cancellationToken);
-        if (exists) return false;
 
         // §P2.6: MessageEntity.ChannelId/GuildId/AuthorId are NOT NULL. Skip
         // if any required FK row hasn't been backfilled yet — next run of
