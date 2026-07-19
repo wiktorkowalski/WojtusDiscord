@@ -1,5 +1,6 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Services;
 using DSharpPlus;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,6 +18,7 @@ internal sealed class ChannelsBackfillJob(
     public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
         => executor.RunAsync(BackfillType, guildId, async ctx =>
         {
+            var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
             var guild = await discordClient.GetGuildAsync(guildId);
             var channels = await guild.GetChannelsAsync();
             var guildEntity = await ctx.Db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == guildId, cancellationToken);
@@ -38,36 +40,7 @@ internal sealed class ChannelsBackfillJob(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                await ctx.Db.Channels.UpsertAsync(
-                    c => c.DiscordId == channel.Id,
-                    s => s
-                        .SetProperty(c => c.Name, channel.Name)
-                        .SetProperty(c => c.Type, (ChannelType)(int)channel.Type)
-                        .SetProperty(c => c.Topic, channel.Topic)
-                        .SetProperty(c => c.Bitrate, channel.Bitrate)
-                        .SetProperty(c => c.UserLimit, channel.UserLimit)
-                        .SetProperty(c => c.RateLimitPerUser, channel.PerUserRateLimit)
-                        .SetProperty(c => c.IsNsfw, channel.IsNSFW)
-                        .SetProperty(c => c.Position, channel.Position)
-                        .SetProperty(c => c.ParentDiscordId, channel.ParentId)
-                        .SetProperty(c => c.IsDeleted, false)
-                        .SetProperty(c => c.DeletedAtUtc, (DateTime?)null),
-                    () => new ChannelEntity
-                    {
-                        DiscordId = channel.Id,
-                        GuildId = guildEntity.Id,
-                        ParentDiscordId = channel.ParentId,
-                        Name = channel.Name,
-                        Type = (ChannelType)(int)channel.Type,
-                        Topic = channel.Topic,
-                        Bitrate = channel.Bitrate,
-                        UserLimit = channel.UserLimit,
-                        RateLimitPerUser = channel.PerUserRateLimit,
-                        IsNsfw = channel.IsNSFW,
-                        Position = channel.Position
-                    },
-                    c => c.Id,
-                    cancellationToken);
+                await channelUpsert.UpsertChannelAsync(channel, guildEntity.Id, cancellationToken);
 
                 ctx.Checkpoint.ProcessedCount++;
 

@@ -29,11 +29,10 @@ public class ChannelEntity : ITimestamped
 // a data contract on both sides; never renumber or strip explicit values (they are non-sequential).
 public enum ChannelType
 {
-    // Sentinel for Discord-side types we don't yet model. Direct casts
-    // ((ChannelType)channel.Type) preserve the raw int regardless of whether
-    // it's a known value, but downstream switches and mappers need a name to
-    // route on. Anything mapped via MapChannelType that isn't recognized
-    // becomes Unknown and logs a warning so drift is visible. See §P2.2 / #71.
+    // Sentinel for Discord-side types we don't yet model. Storage always keeps the
+    // raw int via the (ChannelType)channel.Type cast in ChannelUpsertService (which
+    // warns on undefined values so drift is visible); Unknown exists as a name for
+    // downstream switches and mappers to route on. See §P2.2 / #71.
     Unknown = -1,
     Text = 0,
     Private = 1,
