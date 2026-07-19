@@ -16,11 +16,19 @@ internal sealed class UserService(DiscordDbContext db, ILogger<UserService> logg
             .Select(u => new { u.Id, u.Username, u.GlobalName })
             .FirstOrDefaultAsync();
 
-        if (existing is not null && (existing.Username != user.Username || existing.GlobalName != user.GlobalName))
+        if (existing is not null && (UsernameChangedForHistory(existing.Username, user.Username) || existing.GlobalName != user.GlobalName))
             return await UpdateUserWithNameHistoryAsync(user, existing.Username, existing.GlobalName, existing.Id);
 
         return await UpsertUserUnchangedAsync(user);
     }
+
+    // Case-only username differences are not name changes: Discord usernames are lowercase-only
+    // post-migration, but system users (e.g. Clyde) come back as "Clyde" from one API surface and
+    // "clyde" from another, which otherwise flips a history-row pair on every backfill run (#297).
+    // The latest casing is still persisted; only the history trigger ignores case. GlobalName is a
+    // display name where casing is a deliberate user choice, so it stays case-sensitive.
+    private static bool UsernameChangedForHistory(string? oldUsername, string? newUsername) =>
+        !string.Equals(oldUsername, newUsername, StringComparison.OrdinalIgnoreCase);
 
     // A name change is the only flow that issues a SECOND write (the history row) after
     // updating the user. Do it as load-modify-save committed in a SINGLE SaveChanges so the
@@ -31,7 +39,7 @@ internal sealed class UserService(DiscordDbContext db, ILogger<UserService> logg
     private async Task<UpsertResult<Guid>> UpdateUserWithNameHistoryAsync(
         DiscordUser user, string? oldUsername, string? oldGlobalName, Guid existingId)
     {
-        var usernameChanged = oldUsername != user.Username;
+        var usernameChanged = UsernameChangedForHistory(oldUsername, user.Username);
         var globalNameChanged = oldGlobalName != user.GlobalName;
 
         var entity = await db.Users.FirstOrDefaultAsync(u => u.DiscordId == user.Id);

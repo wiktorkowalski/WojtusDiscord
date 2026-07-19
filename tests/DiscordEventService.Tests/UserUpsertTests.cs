@@ -89,6 +89,44 @@ public sealed class UserUpsertTests(PostgresFixture fixture) : IClassFixture<Pos
         Assert.Equal(0, await verify.UserNameHistory.CountAsync());
     }
 
+    [Fact]
+    public async Task UpsertUserAsync_WhenUsernameCaseOnlyChanged_PersistsCasingWithoutHistory()
+    {
+        var service = new UserService(_db, NullLogger<UserService>.Instance);
+        await service.UpsertUserAsync(MakeUser(600UL, "clyde", "Clyde"));
+        _db.ChangeTracker.Clear();
+
+        // System users case-flap between API surfaces (#297): the new casing must be persisted,
+        // but a case-only username difference must not produce a name-history row.
+        await service.UpsertUserAsync(MakeUser(600UL, "Clyde", "Clyde"));
+
+        await using var verify = NewContext();
+        var row = await verify.Users.SingleAsync(u => u.DiscordId == 600UL);
+        Assert.Equal("Clyde", row.Username);
+        Assert.Equal(0, await verify.UserNameHistory.CountAsync());
+    }
+
+    [Fact]
+    public async Task UpsertUserAsync_WhenUsernameCaseFlappedAndGlobalNameChanged_RecordsOnlyGlobalName()
+    {
+        var service = new UserService(_db, NullLogger<UserService>.Instance);
+        await service.UpsertUserAsync(MakeUser(700UL, "clyde", "Clyde"));
+        _db.ChangeTracker.Clear();
+
+        await service.UpsertUserAsync(MakeUser(700UL, "Clyde", "Clyde AI"));
+
+        await using var verify = NewContext();
+        var row = await verify.Users.SingleAsync(u => u.DiscordId == 700UL);
+        Assert.Equal("Clyde", row.Username);
+        Assert.Equal("Clyde AI", row.GlobalName);
+
+        var history = await verify.UserNameHistory.SingleAsync(h => h.UserId == row.Id);
+        Assert.Null(history.UsernameBefore);
+        Assert.Null(history.UsernameAfter);
+        Assert.Equal("Clyde", history.GlobalNameBefore);
+        Assert.Equal("Clyde AI", history.GlobalNameAfter);
+    }
+
     private DiscordDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<DiscordDbContext>()
