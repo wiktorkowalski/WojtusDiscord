@@ -1,5 +1,6 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Services;
 using DSharpPlus;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,6 +17,7 @@ internal sealed class StickersBackfillJob(
     public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
         => executor.RunAsync(BackfillType, guildId, async ctx =>
         {
+            var stickerUpsert = ctx.Services.GetRequiredService<StickerUpsertService>();
             var guild = await discordClient.GetGuildAsync(guildId);
             var guildEntity = await ctx.Db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == guildId, cancellationToken);
 
@@ -29,33 +31,7 @@ internal sealed class StickersBackfillJob(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var tags = sticker.Tags is not null ? string.Join(",", sticker.Tags) : null;
-
-                await ctx.Db.Stickers.UpsertAsync(
-                    s => s.DiscordId == sticker.Id,
-                    s => s
-                        .SetProperty(st => st.Name, sticker.Name ?? string.Empty)
-                        .SetProperty(st => st.Description, sticker.Description)
-                        .SetProperty(st => st.Tags, tags)
-                        .SetProperty(st => st.Type, (int)sticker.Type)
-                        .SetProperty(st => st.FormatType, (int)sticker.FormatType)
-                        .SetProperty(st => st.IsAvailable, true)
-                        .SetProperty(st => st.IsDeleted, false)
-                        .SetProperty(st => st.DeletedAtUtc, (DateTime?)null),
-                    () => new StickerEntity
-                    {
-                        DiscordId = sticker.Id,
-                        GuildId = guildEntity.Id,
-                        PackId = sticker.PackId,
-                        Name = sticker.Name ?? string.Empty,
-                        Description = sticker.Description,
-                        Tags = tags,
-                        Type = (int)sticker.Type,
-                        FormatType = (int)sticker.FormatType,
-                        IsAvailable = true
-                    },
-                    s => s.Id,
-                    cancellationToken);
+                await stickerUpsert.UpsertStickerAsync(sticker, guildEntity.Id, cancellationToken);
 
                 ctx.Checkpoint.ProcessedCount++;
 

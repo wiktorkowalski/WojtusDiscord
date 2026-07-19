@@ -51,7 +51,9 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
                         g => g.Id);
 
                     await UpsertChannelsAndRolesAsync(
-                        ctx.Db, ctx.Services.GetRequiredService<ChannelUpsertService>(), e.Guild, guildGuid);
+                        ctx.Services.GetRequiredService<ChannelUpsertService>(),
+                        ctx.Services.GetRequiredService<RoleUpsertService>(),
+                        e.Guild, guildGuid);
 
                     await tx.CommitAsync();
                 });
@@ -98,49 +100,16 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
             });
     }
 
-    // Per-entity upsert: each channel/role goes through the shared primitive, which absorbs
-    // the 23505 race a concurrent GuildCreate could otherwise cause in a batched insert.
+    // Per-entity upsert: each channel/role goes through the shared seam, which owns the
+    // column map and absorbs the 23505 race a concurrent GuildCreate could otherwise cause
+    // in a batched insert.
     private static async Task UpsertChannelsAndRolesAsync(
-        DiscordDbContext db, ChannelUpsertService channelUpsert, DiscordGuild guild, Guid guildGuid)
+        ChannelUpsertService channelUpsert, RoleUpsertService roleUpsert, DiscordGuild guild, Guid guildGuid)
     {
         foreach (var channel in guild.Channels.Values)
             await channelUpsert.UpsertChannelAsync(channel, guildGuid);
 
-        await UpsertGuildRolesAsync(db, guild, guildGuid);
-    }
-
-    private static async Task UpsertGuildRolesAsync(DiscordDbContext db, DiscordGuild guild, Guid guildGuid)
-    {
         foreach (var role in guild.Roles.Values)
-        {
-            var permissions = long.TryParse(role.Permissions.ToString(), out var p) ? p : 0;
-            await db.Roles.UpsertAsync(
-                r => r.DiscordId == role.Id,
-                s => s
-                    .SetProperty(r => r.Name, role.Name)
-                    .SetProperty(r => r.Color, role.Color.Value)
-                    .SetProperty(r => r.IsHoisted, role.IsHoisted)
-                    .SetProperty(r => r.Position, role.Position)
-                    .SetProperty(r => r.Permissions, permissions)
-                    .SetProperty(r => r.IsManaged, role.IsManaged)
-                    .SetProperty(r => r.IsMentionable, role.IsMentionable)
-                    .SetProperty(r => r.IsDeleted, false)
-                    .SetProperty(r => r.DeletedAtUtc, (DateTime?)null),
-                () => new RoleEntity
-                {
-                    DiscordId = role.Id,
-                    GuildId = guildGuid,
-                    Name = role.Name,
-                    Color = role.Color.Value,
-                    IsHoisted = role.IsHoisted,
-                    Position = role.Position,
-                    Permissions = permissions,
-                    IsManaged = role.IsManaged,
-                    IsMentionable = role.IsMentionable,
-                    IsDeleted = false,
-                },
-                r => r.Id);
-        }
+            await roleUpsert.UpsertRoleAsync(role, guildGuid);
     }
-
 }

@@ -17,6 +17,7 @@ internal sealed class StickerEventHandler(EventPipeline pipeline) :
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
+                var stickerUpsert = ctx.Services.GetRequiredService<StickerUpsertService>();
                 var guildResult = await guildUpsert.UpsertGuildAsync(e.Guild);
                 var guildGuid = guildResult.IsSuccess ? guildResult.Value : (Guid?)null;
 
@@ -30,43 +31,26 @@ internal sealed class StickerEventHandler(EventPipeline pipeline) :
                                  e.StickersBefore[id].Description != e.StickersAfter[id].Description)
                     .ToList();
 
-                await UpsertStickersAsync(ctx, e, guildGuid);
-                await SoftDeleteRemovedStickersAsync(ctx, removedIds);
-
-                ctx.Db.StickerEvents.Add(BuildStickerEvent(e, ctx, addedIds, removedIds, updatedIds));
-
-                await ctx.Db.SaveChangesAsync();
-            });
-    }
-
-    private static async Task UpsertStickersAsync(EventContext ctx, GuildStickersUpdatedEventArgs e, Guid? guildGuid)
-    {
-        foreach (var sticker in e.StickersAfter.Values)
-        {
-            var existing = await ctx.Db.Stickers.FirstOrDefaultAsync(s => s.DiscordId == sticker.Id);
-            if (existing is null)
-            {
-                ctx.Db.Stickers.Add(new StickerEntity
+                // Sticker rows + event row must commit together. ExecutionStrategy is required
+                // because EnableRetryOnFailure is configured on the DbContext.
+                var strategy = ctx.Db.Database.CreateExecutionStrategy();
+                await strategy.ExecuteAsync(async () =>
                 {
-                    DiscordId = sticker.Id,
-                    GuildId = guildGuid,
-                    Name = sticker.Name ?? string.Empty,
-                    Description = sticker.Description,
-                    Tags = sticker.Tags is not null ? string.Join(",", sticker.Tags) : null,
-                    Type = (int)sticker.Type,
-                    FormatType = (int)sticker.FormatType,
-                    IsAvailable = true
+                    // Reset the tracker so an EnableRetryOnFailure retry doesn't re-stage entities
+                    // left Added by a rolled-back attempt.
+                    ctx.Db.ChangeTracker.Clear();
+                    await using var tx = await ctx.Db.Database.BeginTransactionAsync();
+
+                    foreach (var sticker in e.StickersAfter.Values)
+                        await stickerUpsert.UpsertStickerAsync(sticker, guildGuid);
+
+                    await SoftDeleteRemovedStickersAsync(ctx, removedIds);
+
+                    ctx.Db.StickerEvents.Add(BuildStickerEvent(e, ctx, addedIds, removedIds, updatedIds));
+                    await ctx.Db.SaveChangesAsync();
+                    await tx.CommitAsync();
                 });
-            }
-            else
-            {
-                existing.Name = sticker.Name ?? string.Empty;
-                existing.Description = sticker.Description;
-                existing.Tags = sticker.Tags is not null ? string.Join(",", sticker.Tags) : null;
-                existing.IsDeleted = false;
-                existing.DeletedAtUtc = null;
-            }
-        }
+            });
     }
 
     private static async Task SoftDeleteRemovedStickersAsync(EventContext ctx, List<ulong> removedIds)

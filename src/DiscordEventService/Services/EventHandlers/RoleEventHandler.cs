@@ -1,9 +1,6 @@
-using DiscordEventService.Data;
-using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
-using DSharpPlus.Entities;
 using DSharpPlus.EventArgs;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,13 +16,12 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
         await pipeline.ExecuteAsync(e, "GuildRoleCreated", nameof(RoleEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
+                var roleUpsert = ctx.Services.GetRequiredService<RoleUpsertService>();
                 // Resolve the required guild FK via the shared resolver: on a miss it logs and
                 // records a FailedEvent (replayable trace) instead of flowing Guid.Empty into the
                 // roles row (#292). The RoleEvent timeline row is FK-free and still lands below.
                 var fks = await ctx.Services.GetRequiredService<FkResolver>()
                     .ResolveAsync(ctx, e.Guild, $"GuildRoleCreated RoleId={e.Role.Id}");
-
-                var permissions = long.TryParse(e.Role.Permissions.ToString(), out var perm) ? perm : 0;
 
                 // Upsert the role (handles the 23505 race internally) before staging the event,
                 // then commit role + event together. ExecutionStrategy is required because
@@ -39,7 +35,7 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
                     await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
                     if (fks.Success)
-                        await UpsertCreatedRoleAsync(ctx, e.Role, fks.GuildId, permissions);
+                        await roleUpsert.UpsertRoleAsync(e.Role, fks.GuildId);
 
                     ctx.Db.RoleEvents.Add(BuildRoleCreatedEvent(e, ctx));
                     await ctx.Db.SaveChangesAsync();
@@ -53,11 +49,10 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
         await pipeline.ExecuteAsync(e, "GuildRoleUpdated", nameof(RoleEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
-                var roleEntity = await ctx.Db.Roles
-                    .FirstOrDefaultAsync(r => r.DiscordId == e.RoleAfter.Id);
-
-                if (roleEntity is not null)
-                    UpdateRoleEntity(roleEntity, e.RoleAfter);
+                var roleUpsert = ctx.Services.GetRequiredService<RoleUpsertService>();
+                // Shared resolver: a guild miss must not flow Guid.Empty into a fresh roles row (#292).
+                var fks = await ctx.Services.GetRequiredService<FkResolver>()
+                    .ResolveAsync(ctx, e.Guild, $"GuildRoleUpdated RoleId={e.RoleAfter.Id}");
 
                 var roleEvent = new RoleEventEntity
                 {
@@ -81,8 +76,25 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
                     roleEvent.ColorAfter = e.RoleAfter.Color.Value;
                 }
 
-                ctx.Db.RoleEvents.Add(roleEvent);
-                await ctx.Db.SaveChangesAsync();
+                // Role row + event row must commit together. ExecutionStrategy is required
+                // because EnableRetryOnFailure is configured on the DbContext.
+                var strategy = ctx.Db.Database.CreateExecutionStrategy();
+                await strategy.ExecuteAsync(async () =>
+                {
+                    // Reset the tracker so an EnableRetryOnFailure retry doesn't re-stage entities
+                    // left Added by a rolled-back attempt.
+                    ctx.Db.ChangeTracker.Clear();
+                    await using var tx = await ctx.Db.Database.BeginTransactionAsync();
+
+                    // Through the shared seam so an update for a role we never saw creates
+                    // the row instead of being dropped.
+                    if (fks.Success)
+                        await roleUpsert.UpsertRoleAsync(e.RoleAfter, fks.GuildId);
+
+                    ctx.Db.RoleEvents.Add(roleEvent);
+                    await ctx.Db.SaveChangesAsync();
+                    await tx.CommitAsync();
+                });
             });
     }
 
@@ -114,49 +126,6 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
 
                 await ctx.Db.SaveChangesAsync();
             });
-    }
-
-    private static void UpdateRoleEntity(RoleEntity entity, DiscordRole role)
-    {
-        entity.Name = role.Name;
-        entity.Color = role.Color.Value;
-        entity.IsHoisted = role.IsHoisted;
-        entity.Position = role.Position;
-        entity.Permissions = long.TryParse(role.Permissions.ToString(), out var perm) ? perm : 0;
-        entity.IsManaged = role.IsManaged;
-        entity.IsMentionable = role.IsMentionable;
-        entity.IsDeleted = false;
-        entity.DeletedAtUtc = null;
-    }
-
-    private static async Task UpsertCreatedRoleAsync(EventContext ctx, DiscordRole role, Guid guildGuid, long permissions)
-    {
-        await ctx.Db.Roles.UpsertAsync(
-            r => r.DiscordId == role.Id,
-            s => s
-                .SetProperty(r => r.Name, role.Name)
-                .SetProperty(r => r.Color, role.Color.Value)
-                .SetProperty(r => r.IsHoisted, role.IsHoisted)
-                .SetProperty(r => r.Position, role.Position)
-                .SetProperty(r => r.Permissions, permissions)
-                .SetProperty(r => r.IsManaged, role.IsManaged)
-                .SetProperty(r => r.IsMentionable, role.IsMentionable)
-                .SetProperty(r => r.IsDeleted, false)
-                .SetProperty(r => r.DeletedAtUtc, (DateTime?)null),
-            () => new RoleEntity
-            {
-                DiscordId = role.Id,
-                GuildId = guildGuid,
-                Name = role.Name,
-                Color = role.Color.Value,
-                IsHoisted = role.IsHoisted,
-                Position = role.Position,
-                Permissions = permissions,
-                IsManaged = role.IsManaged,
-                IsMentionable = role.IsMentionable,
-                IsDeleted = false
-            },
-            r => r.Id);
     }
 
     private static RoleEventEntity BuildRoleCreatedEvent(GuildRoleCreatedEventArgs e, EventContext ctx) => new RoleEventEntity
