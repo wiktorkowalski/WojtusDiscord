@@ -142,7 +142,10 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal(MemeIndexStatus.Skipped, byId[11UL].Status);
         Assert.StartsWith("model refusal", byId[11UL].Error);
         Assert.Equal(MemeIndexStatus.Failed, byId[12UL].Status);
-        Assert.Equal(1, byId[12UL].AttemptCount);
+        // Transient model errors refund the attempt (#293): only deterministic failures
+        // may walk a row toward the sweep's permanent-abandonment cap.
+        Assert.Equal(0, byId[12UL].AttemptCount);
+        Assert.StartsWith("transient", byId[12UL].Error);
         Assert.Equal(MemeIndexStatus.Skipped, byId[13UL].Status);
         Assert.StartsWith("unsupported", byId[13UL].Error);
         Assert.Equal(MemeIndexStatus.Skipped, byId[14UL].Status);
@@ -157,7 +160,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         await using var verify2 = NewContext();
         var retried = await verify2.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 12UL);
         Assert.Equal(MemeIndexStatus.Indexed, retried.Status);
-        Assert.Equal(2, retried.AttemptCount);
+        Assert.Equal(1, retried.AttemptCount);
         Assert.Null(retried.Error);
     }
 

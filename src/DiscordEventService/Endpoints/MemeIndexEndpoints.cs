@@ -38,8 +38,13 @@ internal static class MemeIndexEndpoints
         if (string.IsNullOrWhiteSpace(openRouterOptions.Value.Model))
             return Results.BadRequest(new { error = "OpenRouter:Model is not set" });
 
-        var inProgress = await db.BackfillCheckpoints.AnyAsync(c =>
-            c.GuildDiscordId == guildId && c.Type == BackfillType.MemeIndex && c.Status == BackfillStatus.InProgress);
+        // Staleness-aware (#293), mirroring MemeIndexSweepJob: a dead job's InProgress checkpoint
+        // must not require manual DB surgery before indexing can be restarted.
+        var nowUtc = DateTime.UtcNow;
+        var inProgress = (await db.BackfillCheckpoints.AsNoTracking()
+                .Where(c => c.GuildDiscordId == guildId && c.Type == BackfillType.MemeIndex && c.Status == BackfillStatus.InProgress)
+                .ToListAsync())
+            .Any(c => c.IsActivelyInProgress(nowUtc));
         if (inProgress)
             return Results.BadRequest(new { error = "Meme indexing already in progress for this guild" });
 
