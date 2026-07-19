@@ -143,8 +143,6 @@ internal sealed class ReactionsBackfillJob(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                await userService.UpsertUserAsync(user);
-
                 var exists = await db.ReactionEvents.AnyAsync(r =>
                     r.MessageDiscordId == message.Id &&
                     r.UserDiscordId == user.Id &&
@@ -154,6 +152,10 @@ internal sealed class ReactionsBackfillJob(
 
                 if (!exists)
                 {
+                    // Upsert only reactors we are about to record (#297): re-scrolled reactions
+                    // would otherwise re-upsert every reactor each run, churning user rows.
+                    await userService.UpsertUserAsync(user);
+
                     db.ReactionEvents.Add(new ReactionEventEntity
                     {
                         MessageDiscordId = message.Id,
