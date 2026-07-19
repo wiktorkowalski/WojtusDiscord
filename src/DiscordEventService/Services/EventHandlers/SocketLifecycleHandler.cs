@@ -147,36 +147,15 @@ internal sealed class SocketLifecycleHandler(
             afterTimestamp = earliestAllowed;
         }
 
-        var inProgressCheckpoints = await db.BackfillCheckpoints
-            .Where(c => c.Status == BackfillStatus.InProgress)
-            .ToListAsync();
-
-        foreach (var stale in inProgressCheckpoints.Where(c => !c.IsActivelyInProgress(now)))
-        {
-            logger.LogWarning(
-                "Ignoring stale InProgress {BackfillType} checkpoint for guild {GuildId}: no progress since {LastUpdatedUtc:O}",
-                stale.Type, stale.GuildDiscordId, stale.LastUpdatedUtc);
-        }
-
-        var inProgressSet = inProgressCheckpoints
-            .Where(c => c.IsActivelyInProgress(now))
-            .Select(c => c.GuildDiscordId)
-            .ToHashSet();
-
+        // The orchestrator is the single guard against overlapping chains (#289) — it skips the
+        // guild (returns null) when a chain is already active and logs why.
         foreach (var guildId in guildIds)
         {
-            if (inProgressSet.Contains(guildId))
-            {
+            var jobId = await orchestrator.EnqueueBackfillFromAsync(guildId, afterTimestamp);
+            if (jobId is not null)
                 logger.LogInformation(
-                    "Reconnect backfill skipped for guild {GuildId}: backfill already in progress",
-                    guildId);
-                continue;
-            }
-
-            logger.LogInformation(
-                "Reconnect backfill enqueued for guild {GuildId} after gap {GapDuration:c}, backfilling from {AfterTimestampUtc:O}",
-                guildId, gap, afterTimestamp);
-            orchestrator.EnqueueBackfillFrom(guildId, afterTimestamp);
+                    "Reconnect backfill enqueued for guild {GuildId} after gap {GapDuration:c}, backfilling from {AfterTimestampUtc:O}",
+                    guildId, gap, afterTimestamp);
         }
     }
 }

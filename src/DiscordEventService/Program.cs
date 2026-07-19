@@ -196,6 +196,7 @@ builder.Services.AddScoped<MembersBackfillJob>();
 builder.Services.AddScoped<MessagesBackfillJob>();
 builder.Services.AddScoped<ReactionsBackfillJob>();
 builder.Services.AddScoped<PeriodicFullBackfillJob>();
+builder.Services.AddSingleton<StartupBackfillSweep>();
 
 var app = builder.Build();
 
@@ -231,6 +232,10 @@ if (dbOptions.AutoMigrate)
     var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
     await db.Database.MigrateAsync();
 }
+
+// #288: must run before app.Run() starts the Hangfire server, so dead chain jobs are deleted
+// before any worker can re-fetch them.
+await app.Services.GetRequiredService<StartupBackfillSweep>().SweepAsync();
 
 // Serve the bundled dashboard SPA (Vite build output in wwwroot). Must precede
 // the route-mapping below; the SPA fallback is registered LAST so it never

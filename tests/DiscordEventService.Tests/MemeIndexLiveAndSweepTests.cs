@@ -312,10 +312,11 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     }
 }
 
-// Captures enqueues without a storage backend.
+// Captures enqueues and state changes (e.g. Delete) without a storage backend.
 internal sealed class RecordingJobClient : IBackgroundJobClient
 {
     public List<Job> Created { get; } = [];
+    public List<(string JobId, string State)> StateChanges { get; } = [];
 
     public string Create(Job job, IState state)
     {
@@ -323,5 +324,9 @@ internal sealed class RecordingJobClient : IBackgroundJobClient
         return Created.Count.ToString();
     }
 
-    public bool ChangeState(string jobId, IState state, string expectedState) => true;
+    public bool ChangeState(string jobId, IState state, string expectedState)
+    {
+        StateChanges.Add((jobId, state.Name));
+        return true;
+    }
 }

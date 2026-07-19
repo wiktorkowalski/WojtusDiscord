@@ -33,19 +33,13 @@ internal static class BackfillEndpoints
     private static async Task<IResult> StartBackfill(
         ulong guildId,
         BackfillRequest? request,
-        GuildBackfillOrchestrator orchestrator,
-        DiscordDbContext db)
+        GuildBackfillOrchestrator orchestrator)
     {
-        var inProgressCheckpoints = await db.BackfillCheckpoints
-            .Where(c => c.GuildDiscordId == guildId && c.Status == BackfillStatus.InProgress)
-            .ToListAsync();
-        var existingInProgress = inProgressCheckpoints.Any(c => c.IsActivelyInProgress(DateTime.UtcNow));
-
-        if (existingInProgress)
-            return Results.BadRequest(new { error = "Backfill already in progress for this guild" });
-
         var options = request?.ToOptions() ?? BackfillOptions.Default;
-        var jobId = orchestrator.StartBackfill(guildId, options);
+        var jobId = await orchestrator.StartBackfillAsync(guildId, options);
+
+        if (jobId is null)
+            return Results.BadRequest(new { error = "Backfill already in progress for this guild" });
 
         return Results.Accepted(
             $"/api/backfill/{guildId}/status",
@@ -90,8 +84,11 @@ internal static class BackfillEndpoints
         DiscordDbContext db,
         IBackgroundJobClient jobClient)
     {
+        // Pending rows are chain jobs that haven't started yet (#289) — cancelling must delete
+        // those too, or the rest of the chain keeps running.
         var inProgress = await db.BackfillCheckpoints
-            .Where(c => c.GuildDiscordId == guildId && c.Status == BackfillStatus.InProgress)
+            .Where(c => c.GuildDiscordId == guildId
+                && (c.Status == BackfillStatus.InProgress || c.Status == BackfillStatus.Pending))
             .ToListAsync();
 
         foreach (var checkpoint in inProgress)
