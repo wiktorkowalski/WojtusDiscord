@@ -16,6 +16,8 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
 {
     private const ulong GuildDiscordId = 1UL;
     private const ulong ChannelDiscordId = 2UL;
+    // Mirrors the MemeIndexOptions.MaxImageBytes default.
+    private const int DefaultMaxImageBytes = 25 * 1024 * 1024;
 
     private DiscordDbContext _db = null!;
     private GuildEntity _guild = null!;
@@ -320,11 +322,111 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal(3, _http.ModelCalls);
     }
 
-    private Task RunJobAsync(int maxImagesPerRun = 500) => RunAsync(maxImagesPerRun, sweep: false);
+    [Fact]
+    public async Task ExecuteAsync_MetadataOversizedAttachment_SkippedWithoutDownload()
+    {
+        // Discord already told us the file size — an attachment over MaxImageBytes
+        // must be pre-skipped from metadata, not buffered in full first.
+        AddMessage(1001UL, Attachment(11UL, "huge.png", fileSize: 26L * 1024 * 1024));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
 
-    private Task RunSweepAsync() => RunAsync(maxImagesPerRun: 500, sweep: true);
+        await RunJobAsync();
 
-    private async Task RunAsync(int maxImagesPerRun, bool sweep)
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 11UL);
+        Assert.Equal(MemeIndexStatus.Skipped, row.Status);
+        Assert.StartsWith("unsupported: image too large", row.Error);
+        Assert.Equal(0, _http.CdnRequests);
+        Assert.Equal(0, _http.ModelCalls);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DownloadExceedsBufferCap_SkippedNotRetriedForever()
+    {
+        // Metadata can lie small. The download client's buffer cap is the backstop —
+        // and blowing it is deterministic, so it must be a terminal Skip, not a
+        // transient Failure that every future sweep retries (and refunds) forever.
+        AddMessage(1001UL, Attachment(11UL, "liar.png", fileSize: 10));
+        await _db.SaveChangesAsync();
+        var oversized = new byte[100];
+        Png(1).CopyTo(oversized, 0);
+        _http.SetImage(11UL, oversized);
+
+        await RunJobAsync(maxImageBytes: 64);
+
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 11UL);
+        Assert.Equal(MemeIndexStatus.Skipped, row.Status);
+        Assert.StartsWith("unsupported: image too large", row.Error);
+        Assert.Equal(0, _http.ModelCalls);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CapSplitsMultiAttachmentMessage_ResumeDoesNotSkipSiblings()
+    {
+        // MaxImagesPerRun can cut a multi-attachment message in half. The resume
+        // cursor must NOT advance to that message: a crash before the run's
+        // Completed flip would otherwise make the resumed run skip the siblings.
+        AddMessage(1001UL, Attachment(11UL, "a.png"), Attachment(12UL, "b.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.SetImage(12UL, Png(2));
+
+        await RunJobAsync(maxImagesPerRun: 1);
+
+        // Simulate a SIGKILL between the last per-item save and MarkCompleted:
+        // status stays InProgress, so the next run honors the saved cursor.
+        await using (var crash = NewContext())
+        {
+            await crash.BackfillCheckpoints
+                .Where(c => c.Type == BackfillType.MemeIndex)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.Status, BackfillStatus.InProgress));
+        }
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        var sibling = await verify.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 12UL);
+        Assert.Equal(MemeIndexStatus.Indexed, sibling.Status);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MidFlightResume_NeverReportsProcessedAboveTotal()
+    {
+        // A resumed run keeps accumulating ProcessedCount — TotalCount must
+        // include that prior progress or the status endpoint shows processed > total.
+        AddMessage(1001UL, Attachment(11UL, "done-before-crash.png"));
+        AddMessage(1002UL, Attachment(12UL, "after-cursor.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(12UL, Png(2));
+
+        _db.BackfillCheckpoints.Add(new BackfillCheckpointEntity
+        {
+            GuildDiscordId = GuildDiscordId,
+            Type = BackfillType.MemeIndex,
+            Status = BackfillStatus.InProgress,
+            LastProcessedId = 1001UL,
+            ProcessedCount = 5,
+            TotalCount = 6,
+            StartedAtUtc = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync();
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(6, checkpoint.ProcessedCount);
+        Assert.Equal(6, checkpoint.TotalCount);
+    }
+
+    private Task RunJobAsync(int maxImagesPerRun = 500, int maxImageBytes = DefaultMaxImageBytes)
+        => RunAsync(maxImagesPerRun, maxImageBytes, sweep: false);
+
+    private Task RunSweepAsync() => RunAsync(maxImagesPerRun: 500, DefaultMaxImageBytes, sweep: true);
+
+    private async Task RunAsync(int maxImagesPerRun, int maxImageBytes, bool sweep)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -335,6 +437,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         {
             o.ChannelIds = [ChannelDiscordId];
             o.MaxImagesPerRun = maxImagesPerRun;
+            o.MaxImageBytes = maxImageBytes;
         });
         services.Configure<OpenRouterOptions>(o =>
         {
@@ -343,7 +446,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
             o.RequestDelayMs = 0;
         });
         services.Configure<DiscordOptions>(o => o.Token = new string('x', 60));
-        services.AddSingleton<IHttpClientFactory>(new FakeHttpClientFactory(_http));
+        services.AddSingleton<IHttpClientFactory>(new FakeHttpClientFactory(_http, maxImageBytes));
         services.AddScoped<MemeSampleService>();
         services.AddScoped<AttachmentUrlRefreshService>();
         services.AddScoped<OpenRouterClient>();
@@ -375,8 +478,8 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     }
 
     // The 4-field PascalCase shape MessageEventHandler/MessagesBackfillJob serialize.
-    private static string Attachment(ulong id, string fileName) =>
-        $"{{\"Id\":{id},\"Url\":\"https://cdn.test/attachments/{ChannelDiscordId}/{id}/{fileName}?ex=expired\",\"FileName\":\"{fileName}\",\"FileSize\":123}}";
+    private static string Attachment(ulong id, string fileName, long fileSize = 123) =>
+        $"{{\"Id\":{id},\"Url\":\"https://cdn.test/attachments/{ChannelDiscordId}/{id}/{fileName}?ex=expired\",\"FileName\":\"{fileName}\",\"FileSize\":{fileSize}}}";
 
     // Distinct valid-PNG-magic payloads (≥12 bytes for the sniffer).
     private static byte[] Png(byte seed) =>
@@ -401,6 +504,7 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
     public List<byte[]> TransientErrorFor { get; } = [];
     public int RefreshFailuresRemaining { get; set; }
     public int ModelCalls { get; private set; }
+    public int CdnRequests { get; private set; }
 
     public void SetImage(ulong attachmentId, byte[] bytes) => _imagesByAttachment[attachmentId] = bytes;
 
@@ -439,6 +543,7 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
 
     private HttpResponseMessage HandleCdn(HttpRequestMessage request)
     {
+        CdnRequests++;
         var id = AttachmentIdOf(request.RequestUri!.AbsoluteUri);
         if (!_imagesByAttachment.TryGetValue(id, out var bytes))
             return new HttpResponseMessage(HttpStatusCode.NotFound);
@@ -498,10 +603,11 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
         };
 }
 
-internal sealed class FakeHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+internal sealed class FakeHttpClientFactory(HttpMessageHandler handler, long maxImageBytes = 25 * 1024 * 1024) : IHttpClientFactory
 {
-    public HttpClient CreateClient(string name) =>
-        new HttpClient(handler, disposeHandler: false)
+    public HttpClient CreateClient(string name)
+    {
+        var client = new HttpClient(handler, disposeHandler: false)
         {
             BaseAddress = name switch
             {
@@ -510,4 +616,9 @@ internal sealed class FakeHttpClientFactory(HttpMessageHandler handler) : IHttpC
                 _ => null
             }
         };
+        // Mirrors the prod discord-cdn client's download hard cap.
+        if (name == MemeBenchmarkJob.DownloadHttpClientName)
+            client.MaxResponseContentBufferSize = maxImageBytes;
+        return client;
+    }
 }

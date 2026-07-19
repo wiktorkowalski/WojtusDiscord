@@ -98,24 +98,26 @@ internal sealed class MemeIndexingJob(
             var urlRefreshService = ctx.Services.GetRequiredService<AttachmentUrlRefreshService>();
             var indexer = ctx.Services.GetRequiredService<MemeAttachmentIndexer>();
 
-            var pending = await CollectPendingAsync(
+            var allPending = await CollectPendingAsync(
                 ctx.Db, sampleService, guildId, ctx.Checkpoint, maxFailedAttempts, cancellationToken);
 
             var cap = memeOptions.MaxImagesPerRun;
-            var capped = pending.Count > cap;
+            var capped = allPending.Count > cap;
+            var pending = allPending;
             if (capped)
             {
                 logger.LogInformation(
                     "Meme indexing for guild {GuildId}: {Pending} attachments pending, capping this run at {Cap}",
-                    guildId, pending.Count, cap);
-                pending = pending.Take(cap).ToList();
+                    guildId, allPending.Count, cap);
+                pending = allPending.Take(cap).ToList();
             }
 
             // A fresh run (no resume cursor) restarts the per-run progress pair;
-            // a mid-flight resume keeps accumulating into it.
+            // a mid-flight resume keeps accumulating into it, so the total must
+            // include the prior progress or status shows processed > total.
             if (ctx.Checkpoint.LastProcessedId is null)
                 ctx.Checkpoint.ProcessedCount = 0;
-            ctx.Checkpoint.TotalCount = pending.Count;
+            ctx.Checkpoint.TotalCount = ctx.Checkpoint.ProcessedCount + pending.Count;
             await ctx.Db.SaveChangesAsync(cancellationToken);
 
             if (pending.Count == 0)
@@ -128,8 +130,14 @@ internal sealed class MemeIndexingJob(
                 "Meme indexing starting for guild {GuildId}: {Count} attachments, model {Model}",
                 guildId, pending.Count, openRouterOptions.Model);
 
+            // When the cap slices a multi-attachment message in half, the last capped
+            // item is NOT the end of its message — the cursor must not advance past it.
+            ulong? messageSplitByCap = capped && allPending[cap].MessageDiscordId == pending[^1].MessageDiscordId
+                ? pending[^1].MessageDiscordId
+                : null;
+
             var counters = new MemeIndexRunCounters();
-            await ProcessPendingBatchesAsync(ctx, indexer, urlRefreshService, pending, counters, cancellationToken);
+            await ProcessPendingBatchesAsync(ctx, indexer, urlRefreshService, pending, messageSplitByCap, counters, cancellationToken);
 
             logger.LogInformation(
                 "Meme indexing finished for guild {GuildId}: {Indexed} indexed, {Deduped} deduped, {Skipped} skipped, {Failed} failed; " +
@@ -211,6 +219,7 @@ internal sealed class MemeIndexingJob(
         MemeAttachmentIndexer indexer,
         AttachmentUrlRefreshService urlRefreshService,
         List<MemeSampleItem> pending,
+        ulong? messageSplitByCap,
         MemeIndexRunCounters counters,
         CancellationToken cancellationToken)
     {
@@ -234,7 +243,8 @@ internal sealed class MemeIndexingJob(
                 // Advance the resume cursor only once a message's LAST pending
                 // attachment is done — a mid-message cursor would skip siblings.
                 var lastOfMessage = position == pending.Count
-                    || pending[position].MessageDiscordId != item.MessageDiscordId;
+                    ? item.MessageDiscordId != messageSplitByCap
+                    : pending[position].MessageDiscordId != item.MessageDiscordId;
                 if (lastOfMessage)
                     ctx.Checkpoint.LastProcessedId = item.MessageDiscordId;
 
