@@ -5,8 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace DiscordEventService.Jobs;
 
 // Reconnect-backfill is capped to 2 days, so anything older needs this periodic sweep;
-// skips guilds with an InProgress checkpoint to avoid stepping on the reconnect path or
-// the operator-triggered /api/backfill endpoint.
+// the orchestrator's chain guard skips guilds where a backfill is already active.
 internal sealed class PeriodicFullBackfillJob(
     IServiceScopeFactory scopeFactory,
     ILogger<PeriodicFullBackfillJob> logger)
@@ -23,38 +22,17 @@ internal sealed class PeriodicFullBackfillJob(
             .Where(g => g.LeftAtUtc == null)
             .Select(g => g.DiscordId)
             .ToListAsync();
-        var inProgress = await db.BackfillCheckpoints
-            .Where(c => c.Status == BackfillStatus.InProgress)
-            .ToListAsync();
-
-        var now = DateTime.UtcNow;
-        foreach (var stale in inProgress.Where(c => !c.IsActivelyInProgress(now)))
-        {
-            logger.LogWarning(
-                "Ignoring stale InProgress {BackfillType} checkpoint for guild {GuildId}: no progress since {LastUpdatedUtc:O}",
-                stale.Type, stale.GuildDiscordId, stale.LastUpdatedUtc);
-        }
-
-        var inProgressSet = inProgress
-            .Where(c => c.IsActivelyInProgress(now))
-            .Select(c => c.GuildDiscordId)
-            .ToHashSet();
 
         var afterTimestamp = DateTime.UtcNow - BackfillWindow;
 
+        // The orchestrator is the single guard against overlapping chains (#289) — it skips the
+        // guild (returns null) when a chain is already active and logs why.
         foreach (var guildId in guildIds)
         {
-            if (inProgressSet.Contains(guildId))
-            {
-                logger.LogInformation(
-                    "Periodic backfill skipped for guild {GuildId}: backfill already in progress",
-                    guildId);
-                continue;
-            }
-
-            logger.LogInformation("Periodic backfill enqueued for guild {GuildId} covering the last {WindowDays} days, after {AfterTimestampUtc:O}",
-                guildId, BackfillWindow.TotalDays, afterTimestamp);
-            orchestrator.EnqueueBackfillFrom(guildId, afterTimestamp);
+            var jobId = await orchestrator.EnqueueBackfillFromAsync(guildId, afterTimestamp);
+            if (jobId is not null)
+                logger.LogInformation("Periodic backfill enqueued for guild {GuildId} covering the last {WindowDays} days, after {AfterTimestampUtc:O}",
+                    guildId, BackfillWindow.TotalDays, afterTimestamp);
         }
     }
 }
