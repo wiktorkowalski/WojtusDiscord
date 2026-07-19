@@ -9,9 +9,95 @@ on:
 permissions:
   contents: read
   packages: write
+  checks: write
 
 jobs:
+  ci:
+    # Format, build (-warnaserror), and run the xUnit + Testcontainers suite.
+    # ubuntu-latest provides Docker for Testcontainers (Postgres 18).
+    uses: wiktorkowalski/github-workflows/.github/workflows/dotnet-ci.yml@master
+    with:
+      dotnet-version: "10.0.x"
+    secrets: inherit
+
+  boot-smoke:
+    # A green build + unit suite does NOT prove the app boots: DI deadlocks, missing
+    # config, and migration failures only surface at builder.Build()/app.Run(), which
+    # VALIDATE_AND_EXIT exits before (and could race past). The §6 boot deadlock shipped
+    # exactly this way. So actually boot the real app — Production environment to match
+    # prod's ValidateScopes=false — with a dummy Discord token against a throwaway Postgres
+    # and require /health to go green. A boot hang fails the PR instead of the deploy.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          # trust auth keeps any password out of the committed connection string (secret scanners).
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build
+        run: dotnet build src/DiscordEventService/DiscordEventService.csproj -c Release
+      - name: Boot the app and wait for /health
+        env:
+          ASPNETCORE_ENVIRONMENT: Production
+          ASPNETCORE_URLS: http://127.0.0.1:5099
+          # A long, obviously-fake token clears DiscordOptions' [MinLength(50)] ValidateOnStart
+          # check; the connect then fails fast (caught) so the host still reaches Kestrel — the
+          # boot path runs through the builder.Build()/ValidateOnBuild edge that deadlocked.
+          Discord__Token: smoke-test-not-a-real-discord-token-do-not-use-0000000000
+          # trust auth on the service => no password in the connection string.
+          ConnectionStrings__Postgres: Host=localhost;Port=5432;Database=postgres;Username=postgres
+        run: |
+          set -uo pipefail
+          # --no-build so the /health timeout below measures boot time, not Release compilation.
+          dotnet run --no-build --project src/DiscordEventService/DiscordEventService.csproj -c Release \
+            > /tmp/boot.log 2>&1 &
+          app_pid=$!
+
+          healthy=0
+          for _ in $(seq 1 30); do
+            if ! kill -0 "$app_pid" 2>/dev/null; then
+              echo "::error::App process exited during startup."
+              break
+            fi
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:5099/health || true)
+            if [ "$code" = "200" ]; then
+              healthy=1
+              break
+            fi
+            sleep 3
+          done
+
+          kill -TERM "$app_pid" 2>/dev/null || true
+          wait "$app_pid" 2>/dev/null || true
+
+          echo "==== boot log ===="
+          cat /tmp/boot.log || true
+
+          if [ "$healthy" != "1" ]; then
+            echo "::error::App did not reach a healthy state within the timeout — likely a boot hang or startup failure."
+            exit 1
+          fi
+          echo "App booted and reported healthy."
+
   build-deploy:
+    # Gate the image build+push (and thus the prod deploy) on the full CI suite AND the
+    # boot smoke test (#291). Before this, ci.yml ran in parallel and gated nothing — a
+    # format/warnaserror/boot regression could reach prod; only the plain test suite
+    # (which the reusable build job also runs) blocked the deploy.
+    needs: [ci, boot-smoke]
     uses: wiktorkowalski/github-workflows/.github/workflows/dotnet-docker-deploy.yml@master
     with:
       image-name: ${{ github.repository }}/discord-event-service
