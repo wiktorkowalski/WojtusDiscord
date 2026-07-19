@@ -18,13 +18,16 @@ internal sealed class ThreadEventHandler(EventPipeline pipeline) :
         await pipeline.ExecuteAsync(e, "ThreadCreated", nameof(ThreadEventHandler),
             e.Guild.Id, e.Thread.Id, e.Thread.CreatorId, async ctx =>
             {
-                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
 
                 // Threads are channels (ADR-0003): upsert the thread into `channels` so messages
-                // sent into it have a non-null channel_id from the first event onward.
-                var guildId = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
-                await channelUpsert.UpsertChannelAsync(e.Thread, guildId);
+                // sent into it have a non-null channel_id from the first event onward. A guild
+                // miss must not flow Guid.Empty into the fresh row (#292); the FK-free
+                // ThreadEvent below still lands either way.
+                var fks = await ctx.Services.GetRequiredService<FkResolver>()
+                    .ResolveAsync(ctx, e.Guild, $"ThreadCreated ThreadId={e.Thread.Id}");
+                if (fks.Success)
+                    await channelUpsert.UpsertChannelAsync(e.Thread, fks.GuildId);
 
                 // For message threads (parent is text/news), thread ID == starter message ID
                 var isMessageThread = e.Parent?.Type is DiscordChannelType.Text or DiscordChannelType.News;
@@ -54,11 +57,13 @@ internal sealed class ThreadEventHandler(EventPipeline pipeline) :
         await pipeline.ExecuteAsync(e, "ThreadUpdated", nameof(ThreadEventHandler),
             e.Guild.Id, e.ThreadAfter.Id, e.ThreadAfter.CreatorId, async ctx =>
             {
-                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
 
-                var guildId = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
-                await channelUpsert.UpsertChannelAsync(e.ThreadAfter, guildId);
+                // Shared resolver: a guild miss must not flow Guid.Empty into a fresh channels row (#292).
+                var fks = await ctx.Services.GetRequiredService<FkResolver>()
+                    .ResolveAsync(ctx, e.Guild, $"ThreadUpdated ThreadId={e.ThreadAfter.Id}");
+                if (fks.Success)
+                    await channelUpsert.UpsertChannelAsync(e.ThreadAfter, fks.GuildId);
 
                 ctx.Db.ThreadEvents.Add(new ThreadEventEntity
                 {

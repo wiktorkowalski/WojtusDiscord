@@ -19,8 +19,11 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
         await pipeline.ExecuteAsync(e, "GuildRoleCreated", nameof(RoleEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
-                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
-                var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
+                // Resolve the required guild FK via the shared resolver: on a miss it logs and
+                // records a FailedEvent (replayable trace) instead of flowing Guid.Empty into the
+                // roles row (#292). The RoleEvent timeline row is FK-free and still lands below.
+                var fks = await ctx.Services.GetRequiredService<FkResolver>()
+                    .ResolveAsync(ctx, e.Guild, $"GuildRoleCreated RoleId={e.Role.Id}");
 
                 var permissions = long.TryParse(e.Role.Permissions.ToString(), out var perm) ? perm : 0;
 
@@ -35,7 +38,8 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
                     ctx.Db.ChangeTracker.Clear();
                     await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                    await UpsertCreatedRoleAsync(ctx, e.Role, guildGuid, permissions);
+                    if (fks.Success)
+                        await UpsertCreatedRoleAsync(ctx, e.Role, fks.GuildId, permissions);
 
                     ctx.Db.RoleEvents.Add(BuildRoleCreatedEvent(e, ctx));
                     await ctx.Db.SaveChangesAsync();

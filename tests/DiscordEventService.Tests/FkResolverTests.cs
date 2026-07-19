@@ -113,6 +113,91 @@ public sealed class FkResolverTests
         Assert.Contains("GuildId=7 UserId=8", failure.Message);
     }
 
+    [Fact]
+    public async Task ValidateGuildChannelAsync_WhenBothResolve_ReturnsResolvedIdsAndDoesNotRecordFailure()
+    {
+        var guildId = Guid.NewGuid();
+        var channelId = Guid.NewGuid();
+        var logger = new RecordingLogger();
+        var recordedFailures = new List<Exception>();
+        var ctx = NewContext(logger, recordedFailures);
+
+        var result = await FkResolver.ValidateGuildChannelAsync(
+            ctx,
+            UpsertResult<Guid>.Success(guildId),
+            UpsertResult<Guid>.Success(channelId),
+            "InviteCode=xyz");
+
+        Assert.True(result.Success);
+        Assert.Equal(guildId, result.GuildId);
+        Assert.Equal(channelId, result.ChannelId);
+        Assert.Empty(recordedFailures);
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Error);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    public async Task ValidateGuildChannelAsync_WhenAnyFkFails_LogsRecordsFailureAndReturnsFailed(
+        bool guildOk, bool channelOk)
+    {
+        var logger = new RecordingLogger();
+        var recordedFailures = new List<Exception>();
+        var ctx = NewContext(logger, recordedFailures);
+
+        var result = await FkResolver.ValidateGuildChannelAsync(
+            ctx,
+            guildOk ? UpsertResult<Guid>.Success(Guid.NewGuid()) : UpsertResult<Guid>.Failure("guild lost"),
+            channelOk ? UpsertResult<Guid>.Success(Guid.NewGuid()) : UpsertResult<Guid>.Failure("channel lost"),
+            "InviteCode=qrs");
+
+        Assert.False(result.Success);
+        Assert.Equal(Guid.Empty, result.GuildId);
+        Assert.Equal(Guid.Empty, result.ChannelId);
+
+        // Logged an aggregate error and recorded exactly one FailedEvent carrying the log context.
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
+        var failure = Assert.Single(recordedFailures);
+        Assert.IsType<InvalidOperationException>(failure);
+        Assert.Contains("InviteCode=qrs", failure.Message);
+    }
+
+    [Fact]
+    public async Task ValidateAsync_GuildOnly_WhenResolved_ReturnsIdAndDoesNotRecordFailure()
+    {
+        var guildId = Guid.NewGuid();
+        var logger = new RecordingLogger();
+        var recordedFailures = new List<Exception>();
+        var ctx = NewContext(logger, recordedFailures);
+
+        var result = await FkResolver.ValidateAsync(ctx, UpsertResult<Guid>.Success(guildId), "GuildId=3");
+
+        Assert.True(result.Success);
+        Assert.Equal(guildId, result.GuildId);
+        Assert.Empty(recordedFailures);
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Error);
+    }
+
+    [Fact]
+    public async Task ValidateAsync_GuildOnly_WhenGuildFails_LogsRecordsFailureAndReturnsFailed()
+    {
+        var logger = new RecordingLogger();
+        var recordedFailures = new List<Exception>();
+        var ctx = NewContext(logger, recordedFailures);
+
+        var result = await FkResolver.ValidateAsync(ctx, UpsertResult<Guid>.Failure("guild lost"), "GuildId=9");
+
+        Assert.False(result.Success);
+        Assert.Equal(Guid.Empty, result.GuildId);
+
+        // Logged an aggregate error and recorded exactly one FailedEvent carrying the log context.
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Error);
+        var failure = Assert.Single(recordedFailures);
+        Assert.IsType<InvalidOperationException>(failure);
+        Assert.Contains("GuildId=9", failure.Message);
+    }
+
     private static EventContext NewContext(ILogger logger, List<Exception> recordedFailures) =>
         new EventContext(
             Db: null!,

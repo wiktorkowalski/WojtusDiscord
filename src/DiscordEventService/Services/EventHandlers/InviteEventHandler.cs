@@ -16,38 +16,44 @@ internal sealed class InviteEventHandler(EventPipeline pipeline) :
         await pipeline.ExecuteAsync(e, "InviteCreated", nameof(InviteEventHandler),
             e.Guild.Id, e.Channel.Id, e.Invite.Inviter?.Id, async ctx =>
             {
-                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
-                var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
                 var userService = ctx.Services.GetRequiredService<UserService>();
 
-                var guildResult = await guildUpsert.UpsertGuildAsync(e.Guild);
-                var channelResult = await channelUpsert.UpsertChannelAsync(e.Channel, guildResult.Value);
-                Guid? inviterGuid = null;
-                if (e.Invite.Inviter is not null)
-                {
-                    var inviterResult = await userService.UpsertUserAsync(e.Invite.Inviter);
-                    inviterGuid = inviterResult.IsSuccess ? inviterResult.Value : null;
-                }
-
+                // Resolve the required guild+channel FKs via the shared resolver: on a miss it
+                // logs and records a FailedEvent (replayable trace) instead of staging an invites
+                // row with Guid.Empty FKs (#292). The InviteEvent timeline row is FK-free
+                // (snowflake columns) and still lands below.
                 var invite = e.Invite;
-                var inviteEntity = await ctx.Db.Invites.FirstOrDefaultAsync(i => i.Code == invite.Code);
-                if (inviteEntity is null)
-                {
-                    inviteEntity = new InviteEntity { Code = invite.Code };
-                    ctx.Db.Invites.Add(inviteEntity);
-                }
+                var fks = await ctx.Services.GetRequiredService<FkResolver>()
+                    .ResolveAsync(ctx, e.Guild, e.Channel, $"InviteCreated Code={invite.Code}");
 
-                if (guildResult.IsSuccess) inviteEntity.GuildId = guildResult.Value;
-                if (channelResult.IsSuccess) inviteEntity.ChannelId = channelResult.Value;
-                inviteEntity.InviterId = inviterGuid;
-                inviteEntity.MaxAge = invite.MaxAge;
-                inviteEntity.MaxUses = invite.MaxUses;
-                inviteEntity.Uses = invite.Uses;
-                inviteEntity.IsTemporary = invite.IsTemporary;
-                inviteEntity.CreatedAtUtc = invite.CreatedAt.UtcDateTime;
-                inviteEntity.ExpiresAtUtc = invite.MaxAge > 0 ? invite.CreatedAt.AddSeconds(invite.MaxAge).UtcDateTime : null;
-                inviteEntity.IsDeleted = false;
-                inviteEntity.DeletedAtUtc = null;
+                if (fks.Success)
+                {
+                    Guid? inviterGuid = null;
+                    if (invite.Inviter is not null)
+                    {
+                        var inviterResult = await userService.UpsertUserAsync(invite.Inviter);
+                        inviterGuid = inviterResult.IsSuccess ? inviterResult.Value : null;
+                    }
+
+                    var inviteEntity = await ctx.Db.Invites.FirstOrDefaultAsync(i => i.Code == invite.Code);
+                    if (inviteEntity is null)
+                    {
+                        inviteEntity = new InviteEntity { Code = invite.Code };
+                        ctx.Db.Invites.Add(inviteEntity);
+                    }
+
+                    inviteEntity.GuildId = fks.GuildId;
+                    inviteEntity.ChannelId = fks.ChannelId;
+                    inviteEntity.InviterId = inviterGuid;
+                    inviteEntity.MaxAge = invite.MaxAge;
+                    inviteEntity.MaxUses = invite.MaxUses;
+                    inviteEntity.Uses = invite.Uses;
+                    inviteEntity.IsTemporary = invite.IsTemporary;
+                    inviteEntity.CreatedAtUtc = invite.CreatedAt.UtcDateTime;
+                    inviteEntity.ExpiresAtUtc = invite.MaxAge > 0 ? invite.CreatedAt.AddSeconds(invite.MaxAge).UtcDateTime : null;
+                    inviteEntity.IsDeleted = false;
+                    inviteEntity.DeletedAtUtc = null;
+                }
 
                 ctx.Db.InviteEvents.Add(new InviteEventEntity
                 {
