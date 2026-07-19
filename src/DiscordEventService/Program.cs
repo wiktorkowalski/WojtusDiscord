@@ -135,7 +135,14 @@ builder.Services.AddHttpClient(OpenRouterClient.HttpClientName)
     });
 
 builder.Services.AddHttpClient(MemeBenchmarkJob.DownloadHttpClientName)
-    .ConfigureHttpClient(client => client.Timeout = memeDownloadTimeout);
+    .ConfigureHttpClient((sp, client) =>
+    {
+        client.Timeout = memeDownloadTimeout;
+        // Hard cap on buffering: attachments whose metadata lied small still
+        // can't pull an unbounded body into memory (#293).
+        client.MaxResponseContentBufferSize =
+            sp.GetRequiredService<IOptions<MemeIndexOptions>>().Value.MaxImageBytes;
+    });
 
 builder.Services.AddHttpClient(AttachmentUrlRefreshService.HttpClientName)
     .ConfigureHttpClient(client =>

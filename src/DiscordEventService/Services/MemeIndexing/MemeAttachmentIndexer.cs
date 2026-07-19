@@ -62,6 +62,16 @@ internal sealed class MemeAttachmentIndexer(
         var memeOptions = memeIndexOptions.Value;
         var openRouter = openRouterOptions.Value;
 
+        // Discord metadata already carries the size — pre-skip oversized files
+        // before spending a download. Deterministic, so no attempt is charged.
+        // (0 = unknown size from pre-#221 data; those still go through the
+        // post-download check below.)
+        if (item.FileSizeBytes > memeOptions.MaxImageBytes)
+        {
+            Skip(row, counters, $"unsupported: image too large ({item.FileSizeBytes} bytes per metadata)");
+            return;
+        }
+
         var refreshOutcome = freshUrls.GetFreshUrl(item.StoredUrl, out var freshUrl);
         if (refreshOutcome == AttachmentUrlRefreshOutcome.BatchFailed)
         {
@@ -130,6 +140,14 @@ internal sealed class MemeAttachmentIndexer(
             or System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.Gone)
         {
             Skip(row, counters, $"dead attachment: download HTTP {(int)ex.StatusCode!}");
+            return null;
+        }
+        catch (HttpRequestException ex) when (ex.HttpRequestError == HttpRequestError.ConfigurationLimitExceeded)
+        {
+            // The discord-cdn client caps buffering at MaxImageBytes; blowing it is
+            // deterministic (metadata lied small), so terminal Skip — a transient
+            // Failed would be refunded and retried by every sweep forever.
+            Skip(row, counters, "unsupported: image too large (exceeded download buffer cap)");
             return null;
         }
         catch (Exception ex) when (ex is HttpRequestException
