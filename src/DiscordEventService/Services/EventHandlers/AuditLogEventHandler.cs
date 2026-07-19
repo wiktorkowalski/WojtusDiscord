@@ -10,9 +10,20 @@ internal sealed class AuditLogEventHandler(EventPipeline pipeline) :
 {
     public async Task HandleEventAsync(DiscordClient sender, GuildAuditLogCreatedEventArgs e)
     {
+        // DSharpPlus leaves AuditLogEntry null for audit-log kinds it doesn't materialize
+        // (#298: one NRE'd here 2026-05-05 before the pipeline could even capture the payload).
+        // Guard the argument dereference too — it evaluates before ExecuteAsync's try/catch.
         await pipeline.ExecuteAsync(e, "GuildAuditLogCreated", nameof(AuditLogEventHandler),
-            e.Guild.Id, null, e.AuditLogEntry.UserResponsible?.Id, async ctx =>
+            e.Guild.Id, null, e.AuditLogEntry?.UserResponsible?.Id, async ctx =>
             {
+                if (e.AuditLogEntry is null)
+                {
+                    ctx.Logger.LogWarning(
+                        "AuditLogEntry not materialized for guild {GuildId}; skipping typed insert, raw payload kept in raw_event_logs",
+                        e.Guild.Id);
+                    return;
+                }
+
                 ctx.Db.AuditLogEvents.Add(new AuditLogEventEntity
                 {
                     AuditLogDiscordId = e.AuditLogEntry.Id,
