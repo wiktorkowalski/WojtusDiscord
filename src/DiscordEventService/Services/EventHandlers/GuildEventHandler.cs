@@ -50,7 +50,8 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
                         },
                         g => g.Id);
 
-                    await UpsertChannelsAndRolesAsync(ctx.Db, ctx.Logger, e.Guild, guildGuid);
+                    await UpsertChannelsAndRolesAsync(
+                        ctx.Db, ctx.Services.GetRequiredService<ChannelUpsertService>(), e.Guild, guildGuid);
 
                     await tx.CommitAsync();
                 });
@@ -99,48 +100,13 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
 
     // Per-entity upsert: each channel/role goes through the shared primitive, which absorbs
     // the 23505 race a concurrent GuildCreate could otherwise cause in a batched insert.
-    private static async Task UpsertChannelsAndRolesAsync(DiscordDbContext db, ILogger logger, DiscordGuild guild, Guid guildGuid)
-    {
-        await UpsertGuildChannelsAsync(db, logger, guild, guildGuid);
-        await UpsertGuildRolesAsync(db, guild, guildGuid);
-    }
-
-    private static async Task UpsertGuildChannelsAsync(DiscordDbContext db, ILogger logger, DiscordGuild guild, Guid guildGuid)
+    private static async Task UpsertChannelsAndRolesAsync(
+        DiscordDbContext db, ChannelUpsertService channelUpsert, DiscordGuild guild, Guid guildGuid)
     {
         foreach (var channel in guild.Channels.Values)
-        {
-            var mappedType = MapChannelType(channel.Type, logger);
-            await db.Channels.UpsertAsync(
-                c => c.DiscordId == channel.Id,
-                s => s
-                    .SetProperty(c => c.Name, channel.Name)
-                    .SetProperty(c => c.ParentDiscordId, channel.Parent?.Id)
-                    .SetProperty(c => c.Type, mappedType)
-                    .SetProperty(c => c.Topic, channel.Topic)
-                    .SetProperty(c => c.Bitrate, channel.Bitrate)
-                    .SetProperty(c => c.UserLimit, channel.UserLimit)
-                    .SetProperty(c => c.RateLimitPerUser, channel.PerUserRateLimit)
-                    .SetProperty(c => c.IsNsfw, channel.IsNSFW)
-                    .SetProperty(c => c.Position, channel.Position)
-                    .SetProperty(c => c.IsDeleted, false)
-                    .SetProperty(c => c.DeletedAtUtc, (DateTime?)null),
-                () => new ChannelEntity
-                {
-                    DiscordId = channel.Id,
-                    GuildId = guildGuid,
-                    ParentDiscordId = channel.Parent?.Id,
-                    Name = channel.Name,
-                    Type = mappedType,
-                    Topic = channel.Topic,
-                    Bitrate = channel.Bitrate,
-                    UserLimit = channel.UserLimit,
-                    RateLimitPerUser = channel.PerUserRateLimit,
-                    IsNsfw = channel.IsNSFW,
-                    Position = channel.Position,
-                    IsDeleted = false,
-                },
-                c => c.Id);
-        }
+            await channelUpsert.UpsertChannelAsync(channel, guildGuid);
+
+        await UpsertGuildRolesAsync(db, guild, guildGuid);
     }
 
     private static async Task UpsertGuildRolesAsync(DiscordDbContext db, DiscordGuild guild, Guid guildGuid)
@@ -177,37 +143,4 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
         }
     }
 
-    private static ChannelType MapChannelType(DiscordChannelType discordType, ILogger logger)
-    {
-        // Add new DSharpPlus channel types here as they appear. Anything not
-        // listed becomes Unknown (with a warning log) instead of silently
-        // collapsing to Text. The int value is still preserved at the storage
-        // layer via (ChannelType)channel.Type casts elsewhere — Unknown is
-        // just the label.
-        var mapped = discordType switch
-        {
-            DiscordChannelType.Text => ChannelType.Text,
-            DiscordChannelType.Private => ChannelType.Private,
-            DiscordChannelType.Voice => ChannelType.Voice,
-            DiscordChannelType.Group => ChannelType.Group,
-            DiscordChannelType.Category => ChannelType.Category,
-            DiscordChannelType.News => ChannelType.News,
-            DiscordChannelType.NewsThread => ChannelType.NewsThread,
-            DiscordChannelType.PublicThread => ChannelType.PublicThread,
-            DiscordChannelType.PrivateThread => ChannelType.PrivateThread,
-            DiscordChannelType.Stage => ChannelType.Stage,
-            DiscordChannelType.GuildForum => ChannelType.Forum,
-            DiscordChannelType.GuildMedia => ChannelType.Media,
-            _ => ChannelType.Unknown
-        };
-
-        if (mapped == ChannelType.Unknown)
-        {
-            logger.LogWarning(
-                "Unknown Discord channel type {DiscordChannelType} (value {ChannelTypeValue}); mapping to ChannelType.Unknown",
-                discordType, (int)discordType);
-        }
-
-        return mapped;
-    }
 }
