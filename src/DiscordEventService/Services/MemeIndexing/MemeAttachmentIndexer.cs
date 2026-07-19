@@ -135,7 +135,7 @@ internal sealed class MemeAttachmentIndexer(
         catch (Exception ex) when (ex is HttpRequestException
             || (ex is TaskCanceledException && !cancellationToken.IsCancellationRequested))
         {
-            Fail(row, counters, $"download failed: {ex.Message}");
+            FailTransient(row, counters, $"transient: download failed: {ex.Message}");
             return null;
         }
     }
@@ -194,7 +194,10 @@ internal sealed class MemeAttachmentIndexer(
                 break;
 
             default:
-                Fail(row, counters, result.Error ?? "unknown analysis error");
+                if (result.IsTransient)
+                    FailTransient(row, counters, $"transient: {result.Error ?? "unknown analysis error"}");
+                else
+                    Fail(row, counters, result.Error ?? "unknown analysis error");
                 break;
         }
     }
@@ -205,6 +208,16 @@ internal sealed class MemeAttachmentIndexer(
         row.Error = reason;
         counters.Skipped++;
         logger.LogWarning("Meme attachment {AttachmentId} skipped: {Reason}", row.AttachmentDiscordId, reason);
+    }
+
+    // Transient failures (429/5xx, transport, download hiccups) must not burn one of the sweep's
+    // capped attempts (#293): refund the increment from ProcessOneAsync so only deterministic
+    // failures walk the row toward permanent abandonment. Status still flips to Failed so the
+    // next sweep retries it.
+    private void FailTransient(MemeIndexEntity row, MemeIndexRunCounters counters, string error)
+    {
+        row.AttemptCount--;
+        Fail(row, counters, error);
     }
 
     private void Fail(MemeIndexEntity row, MemeIndexRunCounters counters, string error)

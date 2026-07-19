@@ -204,6 +204,32 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     }
 
     [Fact]
+    public async Task ExecuteAsync_GuildWithStaleInProgressCheckpoint_IsSwept()
+    {
+        _db.BackfillCheckpoints.Add(new BackfillCheckpointEntity
+        {
+            GuildDiscordId = GuildDiscordId,
+            Type = BackfillType.MemeIndex,
+            Status = BackfillStatus.InProgress,
+            StartedAtUtc = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync();
+        // ITimestamped bumps LastUpdatedUtc on every SaveChanges; ExecuteUpdate bypasses it so the
+        // heartbeat can be aged past the staleness cutoff (#293: dead job must not block the sweep).
+        await _db.BackfillCheckpoints
+            .Where(c => c.GuildDiscordId == GuildDiscordId && c.Type == BackfillType.MemeIndex)
+            .ExecuteUpdateAsync(s => s.SetProperty(
+                c => c.LastUpdatedUtc,
+                DateTime.UtcNow - BackfillCheckpointEntity.StaleInProgressAfter - TimeSpan.FromMinutes(1)));
+        var jobClient = new RecordingJobClient();
+
+        await RunCoordinatorAsync(jobClient, configured: true);
+
+        var job = Assert.Single(jobClient.Created);
+        Assert.Equal(nameof(MemeIndexingJob.ExecuteSweepAsync), job.Method.Name);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_Unconfigured_IsANoOp()
     {
         var jobClient = new RecordingJobClient();

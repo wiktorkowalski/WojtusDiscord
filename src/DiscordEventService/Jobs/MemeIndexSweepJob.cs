@@ -41,11 +41,16 @@ internal sealed class MemeIndexSweepJob(
             .Distinct()
             .ToListAsync(cancellationToken);
 
-        var inProgress = await db.BackfillCheckpoints.AsNoTracking()
-            .Where(c => c.Type == BackfillType.MemeIndex && c.Status == BackfillStatus.InProgress)
+        // Staleness-aware (#293): a checkpoint whose job died before writing a terminal status
+        // stays InProgress forever and would block the guild's sweep permanently. The heartbeat
+        // predicate (see #282/#285) treats it as dead; the executor resumes it from its cursor.
+        var nowUtc = DateTime.UtcNow;
+        var inProgressSet = (await db.BackfillCheckpoints.AsNoTracking()
+                .Where(c => c.Type == BackfillType.MemeIndex && c.Status == BackfillStatus.InProgress)
+                .ToListAsync(cancellationToken))
+            .Where(c => c.IsActivelyInProgress(nowUtc))
             .Select(c => c.GuildDiscordId)
-            .ToListAsync(cancellationToken);
-        var inProgressSet = inProgress.ToHashSet();
+            .ToHashSet();
 
         foreach (var guildId in guildIds)
         {
