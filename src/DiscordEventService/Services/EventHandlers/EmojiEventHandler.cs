@@ -17,6 +17,7 @@ internal sealed class EmojiEventHandler(EventPipeline pipeline) :
             e.Guild.Id, null, null, async ctx =>
             {
                 var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
+                var emoteUpsert = ctx.Services.GetRequiredService<EmoteUpsertService>();
                 var guildResult = await guildUpsert.UpsertGuildAsync(e.Guild);
                 var guildGuid = guildResult.IsSuccess ? guildResult.Value : (Guid?)null;
 
@@ -29,42 +30,26 @@ internal sealed class EmojiEventHandler(EventPipeline pipeline) :
                     .Where(id => e.EmojisBefore[id].Name != e.EmojisAfter[id].Name)
                     .ToList();
 
-                await UpsertEmotesAsync(ctx, e, guildGuid);
-                await SoftDeleteStaleEmotesAsync(ctx, guildGuid, afterIds, removedIds);
-
-                ctx.Db.EmojiEvents.Add(BuildEmojiEvent(e, ctx, addedIds, removedIds, updatedIds));
-
-                await ctx.Db.SaveChangesAsync();
-            });
-    }
-
-    private static async Task UpsertEmotesAsync(EventContext ctx, GuildEmojisUpdatedEventArgs e, Guid? guildGuid)
-    {
-        foreach (var emoji in e.EmojisAfter.Values)
-        {
-            var existing = await ctx.Db.Emotes
-                .Where(em => em.DiscordId == emoji.Id)
-                .FirstOrDefaultAsync();
-            if (existing is null)
-            {
-                ctx.Db.Emotes.Add(new EmoteEntity
+                // Emote rows + event row must commit together. ExecutionStrategy is required
+                // because EnableRetryOnFailure is configured on the DbContext.
+                var strategy = ctx.Db.Database.CreateExecutionStrategy();
+                await strategy.ExecuteAsync(async () =>
                 {
-                    DiscordId = emoji.Id,
-                    GuildId = guildGuid,
-                    Name = emoji.Name,
-                    IsAnimated = emoji.IsAnimated,
-                    IsAvailable = emoji.IsAvailable,
+                    // Reset the tracker so an EnableRetryOnFailure retry doesn't re-stage entities
+                    // left Added by a rolled-back attempt.
+                    ctx.Db.ChangeTracker.Clear();
+                    await using var tx = await ctx.Db.Database.BeginTransactionAsync();
+
+                    foreach (var emoji in e.EmojisAfter.Values)
+                        await emoteUpsert.UpsertEmoteAsync(emoji, guildGuid);
+
+                    await SoftDeleteStaleEmotesAsync(ctx, guildGuid, afterIds, removedIds);
+
+                    ctx.Db.EmojiEvents.Add(BuildEmojiEvent(e, ctx, addedIds, removedIds, updatedIds));
+                    await ctx.Db.SaveChangesAsync();
+                    await tx.CommitAsync();
                 });
-            }
-            else
-            {
-                existing.Name = emoji.Name;
-                existing.IsAnimated = emoji.IsAnimated;
-                existing.IsAvailable = emoji.IsAvailable;
-                existing.IsDeleted = false;
-                existing.DeletedAtUtc = null;
-            }
-        }
+            });
     }
 
     // Soft-delete stale rows. EmojiEventHandler is now the single canonical writer of

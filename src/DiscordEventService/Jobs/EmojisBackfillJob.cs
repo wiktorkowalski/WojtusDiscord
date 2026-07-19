@@ -1,5 +1,6 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Services;
 using DSharpPlus;
 using Microsoft.EntityFrameworkCore;
 
@@ -16,6 +17,7 @@ internal sealed class EmojisBackfillJob(
     public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
         => executor.RunAsync(BackfillType, guildId, async ctx =>
         {
+            var emoteUpsert = ctx.Services.GetRequiredService<EmoteUpsertService>();
             var guild = await discordClient.GetGuildAsync(guildId);
             var guildEntity = await ctx.Db.Guilds.FirstOrDefaultAsync(g => g.DiscordId == guildId, cancellationToken);
 
@@ -29,24 +31,7 @@ internal sealed class EmojisBackfillJob(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                await ctx.Db.Emotes.UpsertAsync(
-                    e => e.DiscordId == emoji.Id,
-                    s => s
-                        .SetProperty(e => e.Name, emoji.Name)
-                        .SetProperty(e => e.IsAnimated, emoji.IsAnimated)
-                        .SetProperty(e => e.IsAvailable, emoji.IsAvailable)
-                        .SetProperty(e => e.IsDeleted, false)
-                        .SetProperty(e => e.DeletedAtUtc, (DateTime?)null),
-                    () => new EmoteEntity
-                    {
-                        DiscordId = emoji.Id,
-                        GuildId = guildEntity.Id,
-                        Name = emoji.Name,
-                        IsAnimated = emoji.IsAnimated,
-                        IsAvailable = emoji.IsAvailable
-                    },
-                    e => e.Id,
-                    cancellationToken);
+                await emoteUpsert.UpsertEmoteAsync(emoji, guildEntity.Id, cancellationToken);
 
                 ctx.Checkpoint.ProcessedCount++;
 
