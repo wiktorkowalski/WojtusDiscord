@@ -17,17 +17,23 @@ internal sealed class IntegrationEventHandler(EventPipeline pipeline) :
         await pipeline.ExecuteAsync(e, "IntegrationCreated", nameof(IntegrationEventHandler),
             e.Guild.Id, null, null, async ctx =>
             {
-                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
-                var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
+                // Resolve the required guild FK via the shared resolver: on a miss it logs and
+                // records a FailedEvent instead of flowing Guid.Empty into the integrations row
+                // (#292). The IntegrationEvent timeline row is FK-free and still lands below.
+                var fks = await ctx.Services.GetRequiredService<FkResolver>()
+                    .ResolveAsync(ctx, e.Guild, $"IntegrationCreated IntegrationId={e.Integration.Id}");
 
-                ctx.Db.Integrations.Add(new IntegrationEntity
+                if (fks.Success)
                 {
-                    DiscordId = e.Integration.Id,
-                    GuildId = guildGuid,
-                    Name = e.Integration.Name,
-                    Type = e.Integration.Type,
-                    IsEnabled = e.Integration.IsEnabled,
-                });
+                    ctx.Db.Integrations.Add(new IntegrationEntity
+                    {
+                        DiscordId = e.Integration.Id,
+                        GuildId = fks.GuildId,
+                        Name = e.Integration.Name,
+                        Type = e.Integration.Type,
+                        IsEnabled = e.Integration.IsEnabled,
+                    });
+                }
 
                 ctx.Db.IntegrationEvents.Add(new IntegrationEventEntity
                 {

@@ -81,8 +81,24 @@ internal sealed class BootQuickSyncService(
         var guildUpsert = scope.ServiceProvider.GetRequiredService<GuildUpsertService>();
         var channelUpsert = scope.ServiceProvider.GetRequiredService<ChannelUpsertService>();
 
-        var guildId = (await guildUpsert.UpsertGuildAsync(guild)).Value;
-        var channelId = (await channelUpsert.UpsertChannelAsync(channel, guildId)).Value;
+        // A failed upsert must not flow Guid.Empty into backfilled message FKs (#292);
+        // skip the channel — the caller logs per-channel and continues the sweep.
+        var guildResult = await guildUpsert.UpsertGuildAsync(guild);
+        if (!guildResult.IsSuccess)
+        {
+            logger.LogWarning("Quick-sync: guild FK unresolved for channel {ChannelId} ({Reason}), skipping", channel.Id, guildResult.FailureReason);
+            return 0;
+        }
+
+        var guildId = guildResult.Value;
+        var channelResult = await channelUpsert.UpsertChannelAsync(channel, guildId);
+        if (!channelResult.IsSuccess)
+        {
+            logger.LogWarning("Quick-sync: channel FK unresolved for channel {ChannelId} ({Reason}), skipping", channel.Id, channelResult.FailureReason);
+            return 0;
+        }
+
+        var channelId = channelResult.Value;
 
         var existingDiscordIds = await db.Messages
             .Where(m => messages.Select(msg => msg.Id).Contains(m.DiscordId))

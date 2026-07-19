@@ -17,9 +17,12 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
         await pipeline.ExecuteAsync(e, "ChannelCreated", nameof(ChannelEventHandler),
             e.Guild.Id, e.Channel.Id, null, async ctx =>
             {
-                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
-                var guildGuid = (await guildUpsert.UpsertGuildAsync(e.Guild)).Value;
+                // Resolve the required guild FK via the shared resolver: on a miss it logs and
+                // records a FailedEvent instead of flowing Guid.Empty into a fresh channels row
+                // (#292). The ChannelEvent timeline row is FK-free and still lands below.
+                var fks = await ctx.Services.GetRequiredService<FkResolver>()
+                    .ResolveAsync(ctx, e.Guild, $"ChannelCreated ChannelId={e.Channel.Id}");
 
                 // Upsert the channel (handles the 23505 race internally) before staging the event,
                 // then commit channel + event together. ExecutionStrategy is required because
@@ -32,7 +35,8 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
                     ctx.Db.ChangeTracker.Clear();
                     await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                    await channelUpsert.UpsertChannelAsync(e.Channel, guildGuid);
+                    if (fks.Success)
+                        await channelUpsert.UpsertChannelAsync(e.Channel, fks.GuildId);
 
                     ctx.Db.ChannelEvents.Add(BuildChannelCreatedEvent(e, ctx));
                     await ctx.Db.SaveChangesAsync();
@@ -46,9 +50,10 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
         await pipeline.ExecuteAsync(e, "ChannelUpdated", nameof(ChannelEventHandler),
             e.ChannelAfter.Guild.Id, e.ChannelAfter.Id, null, async ctx =>
             {
-                var guildUpsert = ctx.Services.GetRequiredService<GuildUpsertService>();
                 var channelUpsert = ctx.Services.GetRequiredService<ChannelUpsertService>();
-                var guildGuid = (await guildUpsert.UpsertGuildAsync(e.ChannelAfter.Guild)).Value;
+                // Shared resolver: a guild miss must not flow Guid.Empty into a fresh channels row (#292).
+                var fks = await ctx.Services.GetRequiredService<FkResolver>()
+                    .ResolveAsync(ctx, e.ChannelAfter.Guild, $"ChannelUpdated ChannelId={e.ChannelAfter.Id}");
 
                 var channelEvent = new ChannelEventEntity
                 {
@@ -91,7 +96,8 @@ internal sealed class ChannelEventHandler(EventPipeline pipeline) :
 
                     // Through the shared seam so an update for a channel we never saw creates
                     // the row instead of being dropped.
-                    await channelUpsert.UpsertChannelAsync(e.ChannelAfter, guildGuid);
+                    if (fks.Success)
+                        await channelUpsert.UpsertChannelAsync(e.ChannelAfter, fks.GuildId);
 
                     ctx.Db.ChannelEvents.Add(channelEvent);
                     await ctx.Db.SaveChangesAsync();
