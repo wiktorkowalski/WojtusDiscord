@@ -1,5 +1,3 @@
-using DiscordEventService.Data;
-using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.Entities;
@@ -33,27 +31,15 @@ internal sealed class GuildEventHandler(EventPipeline pipeline) :
                     ctx.Db.ChangeTracker.Clear();
                     await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                    var guildGuid = await ctx.Db.Guilds.UpsertAsync(
-                        g => g.DiscordId == e.Guild.Id,
-                        s => s
-                            .SetProperty(g => g.Name, e.Guild.Name)
-                            .SetProperty(g => g.IconHash, e.Guild.IconHash)
-                            .SetProperty(g => g.OwnerId, e.Guild.OwnerId)
-                            .SetProperty(g => g.LeftAtUtc, (DateTime?)null),
-                        () => new GuildEntity
-                        {
-                            DiscordId = e.Guild.Id,
-                            Name = e.Guild.Name,
-                            IconHash = e.Guild.IconHash,
-                            OwnerId = e.Guild.OwnerId,
-                            LeftAtUtc = null,
-                        },
-                        g => g.Id);
+                    var guildResult = await ctx.Services.GetRequiredService<GuildUpsertService>()
+                        .UpsertGuildAsync(e.Guild);
+                    if (!guildResult.IsSuccess)
+                        return;
 
                     await UpsertChannelsAndRolesAsync(
                         ctx.Services.GetRequiredService<ChannelUpsertService>(),
                         ctx.Services.GetRequiredService<RoleUpsertService>(),
-                        e.Guild, guildGuid);
+                        e.Guild, guildResult.Value);
 
                     await tx.CommitAsync();
                 });
