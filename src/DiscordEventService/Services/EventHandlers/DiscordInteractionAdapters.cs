@@ -40,27 +40,39 @@ internal sealed class DiscordConversationGateway(DiscordClient client, MessageCr
 
 // The five response shapes a component interaction can take. An interaction has exactly
 // one response slot — which of these spends it is the contract ConfirmationFlow relies on.
+// Every sink suppresses mentions: the outcome and the staged action's description are
+// model-authored, so a prompt-injected @everyone in a description would otherwise ping the
+// server the moment an admin clicks Cancel (staging itself already suppresses them).
 internal sealed class DiscordConfirmationSurface(ComponentInteractionCreatedEventArgs e) : IConfirmationSurface
 {
     public Task RespondEphemeralAsync(string content) =>
         e.Interaction.CreateResponseAsync(
             DiscordInteractionResponseType.ChannelMessageWithSource,
-            new DiscordInteractionResponseBuilder().AsEphemeral().WithContent(content));
+            new DiscordInteractionResponseBuilder()
+                .AsEphemeral()
+                .WithContent(content)
+                .AddMentions(Mentions.None));
 
     public Task AcknowledgeAsync() =>
         e.Interaction.CreateResponseAsync(DiscordInteractionResponseType.DeferredMessageUpdate);
 
     public Task FollowupEphemeralAsync(string content) =>
         e.Interaction.CreateFollowupMessageAsync(
-            new DiscordFollowupMessageBuilder().AsEphemeral().WithContent(content));
+            new DiscordFollowupMessageBuilder()
+                .AsEphemeral()
+                .WithContent(content)
+                .AddMentions(Mentions.None));
 
     public Task EditPromptAsync(string content) =>
-        e.Interaction.EditOriginalResponseAsync(new DiscordWebhookBuilder().WithContent(content));
+        e.Interaction.EditOriginalResponseAsync(
+            new DiscordWebhookBuilder().WithContent(content).AddMentions(Mentions.None));
 
     public Task ReplacePromptAsync(string content) =>
         e.Interaction.CreateResponseAsync(
             DiscordInteractionResponseType.UpdateMessage,
-            new DiscordInteractionResponseBuilder().WithContent(content));
+            new DiscordInteractionResponseBuilder()
+                .WithContent(content)
+                .AddMentions(Mentions.None));
 
     public Task SendChannelFallbackAsync(string content) =>
         e.Channel.SendMessageAsync(new DiscordMessageBuilder()
