@@ -27,6 +27,9 @@ internal static class StartupValidator
         typeof(Conversation.DatabaseSchemaHint),
         typeof(Conversation.IGuildActionService),
         typeof(Conversation.IConfirmationService),
+        // #308: what the two interaction handlers actually resolve.
+        typeof(Conversation.Interaction.ConversationFlow),
+        typeof(Conversation.Interaction.ConfirmationFlow),
     ];
 
     public static void ValidateChildContainer(IServiceProvider childProvider, ILogger logger)

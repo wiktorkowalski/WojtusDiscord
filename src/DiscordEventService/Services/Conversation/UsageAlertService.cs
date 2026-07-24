@@ -14,11 +14,19 @@ namespace DiscordEventService.Services.Conversation;
 // Failed filter. Alert-only by design: the loop never refuses a turn, and every
 // failure in here is logged and swallowed so the alert path can never break the
 // reply. Scoped over the request DbContext; dual-registered via CoreServiceTypes.
+//
+// The post-turn seam ConversationFlow depends on (#308), so the flow's tests don't need a
+// DbContext just to prove the check runs on every exit path.
+internal interface IUsageAlertService
+{
+    Task CheckAndAlertAsync(ulong invokerId);
+}
+
 internal sealed class UsageAlertService(
     DiscordDbContext db,
     IOptions<ConversationOptions> conversationOptions,
     IUsageAlertNotifier notifier,
-    ILogger<UsageAlertService> logger)
+    ILogger<UsageAlertService> logger) : IUsageAlertService
 {
     // The monthly caps warn twice, the daily runaway tripwire once (#269 design).
     private static readonly int[] MonthlyLevels = [80, 100];

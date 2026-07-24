@@ -12,8 +12,21 @@ namespace DiscordEventService.Services.Conversation;
 // it streamed. The loop is hand-driven on purpose (NOT MEAI's .UseFunctionInvocation())
 // so the model->tool->model boundary stays visible — the handler surfaces it as interim
 // Discord messages (#274 renders discretely, one message per round). The loop is
-// Discord-free: it yields ConversationUpdate render events that ConversationEventHandler
+// Discord-free: it yields ConversationUpdate render events that ConversationFlow
 // turns into messages.
+//
+// The turn-source seam ConversationFlow depends on (#308) — everything a caller needs to
+// drive one turn, and nothing that would drag a chat client into the flow's tests.
+internal interface IConversationTurnSource
+{
+    // Whether the chat client has a usable OpenRouter key — the flow checks this before
+    // doing anything visible (e.g. spawning a thread) so an unconfigured bot stays inert.
+    bool IsConfigured { get; }
+
+    IAsyncEnumerable<ConversationUpdate> GenerateReplyAsync(
+        string? userMessage, ConversationContext context, CancellationToken cancellationToken);
+}
+
 internal sealed class ConversationService(
     IChatClient chatClient,
     ConversationToolRegistry toolRegistry,
@@ -21,7 +34,7 @@ internal sealed class ConversationService(
     IOptions<ConversationOptions> conversationOptions,
     IOptions<OpenRouterOptions> openRouterOptions,
     IHostEnvironment environment,
-    ILogger<ConversationService> logger)
+    ILogger<ConversationService> logger) : IConversationTurnSource
 {
     // The model sometimes answers a final round with no text (degenerate) or runs out of
     // tool rounds before answering — surface something rather than an empty reply.
@@ -29,8 +42,6 @@ internal sealed class ConversationService(
     private const string CapReachedFallback =
         "I hit my step limit before I could finish — try narrowing the question.";
 
-    // Whether the chat client has a usable OpenRouter key — the handler checks this before
-    // doing anything visible (e.g. spawning a thread) so an unconfigured bot stays inert.
     public bool IsConfigured => openRouterOptions.Value.IsConfigured;
 
     public async IAsyncEnumerable<ConversationUpdate> GenerateReplyAsync(

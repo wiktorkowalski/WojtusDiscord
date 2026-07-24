@@ -1,16 +1,18 @@
 using System.Diagnostics;
 using System.Text;
-using DSharpPlus.Entities;
+using DiscordEventService.Services.EventHandlers;
 
-namespace DiscordEventService.Services.EventHandlers;
+namespace DiscordEventService.Services.Conversation.Interaction;
 
-// Renders one conversation turn as discrete Discord messages (#274): streamed deltas are
+// Renders one conversation turn as discrete messages (#274): streamed deltas are
 // buffered (never edited in live), each tool round posts one standalone message (the
 // model's narration cue with the tool-batch summary as a subtext line), and the final
 // answer is posted complete at the end. The typing indicator bridges the gaps — sending
 // a message clears it, so it is re-triggered after every post and refreshed while a long
-// round streams. Mentions are always suppressed: model text may contain @mentions.
-internal sealed class DiscordTurnRenderer(DiscordChannel channel)
+// round streams. Writes through ITurnSurface (#308), so the whole render contract —
+// chunking, typing refresh, the blank-message guard — is testable without Discord; the
+// surface is what suppresses mentions, since model text may contain @mentions.
+internal sealed class TurnRenderer(ITurnSurface surface)
 {
     // Headroom under Discord's hard 2000-char cap.
     private const int Limit = 1950;
@@ -21,7 +23,7 @@ internal sealed class DiscordTurnRenderer(DiscordChannel channel)
     private readonly StringBuilder _text = new();
     private long _lastTypingTimestamp = -1;
 
-    // How many Discord messages this turn has actually posted (for the turn summary log).
+    // How many messages this turn has actually posted (for the turn summary log).
     public int MessageCount { get; private set; }
 
     // Buffer a streamed token — no message I/O until a round boundary; just keep the
@@ -65,14 +67,13 @@ internal sealed class DiscordTurnRenderer(DiscordChannel channel)
 
     private async Task PostAsync(string content)
     {
-        // Never emit a blank Discord message — a whitespace-only buffer renders empty.
+        // Never emit a blank message — a whitespace-only buffer renders empty.
         if (string.IsNullOrWhiteSpace(content))
             return;
 
         foreach (var chunk in MessageChunker.Chunk(content, Limit))
         {
-            await channel.SendMessageAsync(
-                new DiscordMessageBuilder().WithContent(chunk).WithAllowedMentions(Mentions.None));
+            await surface.SendAsync(chunk);
             MessageCount++;
         }
     }
@@ -83,7 +84,7 @@ internal sealed class DiscordTurnRenderer(DiscordChannel channel)
             && Stopwatch.GetElapsedTime(_lastTypingTimestamp) < TypingRefresh)
             return;
 
-        await channel.TriggerTypingAsync();
+        await surface.TriggerTypingAsync();
         _lastTypingTimestamp = Stopwatch.GetTimestamp();
     }
 }
