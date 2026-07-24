@@ -40,9 +40,12 @@ internal sealed class DiscordConversationGateway(DiscordClient client, MessageCr
 
 // The five response shapes a component interaction can take. An interaction has exactly
 // one response slot — which of these spends it is the contract ConfirmationFlow relies on.
-// Every sink suppresses mentions: the outcome and the staged action's description are
-// model-authored, so a prompt-injected @everyone in a description would otherwise ping the
-// server the moment an admin clicks Cancel (staging itself already suppresses them).
+//
+// Every sink declares mention suppression, because the outcome and the staged action's
+// description are model-authored. The declaration is belt-and-braces: DSharpPlus 5 starts
+// these builders with an empty (never null) mention set, and an empty set serializes as
+// allowed_mentions.parse: [] — suppress-all — so the payload is already inert. Stating it
+// keeps the intent legible and keeps holding if someone ever adds a mention here.
 internal sealed class DiscordConfirmationSurface(ComponentInteractionCreatedEventArgs e) : IConfirmationSurface
 {
     public Task RespondEphemeralAsync(string content) =>

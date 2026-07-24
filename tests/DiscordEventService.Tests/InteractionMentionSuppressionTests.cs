@@ -4,49 +4,68 @@ using Xunit;
 namespace DiscordEventService.Tests;
 
 // DiscordConfirmationSurface can't be constructed without a live interaction, so this pins
-// the one thing about it that a refactor could silently break: the mention-suppression verb.
-// `WithAllowedMentions` exists only on DiscordMessageBuilder — the interaction, followup and
-// webhook builders expose AddMentions, and passing Mentions.None is what makes Discord treat
-// the payload's allowed-mentions as an explicit empty set. A staged action's description is
-// model-authored, so the cancel path re-emitting it unsuppressed would ping the server.
+// the library invariant its safety actually rests on. A staged action's description is
+// model-authored and the cancel path re-emits it, so the payload must never let Discord
+// parse mentions out of it.
+//
+// The mechanism is not the AddMentions call — it's the DEFAULT. DSharpPlus 5 starts every
+// builder with an empty (never null) mention set; DiscordMentions maps an empty set to
+// parse: [] ("no parsing"), and DiscordRestApiClient emits it because the collection is
+// non-null. If a future version defaulted the collection to null or to Mentions.All, the
+// interaction paths would start parsing @everyone out of model text — these tests go red.
 public sealed class InteractionMentionSuppressionTests
 {
     [Fact]
     public void MentionsNone_IsAnExplicitEmptySet_NotAnAbsentOne()
     {
+        Assert.NotNull(Mentions.None);
         Assert.Empty(Mentions.None);
     }
 
     [Fact]
-    public void InteractionResponseBuilder_SuppressesMentionsViaAddMentions()
+    public void InteractionResponseBuilder_SuppressesMentionsByDefault()
     {
-        var builder = new DiscordInteractionResponseBuilder()
-            .WithContent("@everyone")
-            .AddMentions(Mentions.None);
+        var untouched = new DiscordInteractionResponseBuilder().WithContent("@everyone");
 
-        Assert.NotNull(builder.Mentions);
-        Assert.Empty(builder.Mentions);
+        // Non-null is what makes the payload carry allowed_mentions at all; empty is what
+        // makes it suppress-all. Null here would mean Mentions.All at the REST layer.
+        Assert.NotNull(untouched.Mentions);
+        Assert.Empty(untouched.Mentions);
+
+        Assert.Empty(untouched.AddMentions(Mentions.None).Mentions);
     }
 
     [Fact]
-    public void FollowupBuilder_SuppressesMentionsViaAddMentions()
+    public void FollowupBuilder_SuppressesMentionsByDefault()
     {
-        var builder = new DiscordFollowupMessageBuilder()
-            .WithContent("@everyone")
-            .AddMentions(Mentions.None);
+        var untouched = new DiscordFollowupMessageBuilder().WithContent("@everyone");
 
-        Assert.NotNull(builder.Mentions);
-        Assert.Empty(builder.Mentions);
+        Assert.NotNull(untouched.Mentions);
+        Assert.Empty(untouched.Mentions);
+
+        Assert.Empty(untouched.AddMentions(Mentions.None).Mentions);
     }
 
     [Fact]
-    public void WebhookBuilder_SuppressesMentionsViaAddMentions()
+    public void WebhookBuilder_SuppressesMentionsByDefault()
     {
-        var builder = new DiscordWebhookBuilder()
-            .WithContent("@everyone")
-            .AddMentions(Mentions.None);
+        var untouched = new DiscordWebhookBuilder().WithContent("@everyone");
 
-        Assert.NotNull(builder.Mentions);
-        Assert.Empty(builder.Mentions);
+        Assert.NotNull(untouched.Mentions);
+        Assert.Empty(untouched.Mentions);
+
+        Assert.Empty(untouched.AddMentions(Mentions.None).Mentions);
+    }
+
+    [Fact]
+    public void MessageBuilder_SuppressesMentionsByDefault()
+    {
+        // The same default is what makes the repo's existing WithAllowedMentions(Mentions.None)
+        // calls (DiscordTurnSurface, MemeCommand, ConfirmationService) declarations rather than
+        // mechanism — worth pinning here so a library change surfaces in one place.
+        var untouched = new DiscordMessageBuilder().WithContent("@everyone");
+
+        Assert.NotNull(untouched.Mentions);
+        Assert.Empty(untouched.Mentions);
     }
 }
