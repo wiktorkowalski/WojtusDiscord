@@ -3,6 +3,7 @@ using System.ClientModel.Primitives;
 using System.Text;
 using DiscordEventService.Configuration;
 using DiscordEventService.Infrastructure;
+using DiscordEventService.Services.Conversation.Interaction;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using OpenAI;
@@ -94,6 +95,12 @@ internal static class ConversationRegistration
 
         // §3: the scoped UsageAlertService (CoreServiceTypes) resolves its notifier here.
         services.AddSingleton<IUsageAlertNotifier, DiscordUsageAlertNotifier>();
+
+        // #308: the Discord-free flows the two interaction handlers delegate to. Child
+        // container only — they exist to serve event handlers, which the root never runs.
+        // Scoped to match the handlers and the scoped seams they resolve.
+        services.AddScoped<ConversationFlow>();
+        services.AddScoped<ConfirmationFlow>();
     }
 
     private static IChatClient CreateChatClient(IServiceProvider sp)
