@@ -298,7 +298,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
     private DiscordDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<DiscordDbContext>()
-            .UseNpgsql(fixture.Container.GetConnectionString())
+            .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new DiscordDbContext(options);

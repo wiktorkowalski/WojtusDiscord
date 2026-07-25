@@ -431,7 +431,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContext<DiscordDbContext>(o => o
-            .UseNpgsql(fixture.Container.GetConnectionString())
+            .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention());
         services.Configure<MemeIndexOptions>(o =>
         {
@@ -488,7 +488,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     private DiscordDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<DiscordDbContext>()
-            .UseNpgsql(fixture.Container.GetConnectionString())
+            .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new DiscordDbContext(options);

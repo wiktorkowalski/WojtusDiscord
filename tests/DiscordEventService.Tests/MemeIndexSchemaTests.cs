@@ -154,7 +154,7 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
 
     private async Task<List<long>> SearchByVectorAsync(string query)
     {
-        await using var connection = new NpgsqlConnection(fixture.Container.GetConnectionString());
+        await using var connection = new NpgsqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         // Raw SQL: LINQ cannot express the custom public.f_unaccent function or
@@ -170,7 +170,7 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
 
     private async Task<List<long>> SearchByTrigramAsync(string query)
     {
-        await using var connection = new NpgsqlConnection(fixture.Container.GetConnectionString());
+        await using var connection = new NpgsqlConnection(fixture.ConnectionString);
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
         // Raw SQL: LINQ cannot express the custom public.f_unaccent / word_similarity
@@ -226,7 +226,7 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
     private DiscordDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<DiscordDbContext>()
-            .UseNpgsql(fixture.Container.GetConnectionString())
+            .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new DiscordDbContext(options);

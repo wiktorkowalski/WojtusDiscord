@@ -1,22 +1,9 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using Microsoft.EntityFrameworkCore;
-using Testcontainers.PostgreSql;
 using Xunit;
 
 namespace DiscordEventService.Tests;
-
-public sealed class PostgresFixture : IAsyncLifetime
-{
-    // uuidv7() default value SQL in the migrations requires PostgreSQL 18.
-    public PostgreSqlContainer Container { get; } = new PostgreSqlBuilder()
-        .WithImage("postgres:18")
-        .Build();
-
-    public Task InitializeAsync() => Container.StartAsync();
-
-    public Task DisposeAsync() => Container.DisposeAsync().AsTask();
-}
 
 public sealed class GuildUpsertTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -115,7 +102,7 @@ public sealed class GuildUpsertTests(PostgresFixture fixture) : IClassFixture<Po
     private DiscordDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<DiscordDbContext>()
-            .UseNpgsql(fixture.Container.GetConnectionString())
+            .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new DiscordDbContext(options);
