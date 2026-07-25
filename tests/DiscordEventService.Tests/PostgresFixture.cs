@@ -14,9 +14,12 @@ public sealed class PostgresFixture : IAsyncLifetime
 {
     private const string TemplateDatabase = "migrated_template";
 
-    // uuidv7() default value SQL in the migrations requires PostgreSQL 18.
+    // uuidv7() default value SQL in the migrations requires PostgreSQL 18. Every class now shares
+    // one server's connection budget instead of having a private one, so raise it well clear of the
+    // measured peak (63 backends) rather than sitting two thirds into the default 100.
     private static readonly PostgreSqlContainer Container = new PostgreSqlBuilder()
         .WithImage("postgres:18")
+        .WithCommand("-c", "max_connections=300")
         .Build();
 
     private static readonly Lazy<Task<string>> Template = new(EnsureTemplateAsync);
@@ -49,7 +52,14 @@ public sealed class PostgresFixture : IAsyncLifetime
 
     // The container outlives every fixture instance, so it is not disposed here; Testcontainers'
     // reaper removes it when the test process exits. Cloned databases die with the container.
-    public Task DisposeAsync() => Task.CompletedTask;
+    // The pool is cleared, though: Npgsql keys pools by connection string and holds physical
+    // connections for ConnectionIdleLifetime (300s, longer than the whole suite), so without this
+    // the live count grows with total classes rather than concurrent ones.
+    public Task DisposeAsync()
+    {
+        NpgsqlConnection.ClearPool(new NpgsqlConnection(ConnectionString));
+        return Task.CompletedTask;
+    }
 
     private static async Task<string> EnsureTemplateAsync()
     {
