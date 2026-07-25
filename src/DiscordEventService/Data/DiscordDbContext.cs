@@ -92,10 +92,11 @@ public sealed class DiscordDbContext(DbContextOptions<DiscordDbContext> options)
     // EF logs these two at Error from inside SaveChangesAsync — before the catch in
     // DbSetUpsertExtensions runs — so handled 23505 races surface as Errors nothing can
     // suppress (#314). Warning, not Debug: ConfigureWarnings cannot filter on SqlState, so
-    // this covers every command failure, and Debug would fall under the
-    // Microsoft.EntityFrameworkCore=Warning floor in appsettings.json — dropping EF's
-    // rendered SQL and parameters in prod, the fastest diagnostic on the backfill paths
-    // that swallow and continue. Set here, not in Program.cs, so jobs and tests inherit it.
+    // this covers every command failure, and Debug sits below every EF category floor this
+    // service runs with — dropping the events outright rather than downgrading them, and
+    // with them EF's rendered SQL and parameters, the fastest diagnostic on the backfill
+    // paths that swallow and continue. Set here, not in Program.cs, so jobs and tests
+    // inherit it.
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
         base.OnConfiguring(optionsBuilder);

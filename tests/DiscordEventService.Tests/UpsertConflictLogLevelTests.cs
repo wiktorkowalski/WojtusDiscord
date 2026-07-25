@@ -61,8 +61,8 @@ public sealed class UpsertConflictLogLevelTests(PostgresFixture fixture)
     {
         Assert.DoesNotContain(_log.Entries, e => e.Level >= LogLevel.Error);
 
-        // Downgraded, not silenced — Warning clears the appsettings.json floor for EF, so this
-        // assertion describes prod behaviour and not just the always-enabled test logger.
+        // Downgraded, not silenced — Warning clears every EF category floor this service runs
+        // with, so this describes prod behaviour and not just the always-enabled test logger.
         Assert.Contains(_log.Entries, e =>
             e.Level == LogLevel.Warning && e.Message.Contains("23505", StringComparison.Ordinal));
     }
