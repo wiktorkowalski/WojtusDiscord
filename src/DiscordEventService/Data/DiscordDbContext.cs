@@ -2,6 +2,7 @@ using DiscordEventService.Data.Entities.Conversations;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace DiscordEventService.Data;
@@ -87,6 +88,23 @@ public sealed class DiscordDbContext(DbContextOptions<DiscordDbContext> options)
 
     // Sent cost-cap alerts (#269) — the soft-cap dedup ledger + audit trail.
     public DbSet<UsageAlertEntity> UsageAlerts => Set<UsageAlertEntity>();
+
+    // EF logs these two at Error from inside SaveChangesAsync — before the catch in
+    // DbSetUpsertExtensions runs — so handled 23505 races surface as Errors nothing can
+    // suppress (#314). Warning, not Debug: ConfigureWarnings cannot filter on SqlState, so
+    // this covers every command failure, and Debug sits below every EF category floor this
+    // service runs with — dropping the events outright rather than downgrading them, and
+    // with them EF's rendered SQL and parameters, the fastest diagnostic on the backfill
+    // paths that swallow and continue. Set here, not in Program.cs, so jobs and tests
+    // inherit it.
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        base.OnConfiguring(optionsBuilder);
+
+        optionsBuilder.ConfigureWarnings(w => w.Log(
+            (RelationalEventId.CommandError, LogLevel.Warning),
+            (CoreEventId.SaveChangesFailed, LogLevel.Warning)));
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
