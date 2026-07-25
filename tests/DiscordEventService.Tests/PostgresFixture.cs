@@ -57,6 +57,12 @@ public sealed class PostgresFixture : IAsyncLifetime
     // the live count grows with total classes rather than concurrent ones.
     public Task DisposeAsync()
     {
+        // xUnit still disposes a fixture whose InitializeAsync faulted, and there is no pool to
+        // clear in that case; returning early keeps a real startup failure from being buried under
+        // 43 secondary exceptions.
+        if (ConnectionString is null)
+            return Task.CompletedTask;
+
         NpgsqlConnection.ClearPool(new NpgsqlConnection(ConnectionString));
         return Task.CompletedTask;
     }
