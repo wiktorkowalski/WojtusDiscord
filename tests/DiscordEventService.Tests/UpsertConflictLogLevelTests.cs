@@ -7,7 +7,8 @@ using Xunit;
 namespace DiscordEventService.Tests;
 
 // Pins the #314 contract: a 23505 the upsert primitives handle by design must leave no Error
-// record behind, while staying traceable at Debug.
+// record behind, while staying visible at Warning — above the prod category floor, so the SQL
+// and parameters EF renders on a real failure survive too.
 public sealed class UpsertConflictLogLevelTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -60,9 +61,10 @@ public sealed class UpsertConflictLogLevelTests(PostgresFixture fixture)
     {
         Assert.DoesNotContain(_log.Entries, e => e.Level >= LogLevel.Error);
 
-        // Downgraded, not silenced: the failure is still traceable when Debug is enabled.
+        // Downgraded, not silenced — Warning clears the appsettings.json floor for EF, so this
+        // assertion describes prod behaviour and not just the always-enabled test logger.
         Assert.Contains(_log.Entries, e =>
-            e.Level == LogLevel.Debug && e.Message.Contains("23505", StringComparison.Ordinal));
+            e.Level == LogLevel.Warning && e.Message.Contains("23505", StringComparison.Ordinal));
     }
 
     private async Task SeedAsync(ulong discordId)

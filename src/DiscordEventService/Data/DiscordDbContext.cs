@@ -91,15 +91,18 @@ public sealed class DiscordDbContext(DbContextOptions<DiscordDbContext> options)
 
     // EF logs these two at Error from inside SaveChangesAsync — before the catch in
     // DbSetUpsertExtensions runs — so handled 23505 races surface as Errors nothing can
-    // suppress (#314). EventPipeline already logs real failures with the exception and a
-    // CorrelationId. Set here, not in Program.cs, so jobs and tests inherit it too.
+    // suppress (#314). Warning, not Debug: ConfigureWarnings cannot filter on SqlState, so
+    // this covers every command failure, and Debug would fall under the
+    // Microsoft.EntityFrameworkCore=Warning floor in appsettings.json — dropping EF's
+    // rendered SQL and parameters in prod, the fastest diagnostic on the backfill paths
+    // that swallow and continue. Set here, not in Program.cs, so jobs and tests inherit it.
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
         base.OnConfiguring(optionsBuilder);
 
         optionsBuilder.ConfigureWarnings(w => w.Log(
-            (RelationalEventId.CommandError, LogLevel.Debug),
-            (CoreEventId.SaveChangesFailed, LogLevel.Debug)));
+            (RelationalEventId.CommandError, LogLevel.Warning),
+            (CoreEventId.SaveChangesFailed, LogLevel.Warning)));
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
