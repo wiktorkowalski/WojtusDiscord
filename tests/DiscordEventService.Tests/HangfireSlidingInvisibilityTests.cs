@@ -29,12 +29,21 @@ public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : 
     {
         using var server = StartServer("hangfire_sliding", useSliding: true, out var storage);
 
-        new BackgroundJobClient(storage).Enqueue(() => SlowJobProbe.Run("sliding", JobRuntimeMs));
+        try
+        {
+            new BackgroundJobClient(storage).Enqueue(() => SlowJobProbe.Run("sliding", JobRuntimeMs));
 
-        Assert.True(await WaitForAsync(() => SlowJobProbe.ExecutionCount("sliding") >= 1, FirstExecutionTimeout));
-        await Task.Delay(SettleWindow);
+            Assert.True(await WaitForAsync(() => SlowJobProbe.ExecutionCount("sliding") >= 1, FirstExecutionTimeout));
+            await Task.Delay(SettleWindow);
 
-        Assert.Equal(1, SlowJobProbe.ExecutionCount("sliding"));
+            Assert.Equal(1, SlowJobProbe.ExecutionCount("sliding"));
+        }
+        finally
+        {
+            // Releases the probe's worker thread so a failed assert doesn't also burn the job's
+            // remaining runtime plus the server's full ShutdownTimeout on the way out.
+            SlowJobProbe.Stop("sliding");
+        }
     }
 
     [Fact]
