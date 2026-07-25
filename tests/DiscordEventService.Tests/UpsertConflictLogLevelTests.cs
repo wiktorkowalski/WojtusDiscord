@@ -25,7 +25,7 @@ public sealed class UpsertConflictLogLevelTests(PostgresFixture fixture)
     public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
-    public async Task UpsertAsync_WhenInsertConflicts_LogsNoErrorAndKeepsDebugDiagnostic()
+    public async Task UpsertAsync_WhenInsertConflicts_LogsNoErrorAndKeepsWarningDiagnostic()
     {
         await SeedAsync(500UL);
 
@@ -43,7 +43,7 @@ public sealed class UpsertConflictLogLevelTests(PostgresFixture fixture)
     }
 
     [Fact]
-    public async Task GetOrInsertAsync_WhenInsertConflicts_LogsNoErrorAndKeepsDebugDiagnostic()
+    public async Task GetOrInsertAsync_WhenInsertConflicts_LogsNoErrorAndKeepsWarningDiagnostic()
     {
         await SeedAsync(600UL);
 
