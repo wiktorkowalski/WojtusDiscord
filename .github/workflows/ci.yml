@@ -14,7 +14,7 @@ jobs:
   ci:
     # Format, build (-warnaserror), and run the xUnit + Testcontainers suite.
     # ubuntu-latest provides Docker for Testcontainers (Postgres 18).
-    uses: wiktorkowalski/github-workflows/.github/workflows/dotnet-ci.yml@master
+    uses: wiktorkowalski/github-workflows/.github/workflows/dotnet-ci.yml@perf/format-off-critical-path
     with:
       dotnet-version: "10.0.x"
     secrets: inherit
