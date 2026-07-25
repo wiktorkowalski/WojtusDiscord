@@ -267,7 +267,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContext<DiscordDbContext>(o => o
-            .UseNpgsql(fixture.Container.GetConnectionString())
+            .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention());
         services.Configure<MemeIndexOptions>(o => o.ChannelIds = channelIds ?? [ChannelDiscordId]);
         services.Configure<OpenRouterOptions>(o =>
@@ -331,7 +331,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     private DiscordDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<DiscordDbContext>()
-            .UseNpgsql(fixture.Container.GetConnectionString())
+            .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new DiscordDbContext(options);

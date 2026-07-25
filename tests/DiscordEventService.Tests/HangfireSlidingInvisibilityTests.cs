@@ -62,7 +62,7 @@ public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : 
             InvisibilityTimeout = InvisibilityTimeout,
             QueuePollInterval = TimeSpan.FromMilliseconds(250)
         };
-        storage = new PostgreSqlStorage(new NpgsqlConnectionFactory(fixture.Container.GetConnectionString(), options), options);
+        storage = new PostgreSqlStorage(new NpgsqlConnectionFactory(fixture.ConnectionString, options), options);
 
         return new BackgroundJobServer(
             new BackgroundJobServerOptions

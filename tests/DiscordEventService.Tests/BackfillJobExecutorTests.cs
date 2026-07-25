@@ -25,7 +25,7 @@ public sealed class BackfillJobExecutorTests(PostgresFixture fixture)
 
         _provider = new ServiceCollection()
             .AddDbContext<DiscordDbContext>(o => o
-                .UseNpgsql(fixture.Container.GetConnectionString())
+                .UseNpgsql(fixture.ConnectionString)
                 .UseSnakeCaseNamingConvention())
             .BuildServiceProvider();
 
@@ -142,7 +142,7 @@ public sealed class BackfillJobExecutorTests(PostgresFixture fixture)
     private DiscordDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<DiscordDbContext>()
-            .UseNpgsql(fixture.Container.GetConnectionString())
+            .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new DiscordDbContext(options);

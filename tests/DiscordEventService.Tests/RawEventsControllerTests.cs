@@ -106,7 +106,7 @@ public sealed class RawEventsControllerTests(PostgresFixture fixture) : IClassFi
     private DiscordDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<DiscordDbContext>()
-            .UseNpgsql(fixture.Container.GetConnectionString())
+            .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new DiscordDbContext(options);

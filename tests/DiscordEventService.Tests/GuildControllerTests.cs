@@ -129,7 +129,7 @@ public sealed class GuildControllerTests(PostgresFixture fixture) : IClassFixtur
     private DiscordDbContext NewContext()
     {
         var options = new DbContextOptionsBuilder<DiscordDbContext>()
-            .UseNpgsql(fixture.Container.GetConnectionString())
+            .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new DiscordDbContext(options);
