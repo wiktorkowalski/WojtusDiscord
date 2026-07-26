@@ -11,14 +11,17 @@ namespace DiscordEventService.Tests;
 // outliving InvisibilityTimeout runs exactly once instead of being re-fetched as dead.
 public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>
 {
-    private static readonly TimeSpan InvisibilityTimeout = TimeSpan.FromSeconds(5);
+    // Floor, not a preference: PostgreSqlHeartbeatProcess ticks once per second, so a beat can
+    // never land more often than that however small InvisibilityTimeout/5 gets. Under 3s the beat
+    // gap approaches the window and test 1 starts seeing re-fetches under sliding mode.
+    private static readonly TimeSpan InvisibilityTimeout = TimeSpan.FromSeconds(3);
 
-    // Tuned against InvisibilityTimeout: the job must outlive several invisibility
-    // windows, and the waits must cover fetch + (for fixed mode) one re-fetch.
-    private const int JobRuntimeMs = 12_000;
-    private static readonly TimeSpan FirstExecutionTimeout = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan RefetchTimeout = TimeSpan.FromSeconds(20);
-    private static readonly TimeSpan SettleWindow = TimeSpan.FromSeconds(16);
+    // Multiples, not independent numbers — the proof holds at any scale where the job outlives
+    // several windows and the waits cover fetch plus (fixed mode) one re-fetch.
+    private static readonly int JobRuntimeMs = (int)(InvisibilityTimeout * 2.4).TotalMilliseconds;
+    private static readonly TimeSpan FirstExecutionTimeout = InvisibilityTimeout * 2;
+    private static readonly TimeSpan RefetchTimeout = InvisibilityTimeout * 4;
+    private static readonly TimeSpan SettleWindow = InvisibilityTimeout * 3.2;
     private static readonly TimeSpan PollDelay = TimeSpan.FromMilliseconds(100);
 
     [Fact]
@@ -26,12 +29,21 @@ public sealed class HangfireSlidingInvisibilityTests(PostgresFixture fixture) : 
     {
         using var server = StartServer("hangfire_sliding", useSliding: true, out var storage);
 
-        new BackgroundJobClient(storage).Enqueue(() => SlowJobProbe.Run("sliding", JobRuntimeMs));
+        try
+        {
+            new BackgroundJobClient(storage).Enqueue(() => SlowJobProbe.Run("sliding", JobRuntimeMs));
 
-        Assert.True(await WaitForAsync(() => SlowJobProbe.ExecutionCount("sliding") >= 1, FirstExecutionTimeout));
-        await Task.Delay(SettleWindow);
+            Assert.True(await WaitForAsync(() => SlowJobProbe.ExecutionCount("sliding") >= 1, FirstExecutionTimeout));
+            await Task.Delay(SettleWindow);
 
-        Assert.Equal(1, SlowJobProbe.ExecutionCount("sliding"));
+            Assert.Equal(1, SlowJobProbe.ExecutionCount("sliding"));
+        }
+        finally
+        {
+            // Releases the probe's worker thread so a failed assert doesn't also burn the job's
+            // remaining runtime plus the server's full ShutdownTimeout on the way out.
+            SlowJobProbe.Stop("sliding");
+        }
     }
 
     [Fact]
