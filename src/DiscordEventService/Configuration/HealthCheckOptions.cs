@@ -26,8 +26,9 @@ internal sealed class HealthCheckOptions
     // alerts — debounces transient lulls on a low-traffic server.
     public int EventRatioConsecutiveRuns { get; set; } = 3;
 
-    // Event types excluded from the ratio-drop check entirely. Voice traffic is
-    // naturally bursty (whole quiet days are normal), so it is excluded by default.
+    // Event types excluded from the ratio-drop check entirely. Voice and typing
+    // traffic is naturally bursty (whole quiet days are normal — attachment-only
+    // messages and bot embeds never fire TypingStarted), so both are excluded by default.
     public string[] EventRatioExcludedEventTypes { get; set; } =
-        ["VoiceStateUpdated", "VoiceServerUpdated"];
+        ["VoiceStateUpdated", "VoiceServerUpdated", "TypingStarted"];
 }
