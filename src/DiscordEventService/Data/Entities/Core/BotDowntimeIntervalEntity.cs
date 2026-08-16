@@ -31,5 +31,6 @@ public enum BotDowntimeDetectionMethod
     GracefulStop = 0,
     StartupGapInference = 1,
     GatewayEvent = 2,
-    Manual = 3
+    Manual = 3,
+    HeartbeatWriteFailure = 4
 }

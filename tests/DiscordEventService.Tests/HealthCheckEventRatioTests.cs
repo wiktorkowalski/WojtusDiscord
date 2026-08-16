@@ -11,6 +11,7 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
+[Collection("HealthCheckJobStatics")]
 public sealed class HealthCheckEventRatioTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {

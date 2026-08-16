@@ -68,6 +68,29 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         return affected;
     }
 
+    public async Task<Guid> RecordDbUnreachableAsync(UnwritableWindow window)
+    {
+        // Inserted already closed (like InferStartupGapAsync), never opened+closed: the
+        // open could not have been written while the DB was down (#320).
+        var row = new BotDowntimeIntervalEntity
+        {
+            StartedAtUtc = window.StartedAtUtc,
+            EndedAtUtc = window.EndedAtUtc,
+            Type = BotDowntimeType.DbUnreachable,
+            DetectionMethod = BotDowntimeDetectionMethod.HeartbeatWriteFailure,
+            // "failed writes", not "ticks": a hung write can eat several tick periods, so
+            // the count is not duration/5s.
+            Notes = $"Heartbeat writes failed for {(window.EndedAtUtc - window.StartedAtUtc).TotalSeconds:F0}s"
+                + $" ({window.FailedWriteCount} failed writes) with the gateway connected"
+        };
+        db.BotDowntimeIntervals.Add(row);
+        await db.SaveChangesAsync();
+        logger.LogWarning(
+            "Recorded DbUnreachable downtime {DowntimeId}: {FailedWriteCount} heartbeat writes failed over {DurationSeconds:F0}s",
+            row.Id, window.FailedWriteCount, (window.EndedAtUtc - window.StartedAtUtc).TotalSeconds);
+        return row.Id;
+    }
+
     public async Task RecordHeartbeatAsync(
         DateTime nowUtc,
         bool? isGatewayConnected = null,

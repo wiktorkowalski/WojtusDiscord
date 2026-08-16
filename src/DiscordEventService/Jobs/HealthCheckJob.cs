@@ -129,7 +129,9 @@ internal sealed class HealthCheckJob(
         var recentRestarts = await db.BotDowntimeIntervals
             .Where(d => d.StartedAtUtc > windowStart && d.EndedAtUtc != null
                 && d.Type != Data.Entities.Core.BotDowntimeType.GracefulShutdown
-                && d.Type != Data.Entities.Core.BotDowntimeType.Deploy)
+                && d.Type != Data.Entities.Core.BotDowntimeType.Deploy
+                // #320: a DbUnreachable interval is an outage the process survived, not a restart.
+                && d.Type != Data.Entities.Core.BotDowntimeType.DbUnreachable)
             .CountAsync(cancellationToken);
 
         if (recentRestarts < CrashLoopRestartThreshold)
