@@ -102,6 +102,9 @@ builder.Services.AddScoped<MessageMentionsBackfillService>();
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<DiscordDbContext>();
 
+// #193: /health reports the deployed commit + runtime state; resolved once, immutable.
+builder.Services.AddSingleton(BuildInfo.FromEntryAssembly());
+
 // Dashboard read API (MVC controllers under Controllers/). Controllers are
 // auto-discovered by MapControllers(); no per-controller registration needed.
 // Snowflakes serialize as strings (JS number precision) for the whole API.
@@ -252,7 +255,12 @@ app.UseStaticFiles();
 
 app.MapControllers();
 
-app.MapHealthChecks("/health");
+// #193: structured JSON with build/version + runtime diagnostics instead of the bare
+// "Healthy" text; same pipeline, so the Docker HEALTHCHECK's status-code contract holds.
+app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    ResponseWriter = HealthResponseWriter.WriteAsync,
+});
 
 app.MapHangfireDashboard("/hangfire");
 
