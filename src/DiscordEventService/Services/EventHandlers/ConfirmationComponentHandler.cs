@@ -11,6 +11,8 @@ internal sealed class ConfirmationComponentHandler(ConfirmationFlow flow)
 {
     public Task HandleEventAsync(DiscordClient sender, ComponentInteractionCreatedEventArgs e) =>
         flow.HandleAsync(
-            new ConfirmationClick(e.Id, e.User.Id, e.User.Username),
-            new DiscordConfirmationSurface(e));
+            new ConfirmationClick(e.Id, e.User.Id, e.User.Username, e.Guild?.Id),
+            new DiscordConfirmationSurface(e),
+            // The channel holding the card — where the outcome feedback turn (#310) posts.
+            new DiscordTurnSurface(e.Channel));
 }

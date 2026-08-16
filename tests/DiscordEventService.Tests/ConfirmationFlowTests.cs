@@ -15,6 +15,8 @@ public sealed class ConfirmationFlowTests
 {
     private const ulong AdminId = 11UL;
     private const ulong OutsiderId = 22UL;
+    private const ulong GuildId = 900UL;
+    private const ulong CardChannelId = 777UL;
     private const string Token = "abc123";
     private const string ConfirmId = $"conv6:confirm:{Token}";
     private const string CancelId = $"conv6:cancel:{Token}";
@@ -23,6 +25,9 @@ public sealed class ConfirmationFlowTests
     private readonly RecordingLogger _logger = new();
     private readonly FakeStagedActionStore _confirmations;
     private readonly FakeConfirmationSurface _surface;
+    private readonly FakeTurnSource _feedbackTurns = new();
+    private readonly FakeTurnSurface _feedbackSurface = new(CardChannelId);
+    private readonly FakeUsageAlertService _feedbackUsageAlerts = new();
     private readonly ConfirmationFlow _flow;
 
     private int _executions;
@@ -31,9 +36,14 @@ public sealed class ConfirmationFlowTests
     {
         _confirmations = new FakeStagedActionStore(_trace);
         _surface = new FakeConfirmationSurface(_trace);
+        var options = Options.Create(new ConversationOptions { AdminUserIds = [AdminId] });
+        // The real ConversationFlow over fakes — the #310 feedback path is covered
+        // click-to-rendered-reply, not against a stub of the flow.
         _flow = new ConfirmationFlow(
             _confirmations,
-            Options.Create(new ConversationOptions { AdminUserIds = [AdminId] }),
+            new ConversationFlow(
+                _feedbackTurns, _feedbackUsageAlerts, options, _logger.For<ConversationFlow>()),
+            options,
             _logger.For<ConfirmationFlow>());
     }
 
@@ -44,7 +54,7 @@ public sealed class ConfirmationFlowTests
     {
         Stage();
 
-        await _flow.HandleAsync(Click(customId, AdminId), _surface);
+        await _flow.HandleAsync(Click(customId, AdminId), _surface, _feedbackSurface);
 
         // Not even a claim attempt — every component interaction in the guild reaches here.
         Assert.Empty(_trace);
@@ -56,7 +66,7 @@ public sealed class ConfirmationFlowTests
     {
         Stage();
 
-        await _flow.HandleAsync(Click(ConfirmId, OutsiderId), _surface);
+        await _flow.HandleAsync(Click(ConfirmId, OutsiderId), _surface, _feedbackSurface);
 
         Assert.Equal(["ephemeral:Only a server admin can confirm or cancel this action."], _trace);
         Assert.Equal(0, _executions);
@@ -64,7 +74,7 @@ public sealed class ConfirmationFlowTests
         Assert.True(_confirmations.Contains(Token));
 
         _trace.Clear();
-        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface);
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
         Assert.Equal(1, _executions);
     }
 
@@ -73,7 +83,7 @@ public sealed class ConfirmationFlowTests
     {
         Stage();
 
-        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface);
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
 
         Assert.Equal(["ack", "claim", "execute", "edit:✅ done\n-# confirmed by admin"], _trace);
     }
@@ -83,9 +93,9 @@ public sealed class ConfirmationFlowTests
     {
         Stage();
 
-        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface);
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
         _trace.Clear();
-        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface);
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
 
         Assert.Equal(1, _executions);
         // The loser already spent its response slot on the ack, so it can only follow up.
@@ -98,7 +108,7 @@ public sealed class ConfirmationFlowTests
         Stage();
         _surface.AcknowledgeFailure = new InvalidOperationException("interaction expired");
 
-        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface);
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
 
         // Claiming before the ack would have lost a confirmed irreversible action for good.
         Assert.Equal(0, _executions);
@@ -112,7 +122,7 @@ public sealed class ConfirmationFlowTests
     {
         Stage(_ => throw new InvalidOperationException("Discord said no"));
 
-        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface);
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
 
         Assert.Contains("edit:✅ The action failed to run.\n-# confirmed by admin", _trace);
         Assert.Contains(_logger.Entries, entry => entry.Level == LogLevel.Error);
@@ -124,7 +134,7 @@ public sealed class ConfirmationFlowTests
         Stage();
         _surface.EditFailure = new InvalidOperationException("unknown message");
 
-        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface);
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
 
         Assert.Equal(1, _executions);
         Assert.Contains("fallback:✅ done\n-# confirmed by admin", _trace);
@@ -137,7 +147,7 @@ public sealed class ConfirmationFlowTests
         _surface.EditFailure = new InvalidOperationException("unknown message");
         _surface.FallbackFailure = new InvalidOperationException("missing permissions");
 
-        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface);
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
 
         Assert.Equal(1, _executions);
         Assert.Equal(2, _logger.Entries.Count(entry => entry.Level == LogLevel.Warning));
@@ -148,7 +158,7 @@ public sealed class ConfirmationFlowTests
     {
         Stage();
 
-        await _flow.HandleAsync(Click(CancelId, AdminId), _surface);
+        await _flow.HandleAsync(Click(CancelId, AdminId), _surface, _feedbackSurface);
 
         Assert.Equal(["claim", "replace:❌ Cancelled: ban someone\n-# cancelled by admin"], _trace);
         Assert.Equal(0, _executions);
@@ -158,7 +168,7 @@ public sealed class ConfirmationFlowTests
     [Fact]
     public async Task Cancel_OnAnExpiredToken_SaysSo()
     {
-        await _flow.HandleAsync(Click(CancelId, AdminId), _surface);
+        await _flow.HandleAsync(Click(CancelId, AdminId), _surface, _feedbackSurface);
 
         Assert.Equal(["claim", "ephemeral:That action was already handled or has expired."], _trace);
     }
@@ -175,6 +185,100 @@ public sealed class ConfirmationFlowTests
                 return Task.FromResult("done");
             })));
 
+    // #310: the outcome feeds back into the conversation as its own turn.
+
+    [Fact]
+    public async Task Confirm_FeedsTheOutcomeBackIntoTheConversation_AsTheClicker()
+    {
+        Stage();
+        _feedbackTurns.Updates.Add(new ConversationUpdate.AssistantTextDelta("zbanowane, szefie"));
+
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
+
+        var (message, context) = Assert.Single(_feedbackTurns.Turns);
+        // The model gets the description AND what the execute actually returned.
+        Assert.Contains("ban someone", message);
+        Assert.Contains("done", message);
+        Assert.Contains("confirmed", message);
+        // The invocation context is the CLICKER on the card's channel — same conversation
+        // memory window as the turn that staged the action.
+        Assert.Equal(AdminId, context.InvokerId);
+        Assert.True(context.IsAdmin);
+        Assert.Equal(GuildId, context.GuildId);
+        Assert.Equal(CardChannelId, context.ChannelId);
+        Assert.Equal(["zbanowane, szefie"], _feedbackSurface.Sent);
+        // Every click is a model turn now — the §3 cost-cap check must cover it.
+        Assert.Equal([AdminId], _feedbackUsageAlerts.Checked);
+    }
+
+    [Fact]
+    public async Task AFailedAction_IsFedBackToo_SoTheModelCanProposeTheFix()
+    {
+        Stage(_ => Task.FromResult("I don't have permission to do that."));
+
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
+
+        Assert.Contains("I don't have permission to do that.", _feedbackTurns.Turns.Single().Message);
+    }
+
+    [Fact]
+    public async Task Cancel_FeedsBack_WithTheCancelledFraming()
+    {
+        Stage();
+
+        await _flow.HandleAsync(Click(CancelId, AdminId), _surface, _feedbackSurface);
+
+        var (message, context) = Assert.Single(_feedbackTurns.Turns);
+        Assert.Contains("cancelled", message);
+        Assert.Contains("ban someone", message);
+        Assert.Equal(AdminId, context.InvokerId);
+        Assert.Equal(0, _executions);
+    }
+
+    [Fact]
+    public async Task RefusedForeignAndAlreadyHandledClicks_ProduceNoFeedbackTurn()
+    {
+        Stage();
+
+        await _flow.HandleAsync(Click("someone-elses-button", AdminId), _surface, _feedbackSurface);
+        await _flow.HandleAsync(Click(ConfirmId, OutsiderId), _surface, _feedbackSurface);
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
+        await _flow.HandleAsync(Click(CancelId, AdminId), _surface, _feedbackSurface);
+
+        // Only the one winning confirm fed back — the loser and the stale cancel did not.
+        Assert.Single(_feedbackTurns.Turns);
+        Assert.Equal(1, _executions);
+    }
+
+    [Fact]
+    public async Task AFailedFeedbackTurn_IsLogged_AndDoesNotUndoTheHandledClick()
+    {
+        Stage();
+        _feedbackTurns.Failure = new InvalidOperationException("model exploded");
+
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
+
+        // The action ran and the card was edited before the feedback turn broke.
+        Assert.Equal(1, _executions);
+        Assert.Contains("edit:✅ done\n-# confirmed by admin", _trace);
+        Assert.Contains(_logger.Entries, entry =>
+            entry.Level == LogLevel.Error && entry.Message.Contains("feedback"));
+    }
+
+    [Fact]
+    public async Task AnUnconfiguredConversation_SkipsTheFeedbackTurn_ButStillHandlesTheClick()
+    {
+        Stage();
+        _feedbackTurns.IsConfigured = false;
+
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
+
+        Assert.Equal(1, _executions);
+        Assert.Empty(_feedbackTurns.Turns);
+        Assert.Empty(_feedbackSurface.Sent);
+    }
+
     private static ConfirmationClick Click(string customId, ulong clickerId) =>
-        new(customId, clickerId, clickerId == AdminId ? "admin" : "outsider");
+        new(customId, clickerId, clickerId == AdminId ? "admin" : "outsider", GuildId);
 }
