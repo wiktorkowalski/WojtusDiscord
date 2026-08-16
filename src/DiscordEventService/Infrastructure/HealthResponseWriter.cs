@@ -12,6 +12,11 @@ internal static class HealthResponseWriter
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
+    // Read once — the value can't change, per-probe Process allocations would pile up for
+    // the finalizer, and an unguarded StartTime throw would 500 every /health and flip
+    // the container unhealthy. Falls back to "since first probe" if the read fails.
+    private static readonly DateTime StartedAtUtc = ReadProcessStartTimeUtc();
+
     public static Task WriteAsync(HttpContext context, HealthReport report)
     {
         var build = context.RequestServices.GetRequiredService<BuildInfo>();
@@ -20,7 +25,7 @@ internal static class HealthResponseWriter
 
         var payload = BuildPayload(
             report, build, environment.EnvironmentName,
-            Process.GetCurrentProcess().StartTime.ToUniversalTime(), DateTime.UtcNow,
+            StartedAtUtc, DateTime.UtcNow,
             connected, latencyMs);
 
         context.Response.ContentType = "application/json";
@@ -52,6 +57,19 @@ internal static class HealthResponseWriter
                 gatewayLatencyMs,
             },
         };
+
+    private static DateTime ReadProcessStartTimeUtc()
+    {
+        try
+        {
+            using var process = Process.GetCurrentProcess();
+            return process.StartTime.ToUniversalTime();
+        }
+        catch (Exception)
+        {
+            return DateTime.UtcNow;
+        }
+    }
 
     private static (bool? Connected, int? LatencyMs) ReadGatewayState(DiscordClientAccessor accessor)
     {
