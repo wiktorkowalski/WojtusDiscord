@@ -19,6 +19,8 @@ jobs:
       dockerfile: src/DiscordEventService/Dockerfile
       # Repo root: the Dockerfile bundles the sibling src/Dashboard SPA.
       context: .
+      # #193: /health reports the deployed commit.
+      build-args: GIT_SHA=${{ github.sha }}
       deploy-compose-path: /home/ubuntu/docker/wojtusdiscord
       deploy-runner-labels: '["self-hosted", "homelab"]'
     secrets: inherit

@@ -10,6 +10,13 @@
     <InternalsVisibleTo Include="DiscordEventService.Tests" />
   </ItemGroup>
 
+  <!-- #193: /health reports the deployed commit + build time. SourceRevisionId arrives only
+       from the Docker build (ARG GIT_SHA), so local builds bake nothing and stay
+       incremental — BuildInfo then degrades to "unknown". -->
+  <ItemGroup Condition="'$(SourceRevisionId)' != ''">
+    <AssemblyMetadata Include="BuildTimestampUtc" Value="$([System.DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="DotNetEnv" Version="3.1.1" />
     <PackageReference Include="DSharpPlus" Version="5.0.0-nightly-02485" />

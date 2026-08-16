@@ -15,13 +15,16 @@ RUN npm run build -- --outDir=dist
 
 # Stage 2: Build the .NET backend
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# #193: the workflow passes the commit sha so /health can report what is deployed;
+# an empty value leaves SourceRevisionId unset and the endpoint says "unknown".
+ARG GIT_SHA
 WORKDIR /src
 COPY src/DiscordEventService/*.csproj ./
 RUN dotnet restore
 COPY src/DiscordEventService/ ./
 # Bundle the built SPA so the .NET host serves it from wwwroot.
 COPY --from=frontend-build /app/frontend/dist ./wwwroot
-RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false /p:EnforceCodeStyleInBuild=false /p:RunAnalyzers=false
+RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false /p:EnforceCodeStyleInBuild=false /p:RunAnalyzers=false /p:SourceRevisionId=$GIT_SHA
 
 # Stage 3: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
