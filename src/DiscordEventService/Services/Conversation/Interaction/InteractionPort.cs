@@ -49,8 +49,15 @@ internal interface IConversationGateway
 }
 
 // A click on one of the §6 confirm/cancel buttons, flattened. The clicker — never the
-// requester — is who the flow re-checks against the admin allow-list.
-internal sealed record ConfirmationClick(string CustomId, ulong ClickerId, string ClickerName);
+// requester — is who the flow re-checks against the admin allow-list. GuildId scopes the
+// feedback turn's tools (#310); null only if the card somehow lives in a DM.
+internal sealed record ConfirmationClick(string CustomId, ulong ClickerId, string ClickerName, ulong? GuildId);
+
+// What a §6 click resolved to, handed from ConfirmationFlow to ConversationFlow (#310) so
+// the model learns what happened instead of the conversation dead-ending at the card.
+// Result is what the action's execute returned; null means Cancel — it never ran.
+internal sealed record StagedActionOutcome(
+    string Description, string? Result, ulong ClickerId, string ClickerName, ulong? GuildId);
 
 // The four ways a component interaction can answer, plus the channel fallback. An
 // interaction has exactly ONE response slot: RespondEphemeralAsync, AcknowledgeAsync and

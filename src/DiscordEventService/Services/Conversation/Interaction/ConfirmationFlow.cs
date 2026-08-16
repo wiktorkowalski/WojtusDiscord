@@ -10,10 +10,13 @@ namespace DiscordEventService.Services.Conversation.Interaction;
 // so a double-click can never fire it twice.
 internal sealed class ConfirmationFlow(
     IConfirmationService confirmations,
+    ConversationFlow conversation,
     IOptions<ConversationOptions> options,
     ILogger<ConfirmationFlow> logger)
 {
-    public async Task HandleAsync(ConfirmationClick click, IConfirmationSurface surface)
+    // feedbackSurface is the channel the card lives in — where the outcome feedback turn
+    // (#310) posts, and the same channel the staging turn conversed in.
+    public async Task HandleAsync(ConfirmationClick click, IConfirmationSurface surface, ITurnSurface feedbackSurface)
     {
         // Every component interaction in the guild reaches this — only act on our own buttons.
         if (!ConfirmationService.TryParseCustomId(click.CustomId, out var kind, out var token))
@@ -31,11 +34,11 @@ internal sealed class ConfirmationFlow(
 
             if (kind == ConfirmKind.Cancel)
             {
-                await CancelAsync(click, surface, token);
+                await CancelAsync(click, surface, feedbackSurface, token);
                 return;
             }
 
-            await ConfirmAsync(click, surface, token);
+            await ConfirmAsync(click, surface, feedbackSurface, token);
         }
         catch (Exception ex)
         {
@@ -43,7 +46,8 @@ internal sealed class ConfirmationFlow(
         }
     }
 
-    private async Task ConfirmAsync(ConfirmationClick click, IConfirmationSurface surface, string token)
+    private async Task ConfirmAsync(
+        ConfirmationClick click, IConfirmationSurface surface, ITurnSurface feedbackSurface, string token)
     {
         // Acknowledge the click FIRST (the write can exceed the 3s window), THEN claim. Claiming
         // before the ack would silently lose a confirmed irreversible action if the ack threw — the
@@ -91,9 +95,14 @@ internal sealed class ConfirmationFlow(
                 logger.LogWarning(fallbackEx, "Fallback outcome message for {Token} also failed", token);
             }
         }
+
+        await FeedOutcomeBackAsync(
+            new StagedActionOutcome(action.Description, outcome, click.ClickerId, click.ClickerName, click.GuildId),
+            feedbackSurface, token);
     }
 
-    private async Task CancelAsync(ConfirmationClick click, IConfirmationSurface surface, string token)
+    private async Task CancelAsync(
+        ConfirmationClick click, IConfirmationSurface surface, ITurnSurface feedbackSurface, string token)
     {
         if (!confirmations.TryClaim(token, out var action))
         {
@@ -104,5 +113,24 @@ internal sealed class ConfirmationFlow(
         logger.LogInformation("Action {Token} cancelled by {ClickerId}", token, click.ClickerId);
         await surface.ReplacePromptAsync(
             $"❌ Cancelled: {action.Description}\n-# cancelled by {click.ClickerName}");
+
+        await FeedOutcomeBackAsync(
+            new StagedActionOutcome(action.Description, Result: null, click.ClickerId, click.ClickerName, click.GuildId),
+            feedbackSurface, token);
+    }
+
+    // #310: the click carries the thread forward — hand the outcome to the conversation as
+    // its own turn. Isolated failure handling: the card is already edited by now, so a
+    // broken feedback turn must not read as "the action failed".
+    private async Task FeedOutcomeBackAsync(StagedActionOutcome outcome, ITurnSurface surface, string token)
+    {
+        try
+        {
+            await conversation.HandleActionOutcomeAsync(outcome, surface);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Outcome feedback turn failed for action {Token}", token);
+        }
     }
 }
