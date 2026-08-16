@@ -28,11 +28,13 @@ internal sealed class HeartbeatBackgroundService(
         {
             var nowUtc = DateTime.UtcNow;
             var (isConnected, latencyMs) = ReadGatewayState();
+            var heartbeatWritten = false;
             try
             {
                 using var scope = scopeFactory.CreateScope();
                 var tracker = scope.ServiceProvider.GetRequiredService<DowntimeTrackerService>();
                 await tracker.RecordHeartbeatAsync(nowUtc, isConnected, latencyMs);
+                heartbeatWritten = true;
 
                 var hadPendingWindow = _outage.HasPendingWindow;
                 var window = _outage.OnWriteSucceeded(nowUtc);
@@ -51,10 +53,16 @@ internal sealed class HeartbeatBackgroundService(
                         MinRecordableOutage.TotalSeconds);
                 }
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!heartbeatWritten)
             {
+                // Only a failure of the heartbeat write itself counts toward the window —
+                // scope/persist failures on a tick whose heartbeat committed must not.
                 _outage.OnWriteFailed(nowUtc, isConnected);
                 logger.LogWarning(ex, "Heartbeat write failed; will retry next tick");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Recording the DbUnreachable interval failed; will retry next tick");
             }
 
             try

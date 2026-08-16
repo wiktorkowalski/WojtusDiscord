@@ -14,6 +14,7 @@ namespace DiscordEventService.Tests;
 
 // The persisted half of #320: the DbUnreachable row a recovered outage writes, and the
 // crash-loop alert NOT counting those rows as restarts.
+[Collection("HealthCheckJobStatics")]
 public sealed class DowntimeDbUnreachableTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -42,7 +43,7 @@ public sealed class DowntimeDbUnreachableTests(PostgresFixture fixture)
         Assert.Equal(BotDowntimeDetectionMethod.HeartbeatWriteFailure, row.DetectionMethod);
         Assert.Equal(start, row.StartedAtUtc, TimeSpan.FromMilliseconds(1));
         Assert.Equal(end, row.EndedAtUtc!.Value, TimeSpan.FromMilliseconds(1));
-        Assert.Contains("96 ticks", row.Notes);
+        Assert.Contains("96 failed writes", row.Notes);
     }
 
     [Fact]

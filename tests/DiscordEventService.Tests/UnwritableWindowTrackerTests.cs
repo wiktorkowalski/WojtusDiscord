@@ -78,6 +78,36 @@ public sealed class UnwritableWindowTrackerTests
     }
 
     [Fact]
+    public void ARetryAfterAFailedPersist_DoesNotSlideTheRecoveryInstantForward()
+    {
+        _tracker.OnWriteFailed(T0, gatewayConnected: true);
+
+        var first = _tracker.OnWriteSucceeded(T0.AddSeconds(35));
+        // The persist failed; the retry a minute later must report the SAME window — the
+        // DB was writable in between and the heartbeat rows prove it.
+        var retry = _tracker.OnWriteSucceeded(T0.AddSeconds(95));
+
+        Assert.Equal(first!.EndedAtUtc, retry!.EndedAtUtc);
+        Assert.Equal(T0.AddSeconds(35), retry.EndedAtUtc);
+    }
+
+    [Fact]
+    public void ANewFailureWhileAPersistIsPending_ReopensTheWindow()
+    {
+        _tracker.OnWriteFailed(T0, gatewayConnected: true);
+        Assert.NotNull(_tracker.OnWriteSucceeded(T0.AddSeconds(35)));
+
+        // The DB went down again before the row could be committed — the merged window
+        // must extend to the new recovery, not stay pinned at the first one.
+        _tracker.OnWriteFailed(T0.AddSeconds(40), gatewayConnected: true);
+        var window = _tracker.OnWriteSucceeded(T0.AddSeconds(80));
+
+        Assert.Equal(T0, window!.StartedAtUtc);
+        Assert.Equal(T0.AddSeconds(80), window.EndedAtUtc);
+        Assert.Equal(2, window.FailedWriteCount);
+    }
+
+    [Fact]
     public void ASuccessWithNothingPending_ReturnsNull()
     {
         Assert.Null(_tracker.OnWriteSucceeded(T0));

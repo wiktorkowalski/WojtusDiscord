@@ -78,14 +78,16 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
             EndedAtUtc = window.EndedAtUtc,
             Type = BotDowntimeType.DbUnreachable,
             DetectionMethod = BotDowntimeDetectionMethod.HeartbeatWriteFailure,
+            // "failed writes", not "ticks": a hung write can eat several tick periods, so
+            // the count is not duration/5s.
             Notes = $"Heartbeat writes failed for {(window.EndedAtUtc - window.StartedAtUtc).TotalSeconds:F0}s"
-                + $" ({window.FailedWriteCount} ticks) with the gateway connected"
+                + $" ({window.FailedWriteCount} failed writes) with the gateway connected"
         };
         db.BotDowntimeIntervals.Add(row);
         await db.SaveChangesAsync();
         logger.LogWarning(
-            "Recorded DbUnreachable downtime {DowntimeId}: writes failed for {DurationSeconds:F0}s over {FailedWriteCount} heartbeat ticks",
-            row.Id, (window.EndedAtUtc - window.StartedAtUtc).TotalSeconds, window.FailedWriteCount);
+            "Recorded DbUnreachable downtime {DowntimeId}: {FailedWriteCount} heartbeat writes failed over {DurationSeconds:F0}s",
+            row.Id, window.FailedWriteCount, (window.EndedAtUtc - window.StartedAtUtc).TotalSeconds);
         return row.Id;
     }
 

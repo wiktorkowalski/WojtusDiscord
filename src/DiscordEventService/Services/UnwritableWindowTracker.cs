@@ -9,6 +9,7 @@ namespace DiscordEventService.Services;
 internal sealed class UnwritableWindowTracker(TimeSpan minRecordableWindow)
 {
     private DateTime? _sinceUtc;
+    private DateTime? _recoveredAtUtc;
     private int _failedWrites;
 
     public bool HasPendingWindow => _sinceUtc is not null;
@@ -18,7 +19,11 @@ internal sealed class UnwritableWindowTracker(TimeSpan minRecordableWindow)
         if (_sinceUtc is not null)
         {
             // Once open, the window is owned by this signal even if the gateway drops
-            // mid-outage — the whole unwritable stretch stays one interval.
+            // mid-outage — the whole unwritable stretch stays one interval. A new failure
+            // while a recovered window still awaits its persist re-opens it: the merged
+            // interval over-reports the writable gap between the two outages, but the
+            // alternative is losing the first outage entirely.
+            _recoveredAtUtc = null;
             _failedWrites++;
             return;
         }
@@ -41,13 +46,18 @@ internal sealed class UnwritableWindowTracker(TimeSpan minRecordableWindow)
         if (_sinceUtc is null)
             return null;
 
-        if (nowUtc - _sinceUtc.Value < minRecordableWindow)
+        // Pin the recovery instant to the FIRST successful write. A retry after a failed
+        // persist must not slide EndedAtUtc forward — the DB was writable for that
+        // stretch, and the successful heartbeat rows in it would contradict the interval.
+        _recoveredAtUtc ??= nowUtc;
+
+        if (_recoveredAtUtc.Value - _sinceUtc.Value < minRecordableWindow)
         {
             Reset();
             return null;
         }
 
-        return new UnwritableWindow(_sinceUtc.Value, nowUtc, _failedWrites);
+        return new UnwritableWindow(_sinceUtc.Value, _recoveredAtUtc.Value, _failedWrites);
     }
 
     // Deliberately NOT folded into OnWriteSucceeded for a recordable window: the caller
@@ -56,6 +66,7 @@ internal sealed class UnwritableWindowTracker(TimeSpan minRecordableWindow)
     public void Reset()
     {
         _sinceUtc = null;
+        _recoveredAtUtc = null;
         _failedWrites = 0;
     }
 }
