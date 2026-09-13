@@ -21,6 +21,9 @@ jobs:
       context: .
       # #193: /health reports the deployed commit.
       build-args: GIT_SHA=${{ github.sha }}
+      # #342: dual-arch during the homelab -> EC2 (t4g, arm64) migration window;
+      # drop linux/amd64 after cutover (#343).
+      platforms: linux/amd64,linux/arm64
       deploy-compose-path: /home/ubuntu/docker/wojtusdiscord
       deploy-runner-labels: '["self-hosted", "homelab"]'
     secrets: inherit
