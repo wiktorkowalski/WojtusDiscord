@@ -36,14 +36,21 @@ internal static class BackfillEndpoints
         GuildBackfillOrchestrator orchestrator)
     {
         var options = request?.ToOptions() ?? BackfillOptions.Default;
-        var jobId = await orchestrator.StartBackfillAsync(guildId, options);
+        var afterUtc = request?.AfterUtc();
+        if (afterUtc > DateTime.UtcNow)
+            return Results.BadRequest(new { error = "'after' must not be in the future" });
+
+        // #325: a window skips the full sweep — the same cursor the reconnect and periodic paths use.
+        var jobId = afterUtc is { } after
+            ? await orchestrator.EnqueueBackfillFromAsync(guildId, after, options)
+            : await orchestrator.StartBackfillAsync(guildId, options);
 
         if (jobId is null)
             return Results.BadRequest(new { error = "Backfill already in progress for this guild" });
 
         return Results.Accepted(
             $"/api/backfill/{guildId}/status",
-            new BackfillResponse { JobId = jobId, GuildId = guildId });
+            new BackfillResponse { JobId = jobId, GuildId = guildId, After = afterUtc });
     }
 
     private static async Task<IResult> GetBackfillStatus(
@@ -121,11 +128,21 @@ internal sealed record BackfillRequest
 {
     public bool IncludeMessages { get; init; } = true;
     public bool IncludeReactions { get; init; } = true;
+    // Only messages/reactions newer than this are visited; null = full sweep (#325).
+    public DateTime? After { get; init; }
 
     public BackfillOptions ToOptions() => new BackfillOptions
     {
         IncludeMessages = IncludeMessages,
         IncludeReactions = IncludeReactions,
+    };
+
+    // System.Text.Json yields Unspecified for a timestamp without an offset; operators write UTC.
+    public DateTime? AfterUtc() => After switch
+    {
+        null => null,
+        { Kind: DateTimeKind.Unspecified } a => DateTime.SpecifyKind(a, DateTimeKind.Utc),
+        { } a => a.ToUniversalTime(),
     };
 }
 
@@ -133,6 +150,7 @@ internal sealed record BackfillResponse
 {
     public required string JobId { get; init; }
     public required ulong GuildId { get; init; }
+    public DateTime? After { get; init; }
 }
 
 internal sealed record BackfillStatusResponse
