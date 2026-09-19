@@ -49,6 +49,21 @@ public sealed class BackfillChainGuardTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task EnqueueBackfillFrom_ThreadsTheWindowIntoMessagesAndReactionsJobs()
+    {
+        await using var db = NewContext();
+        var jobClient = new RecordingJobClient();
+        var after = new DateTime(2026, 8, 16, 10, 0, 0, DateTimeKind.Utc);
+
+        var jobId = await NewOrchestrator(db, jobClient).EnqueueBackfillFromAsync(GuildId, after);
+
+        Assert.NotNull(jobId);
+        var windowed = jobClient.Created.Where(j => j.Type == typeof(MessagesBackfillJob) || j.Type == typeof(ReactionsBackfillJob)).ToList();
+        Assert.Equal(2, windowed.Count);
+        Assert.All(windowed, j => Assert.Equal(after, j.Args[1]));
+    }
+
+    [Fact]
     public async Task EnqueueChain_WhilePendingRowsFresh_IsSkipped()
     {
         await using var db = NewContext();
