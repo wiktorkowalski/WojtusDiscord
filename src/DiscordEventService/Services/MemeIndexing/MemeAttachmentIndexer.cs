@@ -5,6 +5,7 @@ using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Jobs;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
@@ -246,14 +247,29 @@ internal sealed class MemeAttachmentIndexer(
         Fail(row, counters, error);
     }
 
-    // Deterministic as far as anyone can tell (the same bytes produce the same rejected write), so
-    // the attempt is charged and the sweep's cap eventually abandons the row.
-    public void FailPoisoned(MemeIndexEntity row, MemeIndexRunCounters counters, Exception ex)
+    // Only SQLSTATE 22/23 (the data itself was refused) is deterministic and charges an attempt;
+    // timeouts and dropped connections must not burn the sweep's cap (#293). No refund: the row was
+    // reloaded after the failed save, so ProcessOneAsync's increment is already gone.
+    public void FailRejectedSave(MemeIndexEntity row, MemeIndexRunCounters counters, Exception ex)
     {
-        row.AttemptCount++;
         var detail = $"{ex.GetType().Name}: {ex.GetBaseException().Message}";
-        Fail(row, counters, $"poisoned: {(detail.Length > PoisonErrorMaxLength ? detail[..PoisonErrorMaxLength] : detail)}");
+        if (detail.Length > PoisonErrorMaxLength)
+            detail = detail[..PoisonErrorMaxLength];
+
+        if (IsDataRejection(ex))
+        {
+            row.AttemptCount++;
+            Fail(row, counters, $"poisoned: {detail}");
+        }
+        else
+        {
+            Fail(row, counters, $"transient: save failed: {detail}");
+        }
     }
+
+    private static bool IsDataRejection(Exception ex) =>
+        ex.GetBaseException() is PostgresException pg
+        && (pg.SqlState.StartsWith("22", StringComparison.Ordinal) || pg.SqlState.StartsWith("23", StringComparison.Ordinal));
 
     private void Fail(MemeIndexEntity row, MemeIndexRunCounters counters, string error)
     {

@@ -174,9 +174,9 @@ internal sealed class MemeIndexingJob(
             .ToDictionaryAsync(m => m.AttachmentDiscordId, m => (m.Status, m.AttemptCount), cancellationToken);
 
         // Only Indexed/Skipped are terminal. Failed retries by design; Pending
-        // means a prior run was interrupted mid-attachment and the executor's
-        // failure path flushed the freshly-added row — it must be picked up
-        // again or the attachment is silently lost from the index.
+        // means a prior run persisted the row but never reached a terminal
+        // status for it — it must be picked up again or the attachment is
+        // silently lost from the index.
         var pending = candidates
             .Where(c =>
             {
@@ -279,7 +279,7 @@ internal sealed class MemeIndexingJob(
         CancellationToken cancellationToken)
     {
         logger.LogWarning(ex,
-            "Meme attachment {AttachmentId} (message {MessageId}) poisoned the run for guild {GuildId}; marking it Failed and continuing",
+            "Saving meme attachment {AttachmentId} (message {MessageId}) failed for guild {GuildId}; recovering and continuing the run",
             item.AttachmentDiscordId, item.MessageDiscordId, ctx.Checkpoint.GuildDiscordId);
 
         ctx.Db.ChangeTracker.Clear();
@@ -287,7 +287,14 @@ internal sealed class MemeIndexingJob(
         await ctx.Db.Entry(ctx.Checkpoint).ReloadAsync(cancellationToken);
 
         var row = await indexer.GetOrCreateRowAsync(ctx.Db, item, cancellationToken);
-        indexer.FailPoisoned(row, counters, ex);
+        // The reload returns whatever is persisted now, which may be a concurrent run's terminal row —
+        // exactly what a unique violation on attachment_discord_id means. Never downgrade its result.
+        if (row.Status is MemeIndexStatus.Indexed or MemeIndexStatus.Skipped)
+            logger.LogInformation(
+                "Meme attachment {AttachmentId} already {Status} by a concurrent run; leaving it untouched",
+                item.AttachmentDiscordId, row.Status);
+        else
+            indexer.FailRejectedSave(row, counters, ex);
         AdvanceCheckpoint(ctx.Checkpoint, item, lastOfMessage);
         // A second rejection here propagates to the executor, which now lands the checkpoint on Failed.
         await SaveProgressAsync(ctx.Db, ctx.Checkpoint, cancellationToken);

@@ -94,24 +94,30 @@ public sealed class BackfillJobExecutorTests(PostgresFixture fixture)
             await seed.SaveChangesAsync();
         }
 
-        await Assert.ThrowsAsync<DbUpdateException>(() =>
-            _executor.RunAsync(Type, GuildId, async ctx =>
-            {
-                ctx.Checkpoint.ProcessedCount = 41;
-                ctx.Db.Guilds.Add(new GuildEntity { DiscordId = GuildId, Name = "duplicate", OwnerId = 1UL });
-                await ctx.Db.SaveChangesAsync();
-                return BackfillOutcome.Completed;
-            }, default));
+        try
+        {
+            await Assert.ThrowsAsync<DbUpdateException>(() =>
+                _executor.RunAsync(Type, GuildId, async ctx =>
+                {
+                    ctx.Checkpoint.ProcessedCount = 41;
+                    ctx.Db.Guilds.Add(new GuildEntity { DiscordId = GuildId, Name = "duplicate", OwnerId = 1UL });
+                    await ctx.Db.SaveChangesAsync();
+                    return BackfillOutcome.Completed;
+                }, default));
 
-        var row = await ReadCheckpointAsync();
-        Assert.Equal(BackfillStatus.Failed, row.Status);
-        Assert.Equal(1, row.ErrorCount);
-        Assert.Contains("DbUpdateException", row.LastError);
-        // In-memory progress from the rejected save is not written — the last persisted state wins.
-        Assert.Equal(0, row.ProcessedCount);
-
-        await using var cleanup = NewContext();
-        await cleanup.Guilds.Where(g => g.DiscordId == GuildId).ExecuteDeleteAsync();
+            var row = await ReadCheckpointAsync();
+            Assert.Equal(BackfillStatus.Failed, row.Status);
+            Assert.Equal(1, row.ErrorCount);
+            Assert.Contains("DbUpdateException", row.LastError);
+            // In-memory progress from the rejected save is not written — the last persisted state wins.
+            Assert.Equal(0, row.ProcessedCount);
+        }
+        finally
+        {
+            // The shared fixture DB outlives this test; a leaked guild breaks the seed on rerun.
+            await using var cleanup = NewContext();
+            await cleanup.Guilds.Where(g => g.DiscordId == GuildId).ExecuteDeleteAsync();
+        }
     }
 
     [Fact]
