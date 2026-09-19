@@ -235,21 +235,61 @@ internal sealed class MemeIndexingJob(
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var row = await indexer.GetOrCreateRowAsync(ctx.Db, item, cancellationToken);
-                await indexer.ProcessOneAsync(ctx.Db, row, item, freshUrls, counters, cancellationToken);
-
                 position++;
-                ctx.Checkpoint.ProcessedCount++;
                 // Advance the resume cursor only once a message's LAST pending
                 // attachment is done — a mid-message cursor would skip siblings.
                 var lastOfMessage = position == pending.Count
                     ? item.MessageDiscordId != messageSplitByCap
                     : pending[position].MessageDiscordId != item.MessageDiscordId;
-                if (lastOfMessage)
-                    ctx.Checkpoint.LastProcessedId = item.MessageDiscordId;
 
-                await SaveProgressAsync(ctx.Db, ctx.Checkpoint, cancellationToken);
+                try
+                {
+                    var row = await indexer.GetOrCreateRowAsync(ctx.Db, item, cancellationToken);
+                    await indexer.ProcessOneAsync(ctx.Db, row, item, freshUrls, counters, cancellationToken);
+                    AdvanceCheckpoint(ctx.Checkpoint, item, lastOfMessage);
+                    await SaveProgressAsync(ctx.Db, ctx.Checkpoint, cancellationToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    await RecoverPoisonedItemAsync(ctx, indexer, item, lastOfMessage, ex, counters, cancellationToken);
+                }
             }
         }
+    }
+
+    private static void AdvanceCheckpoint(BackfillCheckpointEntity checkpoint, MemeSampleItem item, bool lastOfMessage)
+    {
+        checkpoint.ProcessedCount++;
+        if (lastOfMessage)
+            checkpoint.LastProcessedId = item.MessageDiscordId;
+    }
+
+    // One attachment Postgres refuses (NUL byte in model output, unique race with the live hook, ...)
+    // must not kill the run and strand the checkpoint on InProgress with a cursor that walks into the
+    // same row every time (#311). The failed save leaves the rejected row and this item's progress in
+    // the tracker, where EF would re-issue them on the next save — so drop the tracker, reload the
+    // checkpoint to its last persisted state, and record this item as a plain Failed row.
+    private async Task RecoverPoisonedItemAsync(
+        BackfillContext ctx,
+        MemeAttachmentIndexer indexer,
+        MemeSampleItem item,
+        bool lastOfMessage,
+        Exception ex,
+        MemeIndexRunCounters counters,
+        CancellationToken cancellationToken)
+    {
+        logger.LogWarning(ex,
+            "Meme attachment {AttachmentId} (message {MessageId}) poisoned the run for guild {GuildId}; marking it Failed and continuing",
+            item.AttachmentDiscordId, item.MessageDiscordId, ctx.Checkpoint.GuildDiscordId);
+
+        ctx.Db.ChangeTracker.Clear();
+        ctx.Db.BackfillCheckpoints.Attach(ctx.Checkpoint);
+        await ctx.Db.Entry(ctx.Checkpoint).ReloadAsync(cancellationToken);
+
+        var row = await indexer.GetOrCreateRowAsync(ctx.Db, item, cancellationToken);
+        indexer.FailPoisoned(row, counters, ex);
+        AdvanceCheckpoint(ctx.Checkpoint, item, lastOfMessage);
+        // A second rejection here propagates to the executor, which now lands the checkpoint on Failed.
+        await SaveProgressAsync(ctx.Db, ctx.Checkpoint, cancellationToken);
     }
 }

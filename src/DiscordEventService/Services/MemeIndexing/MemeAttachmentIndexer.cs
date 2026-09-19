@@ -28,6 +28,8 @@ internal sealed class MemeAttachmentIndexer(
     IOptions<OpenRouterOptions> openRouterOptions,
     ILogger<MemeAttachmentIndexer> logger)
 {
+    private const int PoisonErrorMaxLength = 500;
+
     public async Task<MemeIndexEntity> GetOrCreateRowAsync(
         DiscordDbContext db, MemeSampleItem item, CancellationToken cancellationToken)
     {
@@ -192,6 +194,12 @@ internal sealed class MemeAttachmentIndexer(
     {
         switch (result.Outcome)
         {
+            // `required` in System.Text.Json is presence-only: an explicit null passes deserialization
+            // but violates ck_meme_index_status at save time, which would poison the run (#311).
+            case MemeAnalysisOutcome.Success when result.Metadata is { DescriptionPl: null } or { DescriptionEn: null } or { OcrText: null } or { Tags: null }:
+                Fail(row, counters, "model returned null for a required metadata field");
+                break;
+
             case MemeAnalysisOutcome.Success:
                 row.DescriptionPl = result.Metadata!.DescriptionPl;
                 row.DescriptionEn = result.Metadata.DescriptionEn;
@@ -236,6 +244,15 @@ internal sealed class MemeAttachmentIndexer(
     {
         row.AttemptCount--;
         Fail(row, counters, error);
+    }
+
+    // Deterministic as far as anyone can tell (the same bytes produce the same rejected write), so
+    // the attempt is charged and the sweep's cap eventually abandons the row.
+    public void FailPoisoned(MemeIndexEntity row, MemeIndexRunCounters counters, Exception ex)
+    {
+        row.AttemptCount++;
+        var detail = $"{ex.GetType().Name}: {ex.GetBaseException().Message}";
+        Fail(row, counters, $"poisoned: {(detail.Length > PoisonErrorMaxLength ? detail[..PoisonErrorMaxLength] : detail)}");
     }
 
     private void Fail(MemeIndexEntity row, MemeIndexRunCounters counters, string error)
