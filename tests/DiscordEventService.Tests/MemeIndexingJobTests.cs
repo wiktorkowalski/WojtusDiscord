@@ -167,6 +167,121 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
+    public async Task ExecuteAsync_PoisonRow_LandsFailed_RunContinues_CheckpointCompletes()
+    {
+        AddMessage(1001UL, Attachment(11UL, "fine.png"));
+        AddMessage(1002UL, Attachment(12UL, "nul-byte.png"));
+        AddMessage(1003UL, Attachment(13UL, "also-fine.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.SetImage(12UL, Png(2));
+        _http.SetImage(13UL, Png(3));
+        _http.NulOcrFor.Add(Png(2));
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        var byId = await verify.MemeIndex.ToDictionaryAsync(m => m.AttachmentDiscordId);
+        Assert.Equal(MemeIndexStatus.Indexed, byId[11UL].Status);
+        Assert.Equal(MemeIndexStatus.Failed, byId[12UL].Status);
+        Assert.StartsWith("poisoned: ", byId[12UL].Error);
+        Assert.Equal(1, byId[12UL].AttemptCount);
+        Assert.Null(byId[12UL].OcrText);
+        Assert.Equal(MemeIndexStatus.Indexed, byId[13UL].Status);
+
+        // The run outlived the poison row: checkpoint terminal, progress counted, cursor at the end.
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
+        Assert.Equal(3, checkpoint.ProcessedCount);
+        Assert.Equal(1003UL, checkpoint.LastProcessedId);
+
+        // Deterministic failure: the sweep retries it, charges the attempt, and the cap abandons it.
+        await RunSweepAsync();
+        await using var verify2 = NewContext();
+        var retried = await verify2.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 12UL);
+        Assert.Equal(MemeIndexStatus.Failed, retried.Status);
+        Assert.Equal(2, retried.AttemptCount);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ConcurrentRunIndexesSameAttachment_RecoveryKeepsItsIndexedRow()
+    {
+        AddMessage(1001UL, Attachment(11UL, "raced.png"));
+        AddMessage(1002UL, Attachment(12UL, "fine.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.SetImage(12UL, Png(2));
+        var racedMessageId = await _db.Messages.Where(m => m.DiscordId == 1001UL).Select(m => m.Id).SingleAsync();
+
+        // A second run (admin trigger during the sweep) lands attachment 11 first; this run's insert
+        // then hits the unique index on attachment_discord_id.
+        var raced = false;
+        _http.DuringModelCall = async () =>
+        {
+            if (raced)
+                return;
+            raced = true;
+            await using var other = NewContext();
+            other.MemeIndex.Add(new MemeIndexEntity
+            {
+                MessageId = racedMessageId,
+                GuildDiscordId = GuildDiscordId,
+                ChannelDiscordId = ChannelDiscordId,
+                MessageDiscordId = 1001UL,
+                AttachmentDiscordId = 11UL,
+                FileName = "raced.png",
+                FileSizeBytes = 123,
+                Status = MemeIndexStatus.Indexed,
+                DescriptionPl = "wygrany",
+                DescriptionEn = "winner",
+                OcrText = "",
+                ModelId = "other/run",
+                RawResponseJson = "{}",
+                IndexedAtUtc = DateTime.UtcNow,
+                AttemptCount = 1,
+            });
+            await other.SaveChangesAsync();
+        };
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        var byId = await verify.MemeIndex.ToDictionaryAsync(m => m.AttachmentDiscordId);
+        Assert.Equal(MemeIndexStatus.Indexed, byId[11UL].Status);
+        Assert.Equal("other/run", byId[11UL].ModelId);
+        Assert.Null(byId[11UL].Error);
+        Assert.Equal(1, byId[11UL].AttemptCount);
+        Assert.Equal(MemeIndexStatus.Indexed, byId[12UL].Status);
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
+        Assert.Equal(2, checkpoint.ProcessedCount);
+        Assert.Equal(1002UL, checkpoint.LastProcessedId);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_NullRequiredMetadataField_LandsFailedWithoutPoisoningTheRun()
+    {
+        AddMessage(1001UL, Attachment(11UL, "null-description.png"));
+        AddMessage(1002UL, Attachment(12UL, "fine.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.SetImage(12UL, Png(2));
+        _http.NullDescriptionFor.Add(Png(1));
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        var byId = await verify.MemeIndex.ToDictionaryAsync(m => m.AttachmentDiscordId);
+        Assert.Equal(MemeIndexStatus.Failed, byId[11UL].Status);
+        Assert.Contains("null", byId[11UL].Error);
+        Assert.DoesNotContain("poisoned", byId[11UL].Error);
+        Assert.Equal(1, byId[11UL].AttemptCount);
+        Assert.Equal(MemeIndexStatus.Indexed, byId[12UL].Status);
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_RefreshBatchFailure_MarksFailedAndLaterRunHeals()
     {
         // A transient refresh-urls failure (5xx/timeout) must not mark the
@@ -502,6 +617,12 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
     public HashSet<ulong> DeadAttachments { get; } = [];
     public List<byte[]> RefusalFor { get; } = [];
     public List<byte[]> TransientErrorFor { get; } = [];
+    // Valid JSON, but Postgres rejects U+0000 in text columns — the save throws (#311).
+    public List<byte[]> NulOcrFor { get; } = [];
+    // Passes System.Text.Json's presence-only `required`, violates ck_meme_index_status (#311).
+    public List<byte[]> NullDescriptionFor { get; } = [];
+    // Runs mid model call — after the job added its row, before it saves (#311 concurrent-run race).
+    public Func<Task>? DuringModelCall { get; set; }
     public int RefreshFailuresRemaining { get; set; }
     public int ModelCalls { get; private set; }
     public int CdnRequests { get; private set; }
@@ -556,6 +677,8 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
         var body = await request.Content!.ReadAsStringAsync(cancellationToken);
         var imageBytes = ExtractImageBytes(body);
         ModelCalls++;
+        if (DuringModelCall is not null)
+            await DuringModelCall();
 
         if (TransientErrorFor.Any(b => b.AsSpan().SequenceEqual(imageBytes)))
             return Json(HttpStatusCode.InternalServerError, """{"error":"upstream exploded"}""");
@@ -566,9 +689,9 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
 
         var metadata = JsonSerializer.Serialize(new
         {
-            description_pl = $"Opis obrazka {imageBytes[^1]}",
+            description_pl = NullDescriptionFor.Any(b => b.AsSpan().SequenceEqual(imageBytes)) ? null : $"Opis obrazka {imageBytes[^1]}",
             description_en = $"Description of image {imageBytes[^1]}",
-            ocr_text = "",
+            ocr_text = NulOcrFor.Any(b => b.AsSpan().SequenceEqual(imageBytes)) ? "top text \0 bottom text" : "",
             tags = new[] { "test", "mem" },
             source = (string?)null,
             template = (string?)null

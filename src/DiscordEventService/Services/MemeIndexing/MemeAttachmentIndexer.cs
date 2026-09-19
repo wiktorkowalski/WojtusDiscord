@@ -5,6 +5,7 @@ using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Jobs;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Npgsql;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
@@ -28,6 +29,8 @@ internal sealed class MemeAttachmentIndexer(
     IOptions<OpenRouterOptions> openRouterOptions,
     ILogger<MemeAttachmentIndexer> logger)
 {
+    private const int PoisonErrorMaxLength = 500;
+
     public async Task<MemeIndexEntity> GetOrCreateRowAsync(
         DiscordDbContext db, MemeSampleItem item, CancellationToken cancellationToken)
     {
@@ -192,6 +195,12 @@ internal sealed class MemeAttachmentIndexer(
     {
         switch (result.Outcome)
         {
+            // `required` in System.Text.Json is presence-only: an explicit null passes deserialization
+            // but violates ck_meme_index_status at save time, which would poison the run (#311).
+            case MemeAnalysisOutcome.Success when result.Metadata is { DescriptionPl: null } or { DescriptionEn: null } or { OcrText: null } or { Tags: null }:
+                Fail(row, counters, "model returned null for a required metadata field");
+                break;
+
             case MemeAnalysisOutcome.Success:
                 row.DescriptionPl = result.Metadata!.DescriptionPl;
                 row.DescriptionEn = result.Metadata.DescriptionEn;
@@ -237,6 +246,30 @@ internal sealed class MemeAttachmentIndexer(
         row.AttemptCount--;
         Fail(row, counters, error);
     }
+
+    // Only SQLSTATE 22/23 (the data itself was refused) is deterministic and charges an attempt;
+    // timeouts and dropped connections must not burn the sweep's cap (#293). No refund: the row was
+    // reloaded after the failed save, so ProcessOneAsync's increment is already gone.
+    public void FailRejectedSave(MemeIndexEntity row, MemeIndexRunCounters counters, Exception ex)
+    {
+        var detail = $"{ex.GetType().Name}: {ex.GetBaseException().Message}";
+        if (detail.Length > PoisonErrorMaxLength)
+            detail = detail[..PoisonErrorMaxLength];
+
+        if (IsDataRejection(ex))
+        {
+            row.AttemptCount++;
+            Fail(row, counters, $"poisoned: {detail}");
+        }
+        else
+        {
+            Fail(row, counters, $"transient: save failed: {detail}");
+        }
+    }
+
+    private static bool IsDataRejection(Exception ex) =>
+        ex.GetBaseException() is PostgresException pg
+        && (pg.SqlState.StartsWith("22", StringComparison.Ordinal) || pg.SqlState.StartsWith("23", StringComparison.Ordinal));
 
     private void Fail(MemeIndexEntity row, MemeIndexRunCounters counters, string error)
     {

@@ -97,6 +97,13 @@ internal sealed class BackfillJobExecutor(
 
     private static async Task MarkFailedAsync(DiscordDbContext db, BackfillCheckpointEntity checkpoint, Exception ex)
     {
+        // A save that failed inside the work leaves its rejected entries tracked; this save would
+        // re-issue them, throw again, and the checkpoint would stay InProgress forever (#311). Drop
+        // them and re-attach only the checkpoint — unsaved in-memory progress is lost, which is the
+        // safe direction (the next run resumes from the last persisted cursor).
+        db.ChangeTracker.Clear();
+        db.BackfillCheckpoints.Attach(checkpoint);
+
         checkpoint.Status = BackfillStatus.Failed;
         checkpoint.ErrorCount++;
         checkpoint.LastError = $"{ex.GetType().Name}: {ex.Message}";
