@@ -10,6 +10,17 @@ permissions:
   contents: read
   packages: write
 
+# #326: one Build and Deploy run per ref at a time, so build+push+deploy of
+# commit N finishes before N+1 pushes :latest. (GitHub keeps only one *pending*
+# run per group: with three quick merges the middle one is superseded, the
+# newest still deploys last.)
+# master: never cancel — every run must complete.
+# PR refs: no :latest push and no deploy, so a superseded dual-arch build is
+# pure waste — cancel it.
+concurrency:
+  group: build-deploy-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build-deploy:
     uses: wiktorkowalski/github-workflows/.github/workflows/dotnet-docker-deploy.yml@master
