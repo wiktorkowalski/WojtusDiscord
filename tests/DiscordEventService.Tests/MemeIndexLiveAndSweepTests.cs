@@ -183,6 +183,147 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
         var job = Assert.Single(jobClient.Created);
         Assert.Equal(nameof(MemeIndexingJob.ExecuteSweepAsync), job.Method.Name);
         Assert.Equal(GuildDiscordId, job.Args[0]);
+
+        // #312: the checkpoint carries the job id so cancel / the startup sweep can delete the job.
+        await using var verify = NewContext();
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(BackfillStatus.Pending, checkpoint.Status);
+        Assert.Equal("1", checkpoint.HangfireJobId);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_GuildWithFreshPendingCheckpoint_IsSkipped()
+    {
+        // Enqueued but not started yet (#312) — must not get a second job (#289).
+        _db.BackfillCheckpoints.Add(new BackfillCheckpointEntity
+        {
+            GuildDiscordId = GuildDiscordId,
+            Type = BackfillType.MemeIndex,
+            Status = BackfillStatus.Pending,
+            HangfireJobId = "queued-earlier",
+            StartedAtUtc = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync();
+        var jobClient = new RecordingJobClient();
+
+        await RunCoordinatorAsync(jobClient, configured: true);
+
+        Assert.Empty(jobClient.Created);
+    }
+
+    [Fact]
+    public async Task Enqueuer_FailedCheckpoint_BecomesPendingWithJobId()
+    {
+        var completedAt = DateTime.UtcNow.AddHours(-2);
+        _db.BackfillCheckpoints.Add(new BackfillCheckpointEntity
+        {
+            GuildDiscordId = GuildDiscordId,
+            Type = BackfillType.MemeIndex,
+            Status = BackfillStatus.Failed,
+            HangfireJobId = "old-job",
+            StartedAtUtc = completedAt.AddMinutes(-30),
+            CompletedAtUtc = completedAt
+        });
+        await _db.SaveChangesAsync();
+        var jobClient = new RecordingJobClient();
+
+        await using var db = NewContext();
+        var jobId = await MemeIndexJobEnqueuer.EnqueueAsync(db, jobClient, GuildDiscordId, sweep: false, CancellationToken.None);
+
+        Assert.Equal("1", jobId);
+        Assert.Equal(nameof(MemeIndexingJob.ExecuteAsync), Assert.Single(jobClient.Created).Method.Name);
+        await using var verify = NewContext();
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(BackfillStatus.Pending, checkpoint.Status);
+        Assert.Equal("1", checkpoint.HangfireJobId);
+        Assert.Null(checkpoint.CompletedAtUtc);
+        Assert.True(checkpoint.StartedAtUtc > completedAt);
+    }
+
+    [Fact]
+    public async Task Enqueuer_OldJobId_IsClearedBeforeTheJobExists()
+    {
+        _db.BackfillCheckpoints.Add(new BackfillCheckpointEntity
+        {
+            GuildDiscordId = GuildDiscordId,
+            Type = BackfillType.MemeIndex,
+            Status = BackfillStatus.Completed,
+            HangfireJobId = "old-job",
+            StartedAtUtc = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync();
+        // Observes the row at the moment the job is created, i.e. between the two saves.
+        var jobClient = new SnapshottingJobClient(NewContext, GuildDiscordId);
+
+        await using var db = NewContext();
+        await MemeIndexJobEnqueuer.EnqueueAsync(db, jobClient, GuildDiscordId, sweep: false, CancellationToken.None);
+
+        Assert.Equal(BackfillStatus.Pending, jobClient.StatusAtCreate);
+        Assert.Null(jobClient.JobIdAtCreate);
+    }
+
+    [Fact]
+    public async Task Enqueuer_IdSave_LandsEvenWhenTheTokenIsAlreadyCancelled()
+    {
+        // Shutdown between enqueue and the id save (the sweep runs under Hangfire's shutdown token):
+        // the job exists in storage, so its id must reach the row or it re-runs orphaned.
+        var jobClient = new RecordingJobClient();
+        using var cts = new CancellationTokenSource();
+        var cancelOnCreate = new CancelOnCreateJobClient(jobClient, cts);
+
+        await using var db = NewContext();
+        await MemeIndexJobEnqueuer.EnqueueAsync(db, cancelOnCreate, GuildDiscordId, sweep: true, cts.Token);
+
+        await using var verify = NewContext();
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal("1", checkpoint.HangfireJobId);
+    }
+
+    [Fact]
+    public async Task Enqueuer_StaleInProgressCheckpoint_KeepsStatusAndCursor_GetsJobId()
+    {
+        // A dead job's row (#293): the executor must still see InProgress to resume from the cursor.
+        _db.BackfillCheckpoints.Add(new BackfillCheckpointEntity
+        {
+            GuildDiscordId = GuildDiscordId,
+            Type = BackfillType.MemeIndex,
+            Status = BackfillStatus.InProgress,
+            LastProcessedId = 1001UL,
+            ProcessedCount = 7,
+            StartedAtUtc = DateTime.UtcNow
+        });
+        await _db.SaveChangesAsync();
+        var jobClient = new RecordingJobClient();
+
+        await using var db = NewContext();
+        await MemeIndexJobEnqueuer.EnqueueAsync(db, jobClient, GuildDiscordId, sweep: true, CancellationToken.None);
+
+        await using var verify = NewContext();
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(BackfillStatus.InProgress, checkpoint.Status);
+        Assert.Equal(1001UL, checkpoint.LastProcessedId);
+        Assert.Equal(7, checkpoint.ProcessedCount);
+        Assert.Equal("1", checkpoint.HangfireJobId);
+    }
+
+    [Fact]
+    public async Task ExecuteSweepAsync_AfterEnqueue_CompletesAndKeepsJobId()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        var jobClient = new RecordingJobClient();
+        await using (var db = NewContext())
+            await MemeIndexJobEnqueuer.EnqueueAsync(db, jobClient, GuildDiscordId, sweep: true, CancellationToken.None);
+
+        // What Hangfire would do next: run the job the enqueuer just recorded.
+        await RunSweepAsync();
+
+        await using var verify = NewContext();
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
+        Assert.Equal("1", checkpoint.HangfireJobId);
+        Assert.Equal(1, _http.ModelCalls);
     }
 
     [Fact]
@@ -336,6 +477,39 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
             .Options;
         return new DiscordDbContext(options);
     }
+}
+
+// Reads the checkpoint row from a fresh context at Create time — what cancel or the startup
+// sweep would see in the window between the enqueuer's two saves.
+internal sealed class SnapshottingJobClient(Func<DiscordDbContext> newContext, ulong guildId) : IBackgroundJobClient
+{
+    public BackfillStatus? StatusAtCreate { get; private set; }
+    public string? JobIdAtCreate { get; private set; }
+
+    public string Create(Job job, IState state)
+    {
+        using var db = newContext();
+        var row = db.BackfillCheckpoints.Single(c => c.GuildDiscordId == guildId && c.Type == BackfillType.MemeIndex);
+        StatusAtCreate = row.Status;
+        JobIdAtCreate = row.HangfireJobId;
+        return "new-job";
+    }
+
+    public bool ChangeState(string jobId, IState state, string expectedState) => true;
+}
+
+// Cancels the caller's token the moment the job is created, so every save after the enqueue
+// runs under an already-cancelled token.
+internal sealed class CancelOnCreateJobClient(IBackgroundJobClient inner, CancellationTokenSource cts) : IBackgroundJobClient
+{
+    public string Create(Job job, IState state)
+    {
+        var id = inner.Create(job, state);
+        cts.Cancel();
+        return id;
+    }
+
+    public bool ChangeState(string jobId, IState state, string expectedState) => inner.ChangeState(jobId, state, expectedState);
 }
 
 // Captures enqueues and state changes (e.g. Delete) without a storage backend.

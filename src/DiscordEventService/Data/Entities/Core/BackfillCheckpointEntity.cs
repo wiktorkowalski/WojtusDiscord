@@ -30,12 +30,10 @@ public class BackfillCheckpointEntity : ITimestamped
     // StaleInProgressAfter belongs to a process that died before writing a terminal status (#282).
     // Callers leave Status untouched — the next run's executor treats the surviving InProgress row
     // as an interrupted run and resumes from its cursor.
-    public bool IsActivelyInProgress(DateTime nowUtc)
-        => Status == BackfillStatus.InProgress && nowUtc - LastUpdatedUtc < StaleInProgressAfter;
-
-    // Chain-guard predicate (#289): the orchestrator marks every checkpoint of a freshly enqueued
-    // chain Pending (with its Hangfire job id) before the first job runs, so a fresh Pending row
-    // means "chain queued but not started yet" and must block a second chain the same way a live
+    //
+    // Pending counts too (#289, #312): every enqueue path (backfill chain, meme index) marks the
+    // checkpoint Pending with its Hangfire job id before the job runs, so a fresh Pending row
+    // means "queued but not started yet" and must block a second enqueue the same way a live
     // InProgress row does. Same staleness cutoff — a dead process can strand Pending rows too.
     public bool IsChainActive(DateTime nowUtc)
         => (Status == BackfillStatus.InProgress || Status == BackfillStatus.Pending)

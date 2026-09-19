@@ -44,11 +44,13 @@ internal sealed class MemeIndexSweepJob(
         // Staleness-aware (#293): a checkpoint whose job died before writing a terminal status
         // stays InProgress forever and would block the guild's sweep permanently. The heartbeat
         // predicate (see #282/#285) treats it as dead; the executor resumes it from its cursor.
+        // A fresh Pending row (enqueued, not started yet — #312) blocks the same way (#289).
         var nowUtc = DateTime.UtcNow;
         var inProgressSet = (await db.BackfillCheckpoints.AsNoTracking()
-                .Where(c => c.Type == BackfillType.MemeIndex && c.Status == BackfillStatus.InProgress)
+                .Where(c => c.Type == BackfillType.MemeIndex
+                    && (c.Status == BackfillStatus.InProgress || c.Status == BackfillStatus.Pending))
                 .ToListAsync(cancellationToken))
-            .Where(c => c.IsActivelyInProgress(nowUtc))
+            .Where(c => c.IsChainActive(nowUtc))
             .Select(c => c.GuildDiscordId)
             .ToHashSet();
 
@@ -61,8 +63,8 @@ internal sealed class MemeIndexSweepJob(
                 continue;
             }
 
-            backgroundJobClient.Enqueue<MemeIndexingJob>(j => j.ExecuteSweepAsync(guildId, CancellationToken.None));
-            logger.LogInformation("Meme index sweep enqueued for guild {GuildId}", guildId);
+            var jobId = await MemeIndexJobEnqueuer.EnqueueAsync(db, backgroundJobClient, guildId, sweep: true, cancellationToken);
+            logger.LogInformation("Meme index sweep enqueued for guild {GuildId} (job {JobId})", guildId, jobId);
         }
     }
 }

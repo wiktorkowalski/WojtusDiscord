@@ -69,34 +69,35 @@ public sealed class BackfillStaleCheckpointTests(PostgresFixture fixture)
     }
 
     [Theory]
-    [InlineData(BackfillStatus.Pending)]
     [InlineData(BackfillStatus.Completed)]
     [InlineData(BackfillStatus.Failed)]
     [InlineData(BackfillStatus.Cancelled)]
-    public void IsActivelyInProgress_IsFalse_ForTerminalStatuses(BackfillStatus status)
+    public void IsChainActive_IsFalse_ForTerminalStatuses(BackfillStatus status)
     {
         var checkpoint = new BackfillCheckpointEntity { Status = status, LastUpdatedUtc = DateTime.UtcNow };
 
-        Assert.False(checkpoint.IsActivelyInProgress(DateTime.UtcNow));
+        Assert.False(checkpoint.IsChainActive(DateTime.UtcNow));
     }
 
-    [Fact]
-    public void IsActivelyInProgress_FlipsAtTheStaleThreshold()
+    [Theory]
+    [InlineData(BackfillStatus.InProgress)]
+    [InlineData(BackfillStatus.Pending)]
+    public void IsChainActive_FlipsAtTheStaleThreshold(BackfillStatus status)
     {
         var now = DateTime.UtcNow;
         var fresh = new BackfillCheckpointEntity
         {
-            Status = BackfillStatus.InProgress,
+            Status = status,
             LastUpdatedUtc = now - BackfillCheckpointEntity.StaleInProgressAfter + TimeSpan.FromMinutes(1)
         };
         var stale = new BackfillCheckpointEntity
         {
-            Status = BackfillStatus.InProgress,
+            Status = status,
             LastUpdatedUtc = now - BackfillCheckpointEntity.StaleInProgressAfter - TimeSpan.FromMinutes(1)
         };
 
-        Assert.True(fresh.IsActivelyInProgress(now));
-        Assert.False(stale.IsActivelyInProgress(now));
+        Assert.True(fresh.IsChainActive(now));
+        Assert.False(stale.IsChainActive(now));
     }
 
     private async Task RunPeriodicJobAsync()
