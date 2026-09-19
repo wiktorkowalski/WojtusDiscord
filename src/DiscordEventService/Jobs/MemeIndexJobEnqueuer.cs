@@ -40,6 +40,10 @@ internal static class MemeIndexJobEnqueuer
             checkpoint.StartedAtUtc = now;
         }
 
+        // Until the new id lands below, the row must not advertise the previous run's job id:
+        // cancel / the startup sweep would delete that dead job and leave the new one orphaned.
+        checkpoint.HangfireJobId = null;
+
         // Status lands before the job exists, so the run can never race this write. The id is a
         // second save that touches only its own column: if the job already flipped the row to
         // InProgress (or finished), that status is not overwritten with Pending.
@@ -50,7 +54,10 @@ internal static class MemeIndexJobEnqueuer
             : jobClient.Enqueue<MemeIndexingJob>(j => j.ExecuteAsync(guildId, CancellationToken.None));
 
         checkpoint.HangfireJobId = jobId;
-        await db.SaveChangesAsync(cancellationToken);
+        // Lifecycle save, arg-less on purpose (as in BackfillJobExecutor): the job already exists
+        // in Hangfire storage, so this id must land even if the run's token is already cancelled —
+        // otherwise cancel / the startup sweep have nothing to delete and the job re-runs orphaned.
+        await db.SaveChangesAsync();
         return jobId;
     }
 }
