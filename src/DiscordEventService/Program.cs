@@ -13,6 +13,10 @@ using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
+// #350: pin the boot instant before anything else runs, so a downtime row closed during
+// StartAsync sorts after it. BootClock explains why the first read must happen here.
+BootClock.Touch();
+
 // Load .env from repo root (two levels up from project directory)
 var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
 var envPath = Path.Combine(repoRoot, ".env");
