@@ -28,5 +28,5 @@
 
 **Skipping a deploy the filters cannot catch.** GitHub honours `[skip ci]` (also `[ci skip]`, `[no ci]`, `[skip actions]`, `[actions skip]`) in the head commit message — no workflow support needed. Use it for a change that alters no part of the image, typically a `.github/workflows/*`-only edit.
 
-- Put the marker in the **PR title**. `gh pr merge --squash` takes the squash subject from the PR title, so the marker lands on the master commit and that push is skipped. `--subject "... [skip ci]"` works too.
-- **Never put it in a commit on the branch.** A run skipped by commit message leaves its checks **pending**, exactly like path filtering — `build-deploy / Build` would never report and the PR could not be merged.
+- Pass it explicitly: `gh pr merge <N> --squash --delete-branch --subject "<title> [skip ci]"`. This is the only form that holds. The repo is on `squash_merge_commit_title: COMMIT_OR_PR_TITLE`, which takes the **commit** title for a single-commit PR and the PR title only from two commits up — so a marker in the PR title alone is silently dropped on the usual one-commit PR, and prod restarts anyway.
+- **Never put it in a commit on the branch.** A run skipped by commit message is never created, so its checks stay **pending** — exactly like path filtering. `build-deploy / Build` would never report and the PR could not be merged at all.
