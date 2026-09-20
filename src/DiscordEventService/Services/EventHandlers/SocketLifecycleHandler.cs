@@ -1,14 +1,12 @@
-using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Infrastructure;
 using DiscordEventService.Jobs;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
-using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.EventHandlers;
 
 internal sealed class SocketLifecycleHandler(
-    DiscordDbContext db,
     DowntimeTrackerService tracker,
     GuildBackfillOrchestrator orchestrator,
     BootQuickSyncService quickSyncService,
@@ -72,7 +70,10 @@ internal sealed class SocketLifecycleHandler(
             // reconnect) hit SessionResumed instead and don't reach here.
             try
             {
-                var lastAlive = await ResolveGapStartAsync();
+                // Ready can fire without a preceding Resumed (session invalidated), so close
+                // any open GatewayDisconnect row before reading it back as the gap start.
+                await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow, onlyType: BotDowntimeType.GatewayDisconnect);
+                var lastAlive = await tracker.ResolveGapStartAsync(BootClock.StartedAtUtc);
                 if (lastAlive is null)
                 {
                     logger.LogInformation("GuildDownloadCompleted: no prior signal, skipping backfill (first run)");
@@ -98,37 +99,6 @@ internal sealed class SocketLifecycleHandler(
                 logger.LogError(ex, "Failed to enqueue reconnect backfill on GuildDownloadCompleted");
             }
         }
-    }
-
-    private async Task<DateTime?> ResolveGapStartAsync()
-    {
-        // Ready can fire without a preceding Resumed (session invalidated).
-        await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow, onlyType: BotDowntimeType.GatewayDisconnect);
-
-        // The just-closed downtime row's StartedAtUtc is the authoritative
-        // gap start. Reading heartbeats or raw_event_logs here would race
-        // the post-reconnect data — by now AllShardsConnected is true, the
-        // 5s heartbeat may already have written an IsGatewayConnected=true
-        // row, and DSharpPlus has started dispatching events. Both signals
-        // would show fresh timestamps that mask the real gap.
-        //
-        // The closed row covers every downtime classification:
-        // SocketClosed wrote a GatewayDisconnect (in-process session
-        // invalidation); StopAsync wrote a GracefulShutdown/Deploy
-        // (bot restart); InferStartupGapAsync wrote an Inferred
-        // (hard crash / power loss).
-        var mostRecentGapStart = await db.BotDowntimeIntervals
-            .Where(x => x.EndedAtUtc != null)
-            .OrderByDescending(x => x.EndedAtUtc)
-            .Select(x => (DateTime?)x.StartedAtUtc)
-            .FirstOrDefaultAsync();
-
-        // Fall back to the heartbeat-based heuristic only when no downtime
-        // row exists at all (very first run, no prior shutdown). The
-        // IsGatewayConnected==true filter inside GetLastAliveAtUtcAsync
-        // keeps this conservative even in the fallback case.
-        return mostRecentGapStart
-            ?? (await tracker.GetLastAliveAtUtcAsync()).LastAliveUtc;
     }
 
     private async Task EnqueueReconnectBackfillsAsync(

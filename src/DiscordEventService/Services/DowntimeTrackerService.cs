@@ -108,7 +108,10 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         await db.SaveChangesAsync();
     }
 
-    public async Task<LastAliveResult> GetLastAliveAtUtcAsync()
+    // beforeUtc: only signals strictly older than this instant count. Callers that run once
+    // the gateway is back pass the boot instant, so this process's own heartbeats and freshly
+    // logged events cannot mask the gap they are measuring (#350).
+    public async Task<LastAliveResult> GetLastAliveAtUtcAsync(DateTime? beforeUtc = null)
     {
         // Heartbeat is the primary signal: it ticks regardless of Discord activity,
         // so it survives quiet periods that would leave raw_event_logs stale.
@@ -119,18 +122,64 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         // IsGatewayConnected=false) does not register as "alive" — otherwise the
         // reconnect-driven backfill always sees gap < 5s and no-ops. NULL values
         // (rows from before the gateway columns existed) are excluded by == true.
-        var lastHeartbeat = await db.BotHeartbeats
-            .Where(h => h.IsGatewayConnected == true)
+        var heartbeats = db.BotHeartbeats.Where(h => h.IsGatewayConnected == true);
+        if (beforeUtc.HasValue)
+            heartbeats = heartbeats.Where(h => h.LastHeartbeatUtc < beforeUtc.Value);
+
+        var lastHeartbeat = await heartbeats
             .OrderByDescending(h => h.LastHeartbeatUtc)
             .Select(h => (DateTime?)h.LastHeartbeatUtc)
             .FirstOrDefaultAsync();
 
-        var maxReceivedAt = await db.RawEventLogs
+        // AsQueryable() because the filter below is conditional: without it the var is a
+        // DbSet and the reassignment will not compile. Heartbeats need none — Where already
+        // widened them.
+        var events = db.RawEventLogs.AsQueryable();
+        if (beforeUtc.HasValue)
+            events = events.Where(r => r.ReceivedAtUtc < beforeUtc.Value);
+
+        var maxReceivedAt = await events
             .OrderByDescending(r => r.ReceivedAtUtc)
             .Select(r => (DateTime?)r.ReceivedAtUtc)
             .FirstOrDefaultAsync();
 
         return new LastAliveResult(MaxNullable(lastHeartbeat, maxReceivedAt), lastHeartbeat, maxReceivedAt);
+    }
+
+    // Where the current gap starts, for sizing a reconnect backfill. Null = no prior signal
+    // at all (first run ever). bootStartedAtUtc is BootClock.StartedAtUtc in production.
+    public async Task<DateTime?> ResolveGapStartAsync(DateTime bootStartedAtUtc)
+    {
+        // A closed row wins over the live signals because reading heartbeats or
+        // raw_event_logs unbounded here races the post-reconnect data: AllShardsConnected is
+        // already true, so both show fresh timestamps that mask the real gap. Every downtime
+        // classification lands in such a row — GatewayDisconnect from SocketClosed,
+        // GracefulShutdown/Deploy from StopAsync, Inferred from InferStartupGapAsync.
+        //
+        // #350: only rows closed at or after boot qualify. An older row cannot describe the
+        // gap this boot is recovering from, and trusting one did exactly that — when
+        // `compose up -d` recreated Postgres first, StopAsync could not write its row, the
+        // sub-threshold startup gap inferred nothing, and this reached back to a row 33 days
+        // old, turning every deploy into a 2-day crawl.
+        var mostRecentGapStart = await db.BotDowntimeIntervals
+            .Where(x => x.EndedAtUtc != null && x.EndedAtUtc >= bootStartedAtUtc)
+            .OrderByDescending(x => x.EndedAtUtc)
+            .Select(x => (DateTime?)x.StartedAtUtc)
+            .FirstOrDefaultAsync();
+
+        if (mostRecentGapStart is not null)
+            return mostRecentGapStart;
+
+        // No row for this boot: fall back to the last signal from before this process
+        // started. The bound is what makes the fallback safe to reach at all.
+        var lastAlive = (await GetLastAliveAtUtcAsync(beforeUtc: bootStartedAtUtc)).LastAliveUtc;
+
+        // Null means first run ever, and the caller already logs that — saying it twice is noise.
+        if (lastAlive is not null)
+            logger.LogInformation(
+                "No downtime row closed since boot at {BootStartedAtUtc:O}; resolved gap start from pre-boot signals: {LastAliveUtc:O}",
+                bootStartedAtUtc, lastAlive);
+        return lastAlive;
     }
 
     public async Task<Guid?> InferStartupGapAsync()
