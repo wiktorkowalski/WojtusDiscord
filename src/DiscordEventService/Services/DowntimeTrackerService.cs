@@ -173,9 +173,12 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         // No row for this boot: fall back to the last signal from before this process
         // started. The bound is what makes the fallback safe to reach at all.
         var lastAlive = (await GetLastAliveAtUtcAsync(beforeUtc: bootStartedAtUtc)).LastAliveUtc;
-        logger.LogInformation(
-            "No downtime row closed since boot at {BootStartedAtUtc:O}; resolved gap start from pre-boot signals: {LastAliveUtc:O}",
-            bootStartedAtUtc, lastAlive);
+
+        // Null means first run ever, and the caller already logs that — saying it twice is noise.
+        if (lastAlive is not null)
+            logger.LogInformation(
+                "No downtime row closed since boot at {BootStartedAtUtc:O}; resolved gap start from pre-boot signals: {LastAliveUtc:O}",
+                bootStartedAtUtc, lastAlive);
         return lastAlive;
     }
 

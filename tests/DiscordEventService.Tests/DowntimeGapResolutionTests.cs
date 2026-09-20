@@ -14,6 +14,7 @@ namespace DiscordEventService.Tests;
 public sealed class DowntimeGapResolutionTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
+    private readonly List<DiscordDbContext> _contexts = [];
     private DiscordDbContext _db = null!;
 
     public async Task InitializeAsync()
@@ -24,7 +25,11 @@ public sealed class DowntimeGapResolutionTests(PostgresFixture fixture)
         await _db.BotHeartbeats.ExecuteDeleteAsync();
     }
 
-    public Task DisposeAsync() => _db.DisposeAsync().AsTask();
+    public async Task DisposeAsync()
+    {
+        foreach (var context in _contexts)
+            await context.DisposeAsync();
+    }
 
     [Fact]
     public async Task ResolveGapStartAsync_IgnoresAClosedRowFromAnEarlierProcess()
@@ -105,9 +110,13 @@ public sealed class DowntimeGapResolutionTests(PostgresFixture fixture)
     private DowntimeTrackerService NewTracker() =>
         new(NewContext(), NullLogger<DowntimeTrackerService>.Instance);
 
-    private DiscordDbContext NewContext() =>
-        new(new DbContextOptionsBuilder<DiscordDbContext>()
+    private DiscordDbContext NewContext()
+    {
+        var context = new DiscordDbContext(new DbContextOptionsBuilder<DiscordDbContext>()
             .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention()
             .Options);
+        _contexts.Add(context);
+        return context;
+    }
 }
