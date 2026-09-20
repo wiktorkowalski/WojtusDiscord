@@ -8,11 +8,7 @@ on:
   pull_request_review_comment:
     types: [created]
   pull_request:
-    # #352: a PR opened as a draft and later marked ready fires neither `opened` nor
-    # `synchronize`, and the reusable job requires `draft == false` — so without
-    # `ready_for_review` the required `review / Claude Review` check never reports and
-    # the PR is stuck. `reopened` closes the same gap for a reopened PR.
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize]
 
 permissions:
   contents: read
