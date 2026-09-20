@@ -25,3 +25,8 @@
 
 - Steps 8 and 9 do not apply — there is no deploy to watch. `:latest` stays on the previous commit, so `/health` reports a `GIT_SHA` **behind** master HEAD. That is correct, not a failed deploy.
 - The filter on `build.yml` is on `push` only, never `pull_request`: `build-deploy / Build` is a required check produced by a job inside the reusable workflow, and a workflow skipped by path filtering leaves its contexts pending forever. A docs-only PR therefore still runs Build, and only the `ci.yml` checks are skipped.
+
+**Skipping a deploy the filters cannot catch.** GitHub honours `[skip ci]` (also `[ci skip]`, `[no ci]`, `[skip actions]`, `[actions skip]`) in the head commit message — no workflow support needed. Use it for a change that alters no part of the image, typically a `.github/workflows/*`-only edit.
+
+- Put the marker in the **PR title**. `gh pr merge --squash` takes the squash subject from the PR title, so the marker lands on the master commit and that push is skipped. `--subject "... [skip ci]"` works too.
+- **Never put it in a commit on the branch.** A run skipped by commit message leaves its checks **pending**, exactly like path filtering — `build-deploy / Build` would never report and the PR could not be merged.
