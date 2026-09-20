@@ -21,7 +21,7 @@
 9. **Post-deploy verification** — **standard step, do it autonomously**: run read-only SELECT checks against the prod DB to confirm the change's data looks sane (recent rows, no duplicates/corruption from the change, relevant invariants hold). Connection details + a reusable verification query set are in agent memory. Only prompt the user for the prod DB password (and only when not already in memory)
 
 
-**Docs-only changes skip the pipeline (#352).** `build.yml` and `ci.yml` carry `paths-ignore: ['**.md', 'docs/**']`, so a change touching only Markdown neither builds the image nor deploys. Two consequences:
+**Docs-only changes skip the pipeline (#352).** `build.yml` and `ci.yml` carry `paths-ignore: ['**.md', 'docs/**']`, so **a merge touching only Markdown neither builds the image nor deploys**. A docs-only *PR* still builds — see the second bullet. Two consequences:
 
 - Steps 8 and 9 do not apply — there is no deploy to watch. `:latest` stays on the previous commit, so `/health` reports a `GIT_SHA` **behind** master HEAD. That is correct, not a failed deploy.
 - The filter on `build.yml` is on `push` only, never `pull_request`: `build-deploy / Build` is a required check produced by a job inside the reusable workflow, and a workflow skipped by path filtering leaves its contexts pending forever. A docs-only PR therefore still runs Build, and only the `ci.yml` checks are skipped.
