@@ -3,6 +3,13 @@ name: Build and Deploy
 on:
   push:
     branches: [master]
+    # #352: a docs-only merge must not rebuild the image, push :latest or restart prod.
+    # The filter lives on `push` ONLY. `build-deploy / Build` is a required check, and it
+    # is a job *inside* the reusable workflow: skip the caller job and that nested job is
+    # never instantiated, so the context never reports and a docs-only PR stays blocked.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
     branches: [master]
 
