@@ -3,8 +3,17 @@ name: CI
 on:
   push:
     branches: [master]
+    # #352: same docs-only filter as build.yml. Here it is safe on `pull_request` too —
+    # none of this workflow's checks (`ci / .NET CI`, `ci / Format`, `boot-smoke`) are
+    # required by branch protection, so a skipped run blocks nothing.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
     branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
 
 permissions:
   contents: read
