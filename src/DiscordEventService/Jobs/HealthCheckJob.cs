@@ -18,12 +18,16 @@ internal sealed class HealthCheckJob(
     private const int HeartbeatFreshSeconds = 30;
     private const int CrashLoopWindowMinutes = 30;
     private const int CrashLoopRestartThreshold = 3;
+    private const int TimestampInvariantWindowHours = 24;
+    private const int IntegrityAlertCooldownHours = 24;
 
     private static DateTime _lastFailedEventAlert = DateTime.MinValue;
     private static DateTime _lastIngestStallAlert = DateTime.MinValue;
     private static DateTime _lastEventRatioAlert = DateTime.MinValue;
     private static DateTime _lastCrashLoopAlert = DateTime.MinValue;
+    private static DateTime _lastTimestampInvariantAlert = DateTime.MinValue;
     private static readonly Dictionary<string, int> _eventRatioDropStreaks = [];
+    private static readonly Dictionary<string, DateTime> _alertedEpisodes = [];
     private static readonly object _lock = new object();
     private static readonly TimeSpan WebhookTimeout = TimeSpan.FromSeconds(10);
 
@@ -44,6 +48,10 @@ internal sealed class HealthCheckJob(
         await CheckIngestStallAsync(db, opts, now, cancellationToken);
         await CheckEventTypeRatioAsync(db, opts, now, cancellationToken);
         await CheckCrashLoopAsync(db, opts, now, cancellationToken);
+        await CheckEventSilenceAsync(db, opts, now, cancellationToken);
+        await CheckBackfillStallAsync(db, opts, now, cancellationToken);
+        await CheckOpenDowntimeAsync(db, opts, now, cancellationToken);
+        await CheckMessageTimestampInvariantAsync(db, opts, now, cancellationToken);
     }
 
     private async Task CheckFailedEventsAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
@@ -83,17 +91,7 @@ internal sealed class HealthCheckJob(
 
     private async Task CheckIngestStallAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
     {
-        var lastConnectedHeartbeat = await db.BotHeartbeats
-            .Where(h => h.IsGatewayConnected == true)
-            .OrderByDescending(h => h.LastHeartbeatUtc)
-            .Select(h => (DateTime?)h.LastHeartbeatUtc)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (lastConnectedHeartbeat is null)
-            return;
-
-        var heartbeatAge = now - lastConnectedHeartbeat.Value;
-        if (heartbeatAge.TotalSeconds > HeartbeatFreshSeconds)
+        if (!await IsGatewayFreshAsync(db, now, cancellationToken))
             return;
 
         var lastEvent = await db.RawEventLogs
@@ -190,6 +188,144 @@ internal sealed class HealthCheckJob(
 
         logger.LogWarning("Health check alert: event type ratio drop for {Types}",
             string.Join(", ", confirmed.Select(d => d.EventType)));
+    }
+
+    // Silence is checked per type against a fixed threshold, not a ratio: on this server only presence
+    // has enough volume for a ratio, and the May blackout kept presence flowing while messages died.
+    private async Task CheckEventSilenceAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
+    {
+        var watched = opts.EventSilenceHours.Where(kvp => kvp.Value > 0).ToList();
+        if (watched.Count == 0 || !await IsGatewayFreshAsync(db, now, cancellationToken))
+            return;
+
+        foreach (var (eventType, silenceHours) in watched)
+        {
+            var lastEvent = await db.RawEventLogs
+                .Where(r => r.EventType == eventType)
+                .MaxAsync(r => (DateTime?)r.ReceivedAtUtc, cancellationToken);
+
+            // A type never seen has no silence to measure; the last event marks the episode.
+            if (lastEvent is null || (now - lastEvent.Value).TotalHours < silenceHours)
+                continue;
+
+            var key = $"silence:{eventType}";
+            if (!IsNewEpisode(key, lastEvent.Value))
+                continue;
+
+            var silentHours = (now - lastEvent.Value).TotalHours;
+            if (!await SendWebhookAsync(opts.WebhookUrl!,
+                $"**Event silence** — no `{eventType}` for {silentHours:F0}h (threshold {silenceHours}h) while the gateway is connected. Last one at {lastEvent.Value:yyyy-MM-dd HH:mm} UTC. Other event types may still be flowing — check handler errors and `raw_event_logs`.", cancellationToken))
+                continue;
+
+            RecordEpisode(key, lastEvent.Value);
+            logger.LogWarning("Health check alert: no {EventType} events for {SilentHours:F0}h", eventType, silentHours);
+        }
+    }
+
+    private async Task CheckBackfillStallAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
+    {
+        var stallCutoff = now.AddHours(-opts.BackfillStallHours);
+        var stalled = await db.BackfillCheckpoints
+            .Where(c => c.Status == Data.Entities.Core.BackfillStatus.InProgress && c.LastUpdatedUtc < stallCutoff)
+            .Select(c => new { c.Id, c.GuildDiscordId, c.Type, c.LastUpdatedUtc, c.ProcessedCount, c.TotalCount })
+            .ToListAsync(cancellationToken);
+
+        foreach (var checkpoint in stalled)
+        {
+            // Keyed on the last update, so a stuck row alerts once and a later stall of the same row alerts again.
+            var key = $"backfill-stall:{checkpoint.Id}";
+            if (!IsNewEpisode(key, checkpoint.LastUpdatedUtc))
+                continue;
+
+            var idleHours = (now - checkpoint.LastUpdatedUtc).TotalHours;
+            if (!await SendWebhookAsync(opts.WebhookUrl!,
+                $"**Backfill stalled** — `{checkpoint.Type}` for guild {checkpoint.GuildDiscordId} is InProgress with no progress for {idleHours:F0}h ({checkpoint.ProcessedCount}/{checkpoint.TotalCount?.ToString() ?? "?"}). If Hangfire shows the job Processing, it hung; otherwise the process died mid-run and the next chain resumes it.", cancellationToken))
+                continue;
+
+            RecordEpisode(key, checkpoint.LastUpdatedUtc);
+            logger.LogWarning("Health check alert: {BackfillType} backfill for guild {GuildId} stalled for {IdleHours:F0}h",
+                checkpoint.Type, checkpoint.GuildDiscordId, idleHours);
+        }
+    }
+
+    private async Task CheckOpenDowntimeAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
+    {
+        var openCutoff = now.AddMinutes(-opts.OpenDowntimeMaxMinutes);
+        var open = await db.BotDowntimeIntervals
+            .Where(d => d.EndedAtUtc == null && d.StartedAtUtc < openCutoff)
+            .OrderBy(d => d.StartedAtUtc)
+            .Select(d => new { d.Id, d.Type, d.StartedAtUtc })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (open is null)
+            return;
+
+        // While the gateway is down an open row is the correct state, not a leak.
+        var key = $"open-downtime:{open.Id}";
+        if (!IsNewEpisode(key, open.StartedAtUtc) || !await IsGatewayFreshAsync(db, now, cancellationToken))
+            return;
+
+        var openMinutes = (now - open.StartedAtUtc).TotalMinutes;
+        if (!await SendWebhookAsync(opts.WebhookUrl!,
+            $"**Downtime row left open** — `{open.Type}` row {open.Id} opened {openMinutes:F0} min ago and the gateway is connected. New downtime rows cannot open until it closes.", cancellationToken))
+            return;
+
+        RecordEpisode(key, open.StartedAtUtc);
+        logger.LogWarning("Health check alert: downtime row {DowntimeId} of type {DowntimeType} open for {OpenMinutes:F0} min with the gateway connected",
+            open.Id, open.Type, openMinutes);
+    }
+
+    // Discord timestamps every MESSAGE_CREATE, so equality with the receive clock means a handler fell
+    // back to its own clock (#59).
+    private async Task CheckMessageTimestampInvariantAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
+    {
+        lock (_lock)
+        {
+            if ((now - _lastTimestampInvariantAlert).TotalHours < IntegrityAlertCooldownHours)
+                return;
+        }
+
+        var windowStart = now.AddHours(-TimestampInvariantWindowHours);
+        var count = await db.MessageEvents
+            .Where(m => m.EventType == Data.Entities.Events.MessageEventType.Created
+                && m.ReceivedAtUtc > windowStart
+                && m.EventTimestampUtc == m.ReceivedAtUtc)
+            .CountAsync(cancellationToken);
+
+        if (count == 0)
+            return;
+
+        if (!await SendWebhookAsync(opts.WebhookUrl!,
+            $"**Data integrity** — {count} `MessageCreated` row(s) in the last {TimestampInvariantWindowHours}h have `event_timestamp_utc = received_at_utc`. A handler is using its own clock instead of Discord's timestamp.", cancellationToken))
+            return;
+
+        lock (_lock) { _lastTimestampInvariantAlert = now; }
+
+        logger.LogWarning("Health check alert: {Count} MessageCreated events carry the receive time as their event time", count);
+    }
+
+    private static async Task<bool> IsGatewayFreshAsync(DiscordDbContext db, DateTime now, CancellationToken cancellationToken)
+    {
+        var lastConnectedHeartbeat = await db.BotHeartbeats
+            .Where(h => h.IsGatewayConnected == true)
+            .OrderByDescending(h => h.LastHeartbeatUtc)
+            .Select(h => (DateTime?)h.LastHeartbeatUtc)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return lastConnectedHeartbeat is { } heartbeat && (now - heartbeat).TotalSeconds <= HeartbeatFreshSeconds;
+    }
+
+    // Episode alerts fire once per distinct marker, so a condition that lasts for days alerts once
+    // instead of on every cooldown window — the repetition that made the old night alerts noisy.
+    private static bool IsNewEpisode(string key, DateTime marker)
+    {
+        lock (_lock)
+            return !(_alertedEpisodes.TryGetValue(key, out var alerted) && alerted == marker);
+    }
+
+    private static void RecordEpisode(string key, DateTime marker)
+    {
+        lock (_lock) { _alertedEpisodes[key] = marker; }
     }
 
     private async Task<bool> SendWebhookAsync(string webhookUrl, string message, CancellationToken cancellationToken)

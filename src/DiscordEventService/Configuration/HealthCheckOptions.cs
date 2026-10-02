@@ -31,4 +31,18 @@ internal sealed class HealthCheckOptions
     // messages and bot embeds never fire TypingStarted), so both are excluded by default.
     public string[] EventRatioExcludedEventTypes { get; set; } =
         ["VoiceStateUpdated", "VoiceServerUpdated", "TypingStarted"];
+
+    // Hours without a single event of the type before it counts as silent (#345). Sized from prod:
+    // the longest natural MessageCreated gap since 2026-05-24 is 18h, while the May blackout lasted
+    // 10 days with presence still flowing. The binder merges config over this default, so disable
+    // a type with 0 instead of omitting it.
+    public Dictionary<string, int> EventSilenceHours { get; set; } = new() { ["MessageCreated"] = 48 };
+
+    // A live backfill saves at least once per batch, so an InProgress checkpoint untouched this long
+    // is a hung or dead run. Above StaleInProgressAfter (1h) so a merely stale row has time to resume.
+    public int BackfillStallHours { get; set; } = 6;
+
+    // An open downtime row blocks every later one from opening, so one left open while the gateway
+    // is connected silently stops downtime tracking.
+    public int OpenDowntimeMaxMinutes { get; set; } = 60;
 }
