@@ -1,0 +1,200 @@
+{
+  "DiscordEventService.Data.Entities.Conversations.ConversationMessageRole": {
+    "Assistant": 1,
+    "Tool": 2,
+    "User": 0
+  },
+  "DiscordEventService.Data.Entities.Conversations.UsageAlertCap": {
+    "GlobalDaily": 2,
+    "GlobalMonthly": 0,
+    "PerUserMonthly": 1
+  },
+  "DiscordEventService.Data.Entities.Core.BackfillStatus": {
+    "Cancelled": 4,
+    "Completed": 2,
+    "Failed": 3,
+    "InProgress": 1,
+    "Pending": 0
+  },
+  "DiscordEventService.Data.Entities.Core.BackfillType": {
+    "Channels": 3,
+    "Emojis": 1,
+    "Members": 4,
+    "MemeIndex": 7,
+    "Messages": 5,
+    "Reactions": 6,
+    "Roles": 0,
+    "Stickers": 2
+  },
+  "DiscordEventService.Data.Entities.Core.BotDowntimeDetectionMethod": {
+    "GatewayEvent": 2,
+    "GracefulStop": 0,
+    "HeartbeatWriteFailure": 4,
+    "Manual": 3,
+    "StartupGapInference": 1
+  },
+  "DiscordEventService.Data.Entities.Core.BotDowntimeType": {
+    "DbUnreachable": 4,
+    "Deploy": 1,
+    "GatewayDisconnect": 3,
+    "GracefulShutdown": 0,
+    "HostDown": 2,
+    "Inferred": 5
+  },
+  "DiscordEventService.Data.Entities.Core.ChannelType": {
+    "Category": 4,
+    "Forum": 15,
+    "Group": 3,
+    "GuildDirectory": 14,
+    "Media": 16,
+    "News": 5,
+    "NewsThread": 10,
+    "Private": 1,
+    "PrivateThread": 12,
+    "PublicThread": 11,
+    "Stage": 13,
+    "Store": 6,
+    "Text": 0,
+    "Unknown": -1,
+    "Voice": 2
+  },
+  "DiscordEventService.Data.Entities.Core.MemeIndexStatus": {
+    "Failed": 2,
+    "Indexed": 1,
+    "Pending": 0,
+    "Skipped": 3
+  },
+  "DiscordEventService.Data.Entities.Core.MessageMentionType": {
+    "Channel": 4,
+    "Everyone": 2,
+    "Here": 3,
+    "Role": 1,
+    "User": 0
+  },
+  "DiscordEventService.Data.Entities.Events.AutoModEventType": {
+    "ActionExecuted": 3,
+    "RuleCreated": 0,
+    "RuleDeleted": 2,
+    "RuleUpdated": 1
+  },
+  "DiscordEventService.Data.Entities.Events.AutoModRuleEventType": {
+    "Created": 0,
+    "Deleted": 2,
+    "Updated": 1
+  },
+  "DiscordEventService.Data.Entities.Events.BanEventType": {
+    "Added": 0,
+    "Removed": 1
+  },
+  "DiscordEventService.Data.Entities.Events.ChannelEventType": {
+    "Created": 0,
+    "Deleted": 2,
+    "PinsUpdated": 3,
+    "Updated": 1
+  },
+  "DiscordEventService.Data.Entities.Events.GuildEventType": {
+    "Available": 1,
+    "Unavailable": 2,
+    "Updated": 0
+  },
+  "DiscordEventService.Data.Entities.Events.IntegrationEventType": {
+    "Created": 0,
+    "Deleted": 2,
+    "Updated": 1
+  },
+  "DiscordEventService.Data.Entities.Events.InviteEventType": {
+    "Created": 0,
+    "Deleted": 1
+  },
+  "DiscordEventService.Data.Entities.Events.MemberEventType": {
+    "Banned": 3,
+    "Joined": 0,
+    "Left": 1,
+    "Unbanned": 4,
+    "Updated": 2
+  },
+  "DiscordEventService.Data.Entities.Events.MessageEventType": {
+    "Backfilled": 4,
+    "BulkDeleted": 3,
+    "Created": 0,
+    "Deleted": 2,
+    "Updated": 1
+  },
+  "DiscordEventService.Data.Entities.Events.PollEventType": {
+    "VoteAdded": 0,
+    "VoteRemoved": 1
+  },
+  "DiscordEventService.Data.Entities.Events.PresenceEventType": {
+    "BootSnapshot": 1,
+    "Updated": 0
+  },
+  "DiscordEventService.Data.Entities.Events.ReactionEventType": {
+    "Added": 0,
+    "Backfilled": 4,
+    "Cleared": 2,
+    "EmojiCleared": 3,
+    "Removed": 1
+  },
+  "DiscordEventService.Data.Entities.Events.RoleEventType": {
+    "Created": 0,
+    "Deleted": 2,
+    "Updated": 1
+  },
+  "DiscordEventService.Data.Entities.Events.ScheduledEventEventType": {
+    "Completed": 5,
+    "Created": 0,
+    "Deleted": 2,
+    "Updated": 1,
+    "UserAdded": 3,
+    "UserRemoved": 4
+  },
+  "DiscordEventService.Data.Entities.Events.StageInstanceEventType": {
+    "Created": 0,
+    "Deleted": 2,
+    "Updated": 1
+  },
+  "DiscordEventService.Data.Entities.Events.ThreadEventType": {
+    "Created": 0,
+    "Deleted": 2,
+    "MembersUpdated": 3,
+    "Updated": 1
+  },
+  "DiscordEventService.Data.Entities.Events.VoiceEventType": {
+    "Joined": 0,
+    "Left": 1,
+    "Moved": 2,
+    "StateChanged": 3
+  },
+  "DiscordEventService.Infrastructure.ColumnKind": {
+    "Bool": 4,
+    "Enum": 9,
+    "Int": 1,
+    "Json": 7,
+    "Long": 2,
+    "Number": 8,
+    "Other": 10,
+    "Snowflake": 3,
+    "String": 0,
+    "Timestamp": 5,
+    "Uuid": 6
+  },
+  "DiscordEventService.Services.Conversation.ConfirmKind": {
+    "Cancel": 1,
+    "Confirm": 0
+  },
+  "DiscordEventService.Services.Conversation.MemberLookupOutcome": {
+    "Ambiguous": 1,
+    "Found": 0,
+    "NotFound": 2
+  },
+  "DiscordEventService.Services.MemeIndexing.AttachmentUrlRefreshOutcome": {
+    "BatchFailed": 2,
+    "Declined": 1,
+    "Refreshed": 0
+  },
+  "DiscordEventService.Services.MemeIndexing.MemeAnalysisOutcome": {
+    "Error": 2,
+    "Refusal": 1,
+    "Success": 0
+  }
+}
