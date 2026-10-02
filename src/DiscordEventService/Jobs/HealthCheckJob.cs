@@ -279,6 +279,12 @@ internal sealed class HealthCheckJob(
     // back to its own clock (#59).
     private async Task CheckMessageTimestampInvariantAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
     {
+        lock (_lock)
+        {
+            if ((now - _lastTimestampInvariantAlert).TotalHours < IntegrityAlertCooldownHours)
+                return;
+        }
+
         var windowStart = now.AddHours(-TimestampInvariantWindowHours);
         var count = await db.MessageEvents
             .Where(m => m.EventType == Data.Entities.Events.MessageEventType.Created
@@ -288,12 +294,6 @@ internal sealed class HealthCheckJob(
 
         if (count == 0)
             return;
-
-        lock (_lock)
-        {
-            if ((now - _lastTimestampInvariantAlert).TotalHours < IntegrityAlertCooldownHours)
-                return;
-        }
 
         if (!await SendWebhookAsync(opts.WebhookUrl!,
             $"**Data integrity** — {count} `MessageCreated` row(s) in the last {TimestampInvariantWindowHours}h have `event_timestamp_utc = received_at_utc`. A handler is using its own clock instead of Discord's timestamp.", cancellationToken))
