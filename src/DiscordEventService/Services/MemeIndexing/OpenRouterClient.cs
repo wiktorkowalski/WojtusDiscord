@@ -15,16 +15,18 @@ internal sealed class OpenRouterClient(
 {
     public const string HttpClientName = "openrouter";
 
+    // Wording is benchmark-measured (#223): template fill 40→52; a stricter template definition scored lower.
     private const string SystemPrompt =
         """
         You analyze meme images from a Polish Discord community and produce search metadata.
+        People will later find these memes by typing a few words in Polish or English, so choose the words they would actually type.
         Rules:
         - description_pl: 1-3 zdania po polsku — co przedstawia mem i o czym jest.
         - description_en: 1-3 sentences in English describing what the meme shows and what it is about.
         - ocr_text: ALL text visible in the image, verbatim, in its original language, preserving line breaks. Empty string if there is no text.
-        - tags: 10-20 lowercase keywords mixing BOTH Polish and English: topics, objects, people, emotions/tone, recognizable technologies/brands, meme template name. Duplicate the same concept in both languages (e.g. both "kot" and "cat").
+        - tags: 10-20 lowercase keywords mixing BOTH Polish and English: topics, objects, people, characters, shows, games, emotions/tone, recognizable technologies/brands, meme template name. Duplicate the same concept in both languages (e.g. both "kot" and "cat"). Name a real person only when you clearly recognize them or their name is visible; never guess an identity from appearance alone — describe the person instead.
         - source: the platform whose watermark or UI is visible in the image (e.g. reddit, twitter, x, facebook, instagram, tiktok, kwejk, jbzd, 9gag, demotywatory, wykop), or null if none is visible.
-        - template: the canonical meme template name (e.g. "drake", "distracted boyfriend", "doge"), or null if not a recognizable template.
+        - template: the canonical, most commonly used name of the meme template or recurring meme format, as people would search for it. Covers international templates (e.g. "drake", "distracted boyfriend", "doge", "this is fine", "gigachad", "wojak", "stonks") AND Polish ones (e.g. "paski tvp", "cenzopapa", "nosacz sundajski", "świat według kiepskich", "kononowicz", "typowy polak"). Plain screenshots of posts or chats are not templates. null only when no recognizable template or recurring format is present.
         """;
 
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
