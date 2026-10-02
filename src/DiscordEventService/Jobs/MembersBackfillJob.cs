@@ -32,7 +32,7 @@ internal sealed class MembersBackfillJob(
             await foreach (var member in guild.GetAllMembersAsync())
                 membersList.Add(member);
 
-            ctx.Checkpoint.TotalCount = membersList.Count;
+            StartFreshRun(ctx.Checkpoint, membersList.Count);
             await ctx.Db.SaveChangesAsync(cancellationToken);
 
             foreach (var member in membersList)

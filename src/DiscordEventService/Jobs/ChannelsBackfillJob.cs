@@ -33,7 +33,7 @@ internal sealed class ChannelsBackfillJob(
                 .DistinctBy(c => c.Id)
                 .ToList();
 
-            ctx.Checkpoint.TotalCount = allChannels.Count;
+            StartFreshRun(ctx.Checkpoint, allChannels.Count);
             await ctx.Db.SaveChangesAsync(cancellationToken);
 
             foreach (var channel in allChannels)
