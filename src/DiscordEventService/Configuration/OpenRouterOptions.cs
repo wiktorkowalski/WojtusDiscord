@@ -13,11 +13,12 @@ internal sealed class OpenRouterOptions
     // Benchmark runs ignore this and use BenchmarkModels.
     public string Model { get; set; } = "google/gemini-3-flash-preview";
 
+    // The binder APPENDS configured BenchmarkModels__N to this default rather than replacing it.
     public string[] BenchmarkModels { get; set; } =
     [
-        "google/gemini-2.5-flash",
         "google/gemini-3-flash-preview",
-        "google/gemini-3.5-flash",
+        "google/gemini-3.1-flash-lite",
+        "google/gemini-3.8-flash",
     ];
 
     public int RequestDelayMs { get; set; } = 250;
