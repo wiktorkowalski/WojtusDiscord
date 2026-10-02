@@ -24,7 +24,7 @@ internal sealed class EmojisBackfillJob(
             if (guildEntity is null)
                 return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
-            ctx.Checkpoint.TotalCount = guild.Emojis.Count;
+            StartFreshRun(ctx.Checkpoint, guild.Emojis.Count);
             await ctx.Db.SaveChangesAsync(cancellationToken);
 
             foreach (var emoji in guild.Emojis.Values)

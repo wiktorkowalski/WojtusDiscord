@@ -24,7 +24,7 @@ internal sealed class RolesBackfillJob(
             if (guildEntity is null)
                 return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
-            ctx.Checkpoint.TotalCount = guild.Roles.Count;
+            StartFreshRun(ctx.Checkpoint, guild.Roles.Count);
             await ctx.Db.SaveChangesAsync(cancellationToken);
 
             foreach (var role in guild.Roles.Values)

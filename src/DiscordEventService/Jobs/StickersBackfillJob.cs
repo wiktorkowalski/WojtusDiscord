@@ -24,7 +24,7 @@ internal sealed class StickersBackfillJob(
             if (guildEntity is null)
                 return BackfillOutcome.ShortCircuit($"Guild {guildId} not found in database");
 
-            ctx.Checkpoint.TotalCount = guild.Stickers.Count;
+            StartFreshRun(ctx.Checkpoint, guild.Stickers.Count);
             await ctx.Db.SaveChangesAsync(cancellationToken);
 
             foreach (var sticker in guild.Stickers.Values)

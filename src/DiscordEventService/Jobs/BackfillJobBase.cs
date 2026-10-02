@@ -18,6 +18,14 @@ internal abstract class BackfillJobBase
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    // Cursor-less jobs only: they restart from item one on every run, so the reset is unconditional (#358).
+    // Cursor jobs must not call this — a mid-flight resume keeps accumulating.
+    protected static void StartFreshRun(BackfillCheckpointEntity checkpoint, int totalCount)
+    {
+        checkpoint.TotalCount = totalCount;
+        checkpoint.ProcessedCount = 0;
+    }
+
     protected Task SaveProgressAsync(DiscordDbContext db, BackfillCheckpointEntity checkpoint, CancellationToken cancellationToken) => db.SaveChangesAsync(cancellationToken);
 
     // Fetches one REST batch of messages scrolling backwards from beforeId. Returns the
