@@ -16,7 +16,7 @@
 4. **Test aggressively** — verify every change end-to-end whenever possible. Build green alone is not enough signal. For changes with a crisp behavioral contract, add a Testcontainers integration test (no DB mocking) **and** still live-verify on the dev bot
 5. **Create PR** — push branch, `gh pr create`, wait for GitHub Claude review
 6. **Review loop** — after every review round, read ALL comments (top-level + inline via `gh api repos/<o>/<r>/pulls/<N>/comments`). Apply fixes, push, repeat until approved and no outstanding comments
-7. **Wait for user approval** — do NOT merge without explicit user approval, even if review is clean and checks pass
+7. **Merge** — review clean and checks green → `gh pr merge <N> --squash --delete-branch`, no user approval needed
 8. **Post-merge deployment** — after merge, watch deploy via `gh run watch`, wait for container restart, then `mcp__homelab__get_container_status` (expect healthy) + pull logs (`mcp__homelab__GetContainerLogs` for `discord-event-service`) + targeted `mcp__homelab__QueryLoki` covering ~5–15 min around deploy. Surface anomalies (new patterns, unexpected callsites), not just error counts
 9. **Post-deploy verification** — **standard step, do it autonomously**: run read-only SELECT checks against the prod DB to confirm the change's data looks sane (recent rows, no duplicates/corruption from the change, relevant invariants hold). Connection details + a reusable verification query set are in agent memory. Only prompt the user for the prod DB password (and only when not already in memory)
 
