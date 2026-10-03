@@ -166,6 +166,7 @@ builder.Services.AddScoped<OpenRouterClient>();
 builder.Services.AddScoped<MemeSampleService>();
 builder.Services.AddScoped<AttachmentUrlRefreshService>();
 builder.Services.AddScoped<MemeAttachmentIndexer>();
+builder.Services.AddScoped<MemeAnnotationImportService>();
 builder.Services.AddScoped<MemeBenchmarkJob>();
 builder.Services.AddScoped<MemeIndexingJob>();
 builder.Services.AddScoped<MemeIndexSweepJob>();
@@ -300,6 +301,7 @@ app.MapOpsEndpoints();
 
 app.MapMemeBenchmarkEndpoints();
 app.MapMemeIndexEndpoints();
+app.MapMemeAnnotationImportEndpoints();
 
 // SPA fallback — LAST so it only catches client-side routes (any non-/api,
 // non-/health, non-/hangfire GET) and serves index.html for deep links.

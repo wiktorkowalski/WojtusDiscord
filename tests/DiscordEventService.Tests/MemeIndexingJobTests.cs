@@ -1151,6 +1151,8 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
             o.ChannelIds = [ChannelDiscordId];
             o.MaxImagesPerRun = maxImagesPerRun;
             o.MaxImageBytes = maxImageBytes;
+            // Only the sweep reads it (#369). The manual backfill runs with it off, as in production.
+            o.AutomaticIndexing = sweep;
         });
         services.Configure<OpenRouterOptions>(o =>
         {

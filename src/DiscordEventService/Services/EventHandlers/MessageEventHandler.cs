@@ -207,7 +207,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
                 return;
 
             var memeOptions = ctx.Services.GetRequiredService<IOptions<MemeIndexOptions>>().Value;
-            if (!memeOptions.ChannelIds.Contains(e.Channel.Id))
+            if (!memeOptions.AutomaticIndexing || !memeOptions.ChannelIds.Contains(e.Channel.Id))
                 return;
             if (!e.Message.Attachments.Any(a => a.FileName is not null && ImageMagic.IsIndexableFileName(a.FileName)))
                 return;

@@ -23,6 +23,15 @@ internal sealed class MemeIndexRunCounters
     public decimal CostUsd { get; set; }
 }
 
+internal enum MemeAnnotationWrite
+{
+    Added,
+    Overwritten,
+
+    // The key already holds the same metadata: nothing was written.
+    Unchanged,
+}
+
 // The DbContext stays a parameter — callers own the unit of work and decide when to flush.
 internal sealed class MemeAttachmentIndexer(
     OpenRouterClient openRouterClient,
@@ -270,7 +279,7 @@ internal sealed class MemeAttachmentIndexer(
                 Source = original.Source,
                 Language = original.Language,
             };
-            AddAnnotation(db, row, original.ModelId, original.PromptVersion, original.ReasoningEffort,
+            WriteAnnotation(db, row, existing: null, original.ModelId, original.PromptVersion, original.ReasoningEffort,
                 metadata, rawResponseJson: null, copiedAtUtc);
             copied++;
         }
@@ -278,11 +287,42 @@ internal sealed class MemeAttachmentIndexer(
         return copied;
     }
 
-    // The one place an annotation is written: the model path and the repost copy both end here,
-    // so the cut-out rule (#368) holds for every writer.
-    private void AddAnnotation(
+    // The import's entry (#369): the same write as the model path, an overwrite when the key
+    // already holds an annotation, and the status flip in the same tracked unit.
+    public async Task<MemeAnnotationWrite> ImportAnnotationAsync(
         DiscordDbContext db,
         MemeIndexEntity row,
+        string modelId,
+        string promptVersion,
+        string? reasoningEffort,
+        MemeMetadata metadata,
+        DateTime indexedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        // A row not saved yet cannot have annotations.
+        var existing = db.Entry(row).State == EntityState.Added
+            ? null
+            : await db.MemeAnnotations.FirstOrDefaultAsync(
+                a => a.AttachmentDiscordId == row.AttachmentDiscordId && a.ModelId == modelId && a.PromptVersion == promptVersion,
+                cancellationToken);
+
+        // The raw column gets the parsed contract, not the text as sent: an external writer has no
+        // strict schema, and a member outside the contract could carry a name past the cut-out rule.
+        var write = WriteAnnotation(db, row, existing, modelId, promptVersion, reasoningEffort,
+            metadata, JsonSerializer.Serialize(metadata), indexedAtUtc);
+
+        // A Failed or Skipped row becomes findable too: search needs Indexed, and it has an annotation now.
+        MarkIndexed(row);
+        return write;
+    }
+
+    // The one place an annotation is written: the model path, the repost copy and the import all
+    // end here, so the cut-out rule (#368) holds for every writer. Only the import passes
+    // `existing`; the other two check the key first and never write one key twice.
+    private MemeAnnotationWrite WriteAnnotation(
+        DiscordDbContext db,
+        MemeIndexEntity row,
+        MemeAnnotationEntity? existing,
         string modelId,
         string promptVersion,
         string? reasoningEffort,
@@ -290,45 +330,94 @@ internal sealed class MemeAttachmentIndexer(
         string? rawResponseJson,
         DateTime indexedAtUtc)
     {
+        if (string.IsNullOrWhiteSpace(reasoningEffort))
+            reasoningEffort = null;
+
         var stored = MemeMetadataSanitizer.Sanitize(metadata);
+        var franchise = string.IsNullOrWhiteSpace(stored.Franchise) ? null : stored.Franchise;
+        if (existing is not null && HasSameContent(existing, stored, franchise, reasoningEffort))
+            return MemeAnnotationWrite.Unchanged;
+
         if (!ReferenceEquals(stored, metadata))
         {
             // wojtus_query reads every table: a name the rule dropped must not survive in the raw column.
             if (rawResponseJson is not null)
                 rawResponseJson = JsonSerializer.Serialize(stored);
 
-            // Counts only. A name in the log would undo the rule.
-            var droppedTerms = metadata.Tags.Length - stored.Tags.Length
-                + metadata.Templates.Length - stored.Templates.Length
-                + metadata.SearchPhrases.Length - stored.SearchPhrases.Length
-                + (metadata.Franchise is not null && stored.Franchise is null ? 1 : 0);
-            logger.LogInformation(
-                "Cut-out rule applied to meme attachment {AttachmentId} ({Model} {PromptVersion}): dropped {DroppedPeople} people and {DroppedTerms} terms that name them",
-                row.AttachmentDiscordId, modelId, promptVersion, metadata.People.Length, droppedTerms);
+            LogCutoutRule(row, modelId, promptVersion, metadata, stored);
         }
 
-        db.MemeAnnotations.Add(new MemeAnnotationEntity
+        var annotation = existing ?? new MemeAnnotationEntity
         {
             MemeIndex = row,
             AttachmentDiscordId = row.AttachmentDiscordId,
             ModelId = modelId,
             PromptVersion = promptVersion,
-            ReasoningEffort = reasoningEffort,
-            IndexedAtUtc = indexedAtUtc,
-            DescriptionPl = stored.DescriptionPl,
-            DescriptionEn = stored.DescriptionEn,
-            OcrText = stored.OcrText,
-            Tags = stored.Tags,
-            Templates = stored.Templates,
-            SearchPhrases = stored.SearchPhrases,
-            People = JsonSerializer.Serialize(stored.People),
-            PeopleNames = [.. stored.People.Select(p => p.Name)],
-            ImageKind = stored.ImageKind,
-            Language = stored.Language,
-            Franchise = string.IsNullOrWhiteSpace(stored.Franchise) ? null : stored.Franchise,
-            Source = stored.Source,
-            RawResponseJson = rawResponseJson,
-        });
+        };
+        annotation.ReasoningEffort = reasoningEffort;
+        annotation.IndexedAtUtc = indexedAtUtc;
+        annotation.DescriptionPl = stored.DescriptionPl;
+        annotation.DescriptionEn = stored.DescriptionEn;
+        annotation.OcrText = stored.OcrText;
+        annotation.Tags = stored.Tags;
+        annotation.Templates = stored.Templates;
+        annotation.SearchPhrases = stored.SearchPhrases;
+        annotation.People = JsonSerializer.Serialize(stored.People);
+        annotation.PeopleNames = [.. stored.People.Select(p => p.Name)];
+        annotation.ImageKind = stored.ImageKind;
+        annotation.Language = stored.Language;
+        annotation.Franchise = franchise;
+        annotation.Source = stored.Source;
+        annotation.RawResponseJson = rawResponseJson;
+
+        if (existing is not null)
+            return MemeAnnotationWrite.Overwritten;
+
+        db.MemeAnnotations.Add(annotation);
+        return MemeAnnotationWrite.Added;
+    }
+
+    // Counts only. A name in the log would undo the rule.
+    private void LogCutoutRule(
+        MemeIndexEntity row, string modelId, string promptVersion, MemeMetadata metadata, MemeMetadata stored)
+    {
+        var droppedTerms = metadata.Tags.Length - stored.Tags.Length
+            + metadata.Templates.Length - stored.Templates.Length
+            + metadata.SearchPhrases.Length - stored.SearchPhrases.Length
+            + (metadata.Franchise is not null && stored.Franchise is null ? 1 : 0);
+        logger.LogInformation(
+            "Cut-out rule applied to meme attachment {AttachmentId} ({Model} {PromptVersion}): dropped {DroppedPeople} people and {DroppedTerms} terms that name them",
+            row.AttachmentDiscordId, modelId, promptVersion, metadata.People.Length, droppedTerms);
+    }
+
+    // The raw column and indexed_at_utc are left out: the same metadata sent again is the same
+    // annotation, whenever it is sent.
+    private static bool HasSameContent(
+        MemeAnnotationEntity existing, MemeMetadata stored, string? franchise, string? reasoningEffort) =>
+        existing.ReasoningEffort == reasoningEffort
+        && existing.DescriptionPl == stored.DescriptionPl
+        && existing.DescriptionEn == stored.DescriptionEn
+        && existing.OcrText == stored.OcrText
+        && existing.Tags.SequenceEqual(stored.Tags)
+        && existing.Templates.SequenceEqual(stored.Templates)
+        && existing.SearchPhrases.SequenceEqual(stored.SearchPhrases)
+        && HasSamePeople(existing.People, stored.People)
+        && existing.ImageKind == stored.ImageKind
+        && existing.Language == stored.Language
+        && existing.Franchise == franchise
+        && existing.Source == stored.Source;
+
+    // Unreadable stored people count as different: the overwrite then repairs the row.
+    private static bool HasSamePeople(string storedPeopleJson, MemePerson[] people)
+    {
+        try
+        {
+            return (JsonSerializer.Deserialize<MemePerson[]>(storedPeopleJson) ?? []).SequenceEqual(people);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static void MarkIndexed(MemeIndexEntity row)
@@ -349,9 +438,8 @@ internal sealed class MemeAttachmentIndexer(
             // The annotation and the status flip stay in one tracked unit: the caller's single
             // SaveChanges is the only thing that keeps "Indexed has an annotation" true.
             case MemeAnalysisOutcome.Success:
-                AddAnnotation(db, row, openRouter.Model, OpenRouterClient.PromptVersion,
-                    string.IsNullOrEmpty(openRouter.ReasoningEffort) ? null : openRouter.ReasoningEffort,
-                    result.Metadata!, result.RawContent, DateTime.UtcNow);
+                WriteAnnotation(db, row, existing: null, openRouter.Model, OpenRouterClient.PromptVersion,
+                    openRouter.ReasoningEffort, result.Metadata!, result.RawContent, DateTime.UtcNow);
                 MarkIndexed(row);
                 counters.Indexed++;
                 break;
@@ -372,7 +460,7 @@ internal sealed class MemeAttachmentIndexer(
     // `required` in System.Text.Json is presence-only: an explicit null passes deserialization
     // but violates the NOT NULL metadata columns at save time, which would poison the run (#311).
     // franchise and source are the only members the contract lets be null.
-    private static bool HasNullRequiredField(MemeMetadata metadata) =>
+    public static bool HasNullRequiredField(MemeMetadata metadata) =>
         metadata.DescriptionPl is null || metadata.DescriptionEn is null || metadata.OcrText is null
         || metadata.ImageKind is null || metadata.Language is null
         || HasNull(metadata.Tags) || HasNull(metadata.Templates) || HasNull(metadata.SearchPhrases)
