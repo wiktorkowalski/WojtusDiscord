@@ -11,6 +11,7 @@ using DiscordEventService.Jobs;
 using DiscordEventService.Services.MemeIndexing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace DiscordEventService.Tests;
@@ -28,6 +29,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     private ChannelEntity _channel = null!;
     private UserEntity _author = null!;
     private FakeMemeHttpHandler _http = null!;
+    private readonly RecordingLogger _indexerLog = new();
 
     public async Task InitializeAsync()
     {
@@ -206,6 +208,26 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         StoredMemeOutput.AssertRawResponseWithoutTheName(await verify.MemeAnnotations.SingleAsync());
     }
 
+    // The log is the only trace that the rule fired. It holds counts: a name there would undo the rule.
+    [Fact]
+    public async Task ExecuteAsync_CutoutThatNamesAPerson_LogsTheDroppedCountsAndNoName()
+    {
+        AddMessage(1001UL, Attachment(11UL, "cutout.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.CutoutFor.Add(Png(1));
+
+        await RunJobAsync();
+
+        var (level, message) = Assert.Single(_indexerLog.Entries, IsCutoutRuleEntry);
+        Assert.Equal(LogLevel.Information, level);
+        // The fake's cut-out loses its one person, 3 tags, 1 template and 1 search phrase.
+        Assert.Contains("dropped 1 people and 5 terms", message);
+        Assert.All(_indexerLog.Entries, entry => Assert.All(
+            FakeMemeHttpHandler.PersonName.Split(' '),
+            word => Assert.DoesNotContain(word, entry.Message, StringComparison.OrdinalIgnoreCase)));
+    }
+
     // The control: the same output, only the image kind differs. The rule is about cut-outs, not about people.
     [Fact]
     public async Task ExecuteAsync_NamedPersonOnAnotherImageKind_KeepsThePersonTheTagsAndTheVerbatimRawResponse()
@@ -214,6 +236,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         await _db.SaveChangesAsync();
         _http.SetImage(11UL, Png(1));
         _http.NamedPersonFor.Add(Png(1));
+        _http.Overrides.Add((Png(1), "source", null));
 
         await RunJobAsync();
 
@@ -221,6 +244,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         var annotation = await verify.MemeAnnotations.SingleAsync();
         StoredMemeOutput.AssertNamedPersonKept(annotation);
         StoredMemeOutput.AssertVerbatimRawResponse(annotation, _http.MetadataJsonFor(Png(1)));
+        Assert.DoesNotContain(_indexerLog.Entries, IsCutoutRuleEntry);
     }
 
     // Nothing was dropped, so the provenance stays the model's own output.
@@ -232,6 +256,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         _http.SetImage(11UL, Png(1));
         _http.CutoutFor.Add(Png(1));
         _http.Overrides.Add((Png(1), "people", new JsonArray()));
+        _http.Overrides.Add((Png(1), "source", null));
 
         await RunJobAsync();
 
@@ -239,6 +264,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         var annotation = await verify.MemeAnnotations.SingleAsync();
         Assert.Equal(MemeImageKind.CutoutFaceOrEmote, annotation.ImageKind);
         StoredMemeOutput.AssertVerbatimRawResponse(annotation, _http.MetadataJsonFor(Png(1)));
+        Assert.DoesNotContain(_indexerLog.Entries, IsCutoutRuleEntry);
     }
 
     [Fact]
@@ -495,6 +521,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
             a.Tags = [.. FakeMemeHttpHandler.NameTags, .. FakeMemeHttpHandler.NameFreeTags];
             a.Templates = [FakeMemeHttpHandler.PersonName, .. FakeMemeHttpHandler.NameFreeTemplates];
             a.SearchPhrases = ["kowalski emotka", .. FakeMemeHttpHandler.NameFreeSearchPhrases];
+            a.Franchise = FakeMemeHttpHandler.Franchise;
         });
         await _db.SaveChangesAsync();
         _http.SetImage(12UL, Png(7));
@@ -831,6 +858,24 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         Assert.Null(member == "franchise" ? annotation.Franchise : annotation.Source);
     }
 
+    // A blank franchise is no franchise. Stored as text it would read as a value in every query.
+    [Theory]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task ExecuteAsync_BlankFranchise_IsStoredAsNull(string franchise)
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.Overrides.Add((Png(1), "franchise", franchise));
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        Assert.Equal(MemeIndexStatus.Indexed, (await verify.MemeIndex.SingleAsync()).Status);
+        Assert.Null((await verify.MemeAnnotations.SingleAsync()).Franchise);
+    }
+
     [Fact]
     public async Task ExecuteAsync_RefreshBatchFailure_MarksFailedAndLaterRunHeals()
     {
@@ -1096,6 +1141,8 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     {
         var services = new ServiceCollection();
         services.AddLogging();
+        // A closed registration wins over AddLogging's open ILogger<>.
+        services.AddSingleton(_indexerLog.For<MemeAttachmentIndexer>());
         services.AddDbContext<DiscordDbContext>(o => o
             .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention());
@@ -1192,6 +1239,9 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         row.Annotations.Add(annotation);
     }
 
+    private static bool IsCutoutRuleEntry((LogLevel Level, string Message) entry) =>
+        entry.Message.Contains("Cut-out rule applied", StringComparison.Ordinal);
+
     private static string HashOf(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
 
     // The 4-field PascalCase shape MessageEventHandler/MessagesBackfillJob serialize.
@@ -1221,6 +1271,8 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
     public static readonly string[] NameFreeTags = ["emotka", "twarz"];
     public static readonly string[] NameFreeTemplates = ["wojak"];
     public static readonly string[] NameFreeSearchPhrases = ["śmieszna mina"];
+    // On every output. It names nobody, so the cut-out rule must leave it alone.
+    public const string Franchise = "Wiedźmin";
 
     private readonly Dictionary<ulong, byte[]> _imagesByAttachment = [];
 
@@ -1330,7 +1382,7 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
             ["templates"] = namesPerson ? [PersonName, .. NameFreeTemplates] : new[] { "drake" },
             ["people"] = new[] { new { name = namesPerson ? PersonName : "Adam Małysz", evidence = "widely_recognized" } },
             ["search_phrases"] = namesPerson ? ["kowalski emotka", .. NameFreeSearchPhrases] : new[] { "mem testowy", "test meme" },
-            ["franchise"] = "Wiedźmin",
+            ["franchise"] = Franchise,
             ["source"] = "kwejk",
             ["language"] = "pl",
         };
@@ -1383,7 +1435,7 @@ internal static class StoredMemeOutput
         Assert.Equal(["mem testowy", "test meme"], annotation.SearchPhrases);
         Assert.Equal(["Adam Małysz"], annotation.PeopleNames);
         AssertPeopleColumn(annotation, "Adam Małysz");
-        Assert.Equal("Wiedźmin", annotation.Franchise);
+        Assert.Equal(FakeMemeHttpHandler.Franchise, annotation.Franchise);
         Assert.Equal("kwejk", annotation.Source);
         Assert.Equal(MemeLanguage.Pl, annotation.Language);
     }
@@ -1397,6 +1449,7 @@ internal static class StoredMemeOutput
         Assert.Equal(FakeMemeHttpHandler.NameFreeTags, annotation.Tags);
         Assert.Equal(FakeMemeHttpHandler.NameFreeTemplates, annotation.Templates);
         Assert.Equal(FakeMemeHttpHandler.NameFreeSearchPhrases, annotation.SearchPhrases);
+        Assert.Equal(FakeMemeHttpHandler.Franchise, annotation.Franchise);
         AssertNoNameIn(annotation.SearchText);
     }
 

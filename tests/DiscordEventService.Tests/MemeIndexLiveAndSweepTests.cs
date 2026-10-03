@@ -146,6 +146,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
         await _db.SaveChangesAsync();
         _http.SetImage(11UL, Png(1));
         _http.NamedPersonFor.Add(Png(1));
+        _http.Overrides.Add((Png(1), "source", null));
 
         await RunLiveAsync(1001UL);
 

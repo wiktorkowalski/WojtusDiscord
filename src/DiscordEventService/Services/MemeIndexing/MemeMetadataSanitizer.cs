@@ -28,9 +28,9 @@ internal static class MemeMetadataSanitizer
         // Before the people go: their names are what the other fields get matched against.
         var fullNames = metadata.People.Select(p => Compact(p.Name)).Where(n => n.Length > 0).ToHashSet(StringComparer.Ordinal);
 
-        // The space-separated words too, glued: "Korwin-Mikke" is also written "korwinmikke".
+        // The whitespace-separated words too, glued: "Korwin-Mikke" is also written "korwinmikke".
         var nameTokens = metadata.People
-            .SelectMany(p => Tokens(p.Name).Concat(p.Name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(Compact)))
+            .SelectMany(p => Tokens(p.Name).Concat(p.Name.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Select(Compact)))
             .Where(t => t.Length >= MinNameTokenLength)
             .ToHashSet(StringComparer.Ordinal);
 
@@ -71,7 +71,7 @@ internal static class MemeMetadataSanitizer
     private static string Fold(string value)
     {
         var folded = new StringBuilder(value.Length);
-        foreach (var c in value.Normalize(NormalizationForm.FormKD))
+        foreach (var c in Decompose(value))
         {
             if (CharUnicodeInfo.GetUnicodeCategory(c) == UnicodeCategory.NonSpacingMark)
                 continue;
@@ -91,5 +91,19 @@ internal static class MemeMetadataSanitizer
         }
 
         return folded.ToString();
+    }
+
+    // Normalize throws on invalid Unicode (a lone surrogate, U+FFFE), and JSON can carry it.
+    // No name is made of that: keep the letters and digits, turn the rest into separators.
+    private static string Decompose(string value)
+    {
+        try
+        {
+            return value.Normalize(NormalizationForm.FormKD);
+        }
+        catch (ArgumentException)
+        {
+            return new string([.. value.Select(c => char.IsLetterOrDigit(c) ? c : ' ')]).Normalize(NormalizationForm.FormKD);
+        }
     }
 }

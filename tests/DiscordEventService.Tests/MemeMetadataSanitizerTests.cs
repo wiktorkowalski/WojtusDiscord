@@ -49,13 +49,16 @@ public sealed class MemeMetadataSanitizerTests
     }
 
     // Polish inflects names, and the trigram side of search finds those forms: a name of 5 or
-    // more letters plus a short ending names the person too.
+    // more letters plus a short ending names the person too. The last two rows sit on the
+    // limits: the shortest such name with one more letter, and with the longest ending (4).
     [Theory]
     [InlineData("Krzysztof Gonciarz", "gonciarza")]
     [InlineData("Krzysztof Gonciarz", "mem z gonciarzem")]
     [InlineData("Krzysztof Gonciarz", "krzysztofowi")]
     [InlineData("Jan Kowalski", "kowalskiego")]
     [InlineData("Jan Kowalski", "mina Kowalskiemu")]
+    [InlineData("Adam Nowak", "nowaka")]
+    [InlineData("Adam Nowak", "nowakowie")]
     public void Sanitize_CutoutWithPeople_RemovesAnInflectedFormOfALongName(string personName, string nameTag)
     {
         var metadata = Cutout(people: [personName], tags: ["emotka", nameTag]);
@@ -65,22 +68,40 @@ public sealed class MemeMetadataSanitizerTests
         Assert.Equal(["emotka"], sanitized.Tags);
     }
 
-    // The ending is short. A longer word that only starts with the name is another word.
-    [Fact]
-    public void Sanitize_CutoutWithPeople_KeepsAWordThatIsMuchLongerThanTheName()
+    // The other side of the limits. An ending of 5 letters or more makes another word
+    // ("nowakowski" is a surname of its own), and a 4-letter name has no inflection rule at all.
+    [Theory]
+    [InlineData("nowakowski")]
+    [InlineData("nowakowskiego")]
+    [InlineData("adama")]
+    public void Sanitize_CutoutWithPeople_KeepsAWordPastTheInflectionLimits(string tag)
     {
-        var metadata = Cutout(people: ["Adam Nowak"], tags: ["nowakowskiego", "emotka"]);
+        var metadata = Cutout(people: ["Adam Nowak"], tags: [tag, "emotka"]);
 
         var sanitized = MemeMetadataSanitizer.Sanitize(metadata);
 
-        Assert.Equal(["nowakowskiego", "emotka"], sanitized.Tags);
+        Assert.Equal([tag, "emotka"], sanitized.Tags);
     }
 
-    // A name part with a hyphen or an apostrophe is also written as one word.
+    // A 2-letter name word is too common to be a name on its own, also as the first word.
+    [Fact]
+    public void Sanitize_NameWordOfTwoLetters_DoesNotRemoveATagEqualToIt()
+    {
+        var metadata = Cutout(people: ["Xi Jinping"], tags: ["xi", "emotka"]);
+
+        var sanitized = MemeMetadataSanitizer.Sanitize(metadata);
+
+        Assert.Equal(["xi", "emotka"], sanitized.Tags);
+    }
+
+    // A name part with a hyphen or an apostrophe is also written as one word. The name words
+    // are split on any whitespace: a no-break space or a tab must not glue the whole name.
     [Theory]
     [InlineData("Janusz Korwin-Mikke", "korwinmikke")]
     [InlineData("Janusz Korwin-Mikke", "korwin-mikke")]
     [InlineData("Conan O'Brien", "obrien")]
+    [InlineData("Janusz\u00A0Korwin-Mikke", "korwinmikke")]
+    [InlineData("Janusz\tKorwin-Mikke", "korwinmikke")]
     public void Sanitize_CutoutWithPeople_RemovesAGluedNamePart(string personName, string nameTag)
     {
         var metadata = Cutout(people: [personName], tags: ["emotka", nameTag]);
@@ -241,9 +262,41 @@ public sealed class MemeMetadataSanitizerTests
     [InlineData("Đorđe Balašević", "dorde")]
     [InlineData("İlker Kaya", "ilker")]
     [InlineData("Ｊａｎ Kowalski", "jan")]
+    [InlineData("Işık Yılmaz", "isik")]
+    [InlineData("Guðmundur Þórsson", "gudmundur")]
+    [InlineData("Guðmundur Þórsson", "thorsson")]
+    [InlineData("Æsa Larsen", "aesa")]
+    [InlineData("Œdipe Roi", "oedipe")]
     public void Sanitize_CutoutWithPeople_FoldsLettersThatDoNotDecomposeIntoABaseLetter(string personName, string nameTag)
     {
         var metadata = Cutout(people: [personName], tags: ["emotka", nameTag]);
+
+        var sanitized = MemeMetadataSanitizer.Sanitize(metadata);
+
+        Assert.Equal(["emotka"], sanitized.Tags);
+    }
+
+    // JSON can carry U+FFFE or a lone surrogate, and string.Normalize throws on both. The code
+    // unit is a number here: neither is safe inside a test name.
+    [Theory]
+    [InlineData(0xFFFE)]
+    [InlineData(0xD800)]
+    public void Sanitize_InvalidUnicodeInATag_StillRemovesTheNameTag(int codeUnit)
+    {
+        var invalid = (char)codeUnit;
+        var metadata = Cutout(people: ["Jan Kowalski"], tags: [$"kowalski{invalid}", $"emotka{invalid}"]);
+
+        var sanitized = MemeMetadataSanitizer.Sanitize(metadata);
+
+        Assert.Equal([$"emotka{invalid}"], sanitized.Tags);
+    }
+
+    [Theory]
+    [InlineData(0xFFFE)]
+    [InlineData(0xD800)]
+    public void Sanitize_InvalidUnicodeInThePersonName_StillRemovesTheNameTag(int codeUnit)
+    {
+        var metadata = Cutout(people: [$"Jan{(char)codeUnit} Kowalski"], tags: ["kowalski", "jan", "emotka"]);
 
         var sanitized = MemeMetadataSanitizer.Sanitize(metadata);
 

@@ -88,18 +88,26 @@ public sealed class OpenRouterClientTests
         Assert.Equal(content, result.RawContent);
     }
 
-    // The closed sets fail in the parser, before anything is stored: a name outside the set, the
-    // wrong case, and a number instead of a name.
+    // The closed sets fail in the parser, before anything is stored. Only the exact name is a
+    // member: a name outside the set, another casing, spaces around it and a number are not.
     [Theory]
     [InlineData("image_kind", "\"meme\"")]
     [InlineData("image_kind", "3")]
+    [InlineData("image_kind", "\"Comic\"")]
+    [InlineData("image_kind", "\" comic\"")]
     [InlineData("language", "\"de\"")]
     [InlineData("language", "1")]
+    [InlineData("language", "\"PL\"")]
+    [InlineData("language", "\"pl \"")]
     [InlineData("source", "\"Twitter\"")]
     [InlineData("source", "\"x\"")]
     [InlineData("source", "7")]
+    [InlineData("source", "\" reddit \"")]
+    [InlineData("source", "\"None\"")]
     [InlineData("people", """[{"name":"Jan Nowak","evidence":"looks_like_him"}]""")]
     [InlineData("people", """[{"name":"Jan Nowak","evidence":1}]""")]
+    [InlineData("people", """[{"name":"Jan Nowak","evidence":"Name_Visible"}]""")]
+    [InlineData("people", """[{"name":"Jan Nowak","evidence":" name_visible"}]""")]
     public async Task AnalyzeImageAsync_ValueOutsideAClosedSet_IsANonTransientSchemaViolation(string member, string valueJson)
     {
         var metadata = FullMetadata();
