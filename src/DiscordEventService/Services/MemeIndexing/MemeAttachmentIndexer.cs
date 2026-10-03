@@ -196,9 +196,9 @@ internal sealed class MemeAttachmentIndexer(
     }
 
     // Repost dedupe: the same bytes are already Indexed on another attachment → copy every
-    // annotation of the oldest such row that this one lacks, no model call. One-shot: annotations
-    // the original gains later do not follow. Copies carry no raw response — provenance stays
-    // on the original, found via the shared content_hash.
+    // annotation of the oldest such row that this one lacks, no model call. No propagation: a
+    // later annotation of the original reaches this row only when the manual backfill revisits it.
+    // Copies carry no raw response — provenance stays on the original, found via content_hash.
     private async Task<bool> TryDedupeByContentHashAsync(
         DiscordDbContext db,
         MemeIndexEntity row,
@@ -222,18 +222,6 @@ internal sealed class MemeAttachmentIndexer(
         var originals = await db.MemeAnnotations.AsNoTracking()
             .Where(a => a.MemeIndexId == originalId)
             .OrderBy(a => a.IndexedAtUtc)
-            .Select(a => new
-            {
-                a.ModelId,
-                a.PromptVersion,
-                a.ReasoningEffort,
-                a.DescriptionPl,
-                a.DescriptionEn,
-                a.OcrText,
-                a.Tags,
-                a.Source,
-                a.Template
-            })
             .ToListAsync(cancellationToken);
 
         var wasIndexed = row.Status == MemeIndexStatus.Indexed;
@@ -261,7 +249,13 @@ internal sealed class MemeAttachmentIndexer(
         // An already Indexed row is here for the configured writer's annotation (manual backfill).
         // When the original lacks it too, only the model can supply it; the copies still save.
         if (copied == 0 || (wasIndexed && !existingKeys.Contains(configuredKey)))
+        {
+            if (copied > 0)
+                logger.LogDebug(
+                    "Meme attachment {AttachmentId}: {Copied} annotations copied via content hash {ContentHash}; the configured writer's annotation still needs the model",
+                    row.AttachmentDiscordId, copied, contentHash);
             return false;
+        }
 
         MarkIndexed(row);
         counters.Deduped++;
@@ -355,7 +349,7 @@ internal sealed class MemeAttachmentIndexer(
         if (row.Status != MemeIndexStatus.Indexed)
             return false;
 
-        logger.LogWarning("Meme attachment {AttachmentId} stays Indexed without a new annotation: {Outcome}",
+        logger.LogWarning("Meme attachment {AttachmentId} stays Indexed; the configured writer's annotation was not written: {Outcome}",
             row.AttachmentDiscordId, outcome);
         return true;
     }

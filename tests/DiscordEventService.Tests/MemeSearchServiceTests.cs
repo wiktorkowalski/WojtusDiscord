@@ -262,20 +262,22 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
     [Fact]
     public async Task SearchAsync_MoreMatchingAnnotationsThanLimit_LimitCountsAttachments()
     {
-        // All three annotations of 131 outscore the other two memes, so a LIMIT taken over
-        // annotation rows would fill both slots with 131.
-        var meme = await SeedMemeAsync(131UL, 2201UL);
+        // All three annotations of 133 outscore the other two memes, so a LIMIT taken over
+        // annotation rows would fill both slots with 133. The best meme has the HIGHEST attachment
+        // id on purpose: a LIMIT inside the per-attachment subquery (ordered by attachment id)
+        // would return 131 and 132 and lose it.
+        await SeedIndexedMemeAsync(131UL, 2201UL, "Wielbłąd pije wodę w oazie", "", ["oaza"]);
+        await SeedIndexedMemeAsync(132UL, 2202UL, "Wielbłąd siedzi w biurze", "", ["biuro"]);
+        var meme = await SeedMemeAsync(133UL, 2203UL);
         await AddAnnotationAsync(meme, "Zwierzę na pustyni", "", ["wielbłąd"], modelId: "model/a");
         await AddAnnotationAsync(meme, "Garbate zwierzę", "", ["wielbłąd", "pustynia"], modelId: "model/b");
         await AddAnnotationAsync(meme, "Karawana o zachodzie", "", ["wielbłąd", "karawana"], modelId: "model/c");
-        await SeedIndexedMemeAsync(132UL, 2202UL, "Wielbłąd pije wodę w oazie", "", ["oaza"]);
-        await SeedIndexedMemeAsync(133UL, 2203UL, "Wielbłąd siedzi w biurze", "", ["biuro"]);
 
         var hits = await RunSearchAsync("wielblad", limit: 2);
 
         Assert.Equal(2, hits.Count);
         Assert.Equal(2, hits.Select(h => h.AttachmentDiscordId).Distinct().Count());
-        Assert.Equal(131UL, hits[0].AttachmentDiscordId);
+        Assert.Equal(133UL, hits[0].AttachmentDiscordId);
     }
 
     [Fact]

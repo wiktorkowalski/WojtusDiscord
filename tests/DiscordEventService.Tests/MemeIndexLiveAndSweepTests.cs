@@ -123,6 +123,50 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
         Assert.Equal(1, await verify.MemeIndex.CountAsync());
     }
 
+    // The live hook looks at the status only: an Indexed attachment is done, even when the
+    // configured writer has not annotated it. Only the manual backfill pays for that (#367).
+    [Fact]
+    public async Task IndexMessageAsync_IndexedRowWithoutConfiguredKeyAnnotation_IsNotRevisited()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _db.MemeIndex.Add(new MemeIndexEntity
+        {
+            MessageId = _db.Messages.Local.Single(m => m.DiscordId == 1001UL).Id,
+            GuildDiscordId = GuildDiscordId,
+            ChannelDiscordId = ChannelDiscordId,
+            MessageDiscordId = 1001UL,
+            AttachmentDiscordId = 11UL,
+            FileName = "a.png",
+            FileSizeBytes = 123,
+            Status = MemeIndexStatus.Indexed,
+            AttemptCount = 1,
+            Annotations =
+            [
+                new MemeAnnotationEntity
+                {
+                    AttachmentDiscordId = 11UL,
+                    ModelId = "other/model",
+                    PromptVersion = OpenRouterClient.PromptVersion,
+                    IndexedAtUtc = DateTime.UtcNow,
+                    DescriptionPl = "Opis innego modelu",
+                    DescriptionEn = "Another model's description",
+                    OcrText = "",
+                    Tags = ["seed"],
+                },
+            ],
+        });
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunLiveAsync(1001UL);
+
+        Assert.Equal(0, _http.ModelCalls);
+        Assert.Equal(0, _http.CdnRequests);
+        await using var verify = NewContext();
+        Assert.Equal("other/model", (await verify.MemeAnnotations.SingleAsync()).ModelId);
+    }
+
     [Fact]
     public async Task IndexMessageAsync_MessageOutsideMemeChannels_IsIgnored()
     {

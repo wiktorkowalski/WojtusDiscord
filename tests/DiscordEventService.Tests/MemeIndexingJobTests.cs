@@ -393,6 +393,64 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         Assert.NotNull(annotations[2].RawResponseJson);
     }
 
+    // The usual repost in a second-model backfill: the original already has the configured
+    // writer's annotation, so the copy finishes the job and no model call is paid.
+    [Fact]
+    public async Task ExecuteAsync_IndexedRepostWhoseOriginalHasConfiguredKey_CopiesItWithoutModelCall()
+    {
+        AddMessage(1001UL);
+        AddMessage(1002UL, Attachment(12UL, "repost.png"));
+        await _db.SaveChangesAsync();
+        var original = SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, contentHash: HashOf(Png(7)));
+        Annotate(original, "model/a");
+        Annotate(original, ConfiguredModel, descriptionPl: "Opis z oryginału");
+        Annotate(SeedRow(1002UL, 12UL, MemeIndexStatus.Indexed, contentHash: HashOf(Png(7)), attemptCount: 1), "model/a");
+        await _db.SaveChangesAsync();
+        _http.SetImage(12UL, Png(7));
+
+        await RunJobAsync();
+
+        Assert.Equal(0, _http.ModelCalls);
+        await using var verify = NewContext();
+        var repost = await verify.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 12UL);
+        Assert.Equal(MemeIndexStatus.Indexed, repost.Status);
+        Assert.Null(repost.Error);
+        Assert.Equal(1, repost.AttemptCount);
+        var annotations = await verify.MemeAnnotations
+            .Where(a => a.AttachmentDiscordId == 12UL)
+            .OrderBy(a => a.ModelId)
+            .ToListAsync();
+        Assert.Equal(["model/a", ConfiguredModel], annotations.Select(a => a.ModelId));
+        Assert.Equal("Opis z oryginału", annotations[1].DescriptionPl);
+        Assert.Null(annotations[1].RawResponseJson);
+    }
+
+    // Postgres rejects the extra annotation (NUL byte). The recovery path must leave the Indexed
+    // row alone: recording the rejection would charge it an attempt on every manual run.
+    [Fact]
+    public async Task ExecuteAsync_ExtraAnnotationRejectedBySave_IndexedRowIsLeftUntouched()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        Annotate(SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, attemptCount: 1), "other/model");
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.NulOcrFor.Add(Png(1));
+
+        await RunJobAsync();
+
+        Assert.Equal(1, _http.ModelCalls);
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 11UL);
+        Assert.Equal(MemeIndexStatus.Indexed, row.Status);
+        Assert.Null(row.Error);
+        Assert.Equal(1, row.AttemptCount);
+        var annotation = await verify.MemeAnnotations.SingleAsync(a => a.AttachmentDiscordId == 11UL);
+        Assert.Equal("other/model", annotation.ModelId);
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
+    }
+
     [Fact]
     public async Task ExecuteAsync_OutcomeMapping_SkippedVsFailed()
     {
