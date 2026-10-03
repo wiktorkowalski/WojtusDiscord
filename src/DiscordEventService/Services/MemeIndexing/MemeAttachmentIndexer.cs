@@ -118,7 +118,8 @@ internal sealed class MemeAttachmentIndexer(
         if (await TryDedupeByContentHashAsync(db, row, contentHash, counters, cancellationToken))
             return;
 
-        var result = await openRouterClient.AnalyzeImageAsync(imageBytes, mimeType, openRouter.Model, cancellationToken);
+        var result = await openRouterClient.AnalyzeImageAsync(
+            imageBytes, mimeType, openRouter.Model, openRouter.ReasoningEffort, cancellationToken);
         counters.ModelCalls++;
         counters.PromptTokens += result.Usage?.PromptTokens ?? 0;
         counters.CompletionTokens += result.Usage?.CompletionTokens ?? 0;

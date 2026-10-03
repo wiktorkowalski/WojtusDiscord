@@ -1,5 +1,6 @@
 using DiscordEventService.Configuration;
 using DiscordEventService.Jobs;
+using DiscordEventService.Services.MemeIndexing;
 using Hangfire;
 using Microsoft.Extensions.Options;
 
@@ -42,6 +43,9 @@ internal static class MemeBenchmarkEndpoints
         if (!memeIndexOptions.Value.IsConfigured)
             return Results.BadRequest(new { error = "MemeIndex:ChannelIds is empty — no meme channels configured" });
 
+        if (!BenchmarkSlot.TryParseAll(openRouterOptions.Value.BenchmarkModels, out var slots, out var slotError))
+            return Results.BadRequest(new { error = slotError });
+
         var size = ClampSampleSize(sampleSize);
         var jobId = backgroundJobClient.Enqueue<MemeBenchmarkJob>(j => j.RunAsync(size, CancellationToken.None));
 
@@ -49,7 +53,7 @@ internal static class MemeBenchmarkEndpoints
         {
             HangfireJobId = jobId,
             SampleSize = size,
-            Models = openRouterOptions.Value.BenchmarkModels,
+            Slots = [.. slots.Select(s => s.Key)],
         });
     }
 
@@ -57,6 +61,11 @@ internal static class MemeBenchmarkEndpoints
     // (JSON array of MemeSampleItem) so the benchmark needs no prod deployment.
     // Takes a bare file name resolved under the fixed inputs directory — never
     // a client-supplied path (file-read primitive otherwise).
+    //
+    // Reproducible runs (#366): a file with at most sampleSize indexable images is used
+    // as-is, in file order — nothing is sampled. To re-run the sample of an earlier run,
+    // build the links file from that run's raw report:
+    //   jq '[.Items[].Sample]' benchmark-<stamp>.json > meme-benchmark-inputs/fixed-ids.json
     private static IResult StartBenchmarkFromFile(
         string file,
         int? sampleSize,
@@ -66,6 +75,9 @@ internal static class MemeBenchmarkEndpoints
     {
         if (!openRouterOptions.Value.IsConfigured)
             return Results.BadRequest(new { error = "OpenRouter:ApiKey is not configured" });
+
+        if (!BenchmarkSlot.TryParseAll(openRouterOptions.Value.BenchmarkModels, out var slots, out var slotError))
+            return Results.BadRequest(new { error = slotError });
 
         var inputRoot = Path.GetFullPath(MemeBenchmarkJob.InputDirectory(environment));
         var resolved = Path.GetFullPath(Path.Combine(inputRoot, Path.GetFileName(file)));
@@ -79,7 +91,7 @@ internal static class MemeBenchmarkEndpoints
         {
             HangfireJobId = jobId,
             SampleSize = size,
-            Models = openRouterOptions.Value.BenchmarkModels,
+            Slots = [.. slots.Select(s => s.Key)],
         });
     }
 
@@ -110,5 +122,5 @@ internal sealed record BenchmarkStartResponse
 {
     public required string HangfireJobId { get; init; }
     public required int SampleSize { get; init; }
-    public required string[] Models { get; init; }
+    public required string[] Slots { get; init; }
 }

@@ -50,13 +50,17 @@ builder.Services.AddOptions<HealthCheckOptions>()
 // benchmark/indexing endpoints reject with 400 instead of failing startup.
 // OPENROUTER_API_KEY (the ecosystem-conventional name) is accepted as a
 // fallback for OpenRouter__ApiKey.
+// The one startup failure is a ReasoningEffort that is set but unknown (#366):
+// OpenRouter would answer 400 on every image and the run would mark each row Failed.
 builder.Services.AddOptions<OpenRouterOptions>()
     .Bind(builder.Configuration.GetSection(OpenRouterOptions.SectionName))
     .PostConfigure(options =>
     {
         if (string.IsNullOrWhiteSpace(options.ApiKey))
             options.ApiKey = builder.Configuration["OPENROUTER_API_KEY"];
-    });
+    })
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 builder.Services.AddOptions<MemeIndexOptions>()
     .Bind(builder.Configuration.GetSection(MemeIndexOptions.SectionName));

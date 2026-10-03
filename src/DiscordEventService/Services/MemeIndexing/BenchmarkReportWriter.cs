@@ -3,7 +3,8 @@ using System.Text;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-internal sealed record BenchmarkCell(string Model, MemeAnalysisResult Result, double ElapsedSeconds);
+// Slot is the BenchmarkSlot.Key the cell ran under ("model" or "model|effort=low").
+internal sealed record BenchmarkCell(string Slot, MemeAnalysisResult Result, double ElapsedSeconds);
 
 internal sealed record BenchmarkItem(
     MemeSampleItem Sample,
@@ -15,7 +16,7 @@ internal sealed record BenchmarkRun(
     DateTime StartedUtc,
     DateTime FinishedUtc,
     int RequestedSampleSize,
-    string[] Models,
+    string[] Slots,
     List<BenchmarkItem> Items);
 
 internal static class BenchmarkReportWriter
@@ -60,12 +61,14 @@ internal static class BenchmarkReportWriter
     {
         sb.AppendLine("## Totals");
         sb.AppendLine();
-        sb.AppendLine("| model | ok | refused | failed | prompt tok | completion tok | cost USD | avg sec |");
+        sb.AppendLine("| slot | ok | refused | failed | prompt tok | completion tok | cost USD | avg sec |");
         sb.AppendLine("|---|---|---|---|---|---|---|---|");
 
-        foreach (var model in run.Models)
+        // One row per slot, matched by position: an item's cells are in slot order. Matching by
+        // name would merge a slot listed twice (a noise measurement) into one doubled row (#366).
+        foreach (var (position, slot) in run.Slots.Index())
         {
-            var cells = run.Items.SelectMany(i => i.Cells).Where(c => c.Model == model).ToList();
+            var cells = run.Items.Where(i => i.Cells.Count > position).Select(i => i.Cells[position]).ToList();
             var ok = cells.Count(c => c.Result.Outcome == MemeAnalysisOutcome.Success);
             var refused = cells.Count(c => c.Result.Outcome == MemeAnalysisOutcome.Refusal);
             var failed = cells.Count(c => c.Result.Outcome == MemeAnalysisOutcome.Error);
@@ -74,7 +77,7 @@ internal static class BenchmarkReportWriter
             var cost = cells.Sum(c => c.Result.Usage?.CostUsd ?? 0);
             var avgSeconds = cells.Count > 0 ? cells.Average(c => c.ElapsedSeconds) : 0;
 
-            sb.AppendLine(Inv($"| {model} | {ok} | {refused} | {failed} | {promptTokens} | {completionTokens} | {cost:F4} | {avgSeconds:F1} |"));
+            sb.AppendLine(Inv($"| {Escape(slot)} | {ok} | {refused} | {failed} | {promptTokens} | {completionTokens} | {cost:F4} | {avgSeconds:F1} |"));
         }
 
         sb.AppendLine();
@@ -91,7 +94,7 @@ internal static class BenchmarkReportWriter
             sb.AppendLine();
         }
 
-        sb.AppendLine($"| field | {string.Join(" | ", item.Cells.Select(c => c.Model))} |");
+        sb.AppendLine($"| field | {string.Join(" | ", item.Cells.Select(c => Escape(c.Slot)))} |");
         sb.AppendLine($"|---{string.Concat(Enumerable.Repeat("|---", item.Cells.Count))}|");
         AppendRow(sb, "outcome", item.Cells, c => c.Result.Outcome == MemeAnalysisOutcome.Error
             ? $"{c.Result.Outcome}: {c.Result.Error}"

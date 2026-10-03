@@ -65,13 +65,14 @@ internal sealed class OpenRouterClient(
         byte[] imageBytes,
         string mimeType,
         string model,
+        string? reasoningEffort,
         CancellationToken cancellationToken)
     {
         var opts = options.Value;
         if (!opts.IsConfigured)
             return MemeAnalysisResult.Failed("OpenRouter:ApiKey is not configured", isTransient: false);
 
-        var payload = BuildAnalysisPayload(imageBytes, mimeType, model, opts);
+        var payload = BuildAnalysisPayload(imageBytes, mimeType, model, reasoningEffort, opts);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", opts.ApiKey);
@@ -112,7 +113,7 @@ internal sealed class OpenRouterClient(
         return ParseResponse(body, model);
     }
 
-    private static object BuildAnalysisPayload(byte[] imageBytes, string mimeType, string model, OpenRouterOptions opts) => new
+    private static object BuildAnalysisPayload(byte[] imageBytes, string mimeType, string model, string? reasoningEffort, OpenRouterOptions opts) => new
     {
         model,
         messages = new object[]
@@ -131,12 +132,13 @@ internal sealed class OpenRouterClient(
                 },
             },
         },
-        // No reasoning override: effort=low made gemini-2.5-flash return
-        // empty content; the raised max_tokens budget is what thinking
-        // models actually need.
         response_format = ResponseSchema,
         max_tokens = opts.MaxOutputTokens,
         temperature = 0.2,
+        // Opt-in per caller (#366): null drops the field (JsonOptions skips nulls) and the model
+        // runs at its own default. Never force one effort on every model — effort=low made
+        // gemini-2.5-flash return empty content.
+        reasoning = string.IsNullOrEmpty(reasoningEffort) ? null : new { effort = reasoningEffort },
         // include=true returns the real cost from OpenRouter instead of us keeping price tables.
         usage = new { include = true },
     };

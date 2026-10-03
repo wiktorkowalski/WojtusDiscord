@@ -57,6 +57,7 @@ internal static class MemeIndexEndpoints
             HangfireJobId = jobId,
             GuildId = guildId,
             Model = openRouterOptions.Value.Model,
+            ReasoningEffort = openRouterOptions.Value.ReasoningEffort,
             MaxImagesPerRun = memeIndexOptions.Value.MaxImagesPerRun,
         });
     }
@@ -103,6 +104,8 @@ internal sealed record MemeIndexStartResponse
     public required string HangfireJobId { get; init; }
     public required ulong GuildId { get; init; }
     public required string Model { get; init; }
+    // null = no `reasoning` field is sent; the model runs at its own default effort.
+    public string? ReasoningEffort { get; init; }
     public required int MaxImagesPerRun { get; init; }
 }
 

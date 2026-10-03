@@ -127,8 +127,8 @@ internal sealed class MemeIndexingJob(
             }
 
             logger.LogInformation(
-                "Meme indexing starting for guild {GuildId}: {Count} attachments, model {Model}",
-                guildId, pending.Count, openRouterOptions.Model);
+                "Meme indexing starting for guild {GuildId}: {Count} attachments, model {Model}, reasoning effort {ReasoningEffort}",
+                guildId, pending.Count, openRouterOptions.Model, openRouterOptions.ReasoningEffort);
 
             // When the cap slices a multi-attachment message in half, the last capped
             // item is NOT the end of its message — the cursor must not advance past it.

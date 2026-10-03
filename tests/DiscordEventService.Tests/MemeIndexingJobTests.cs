@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -82,6 +83,24 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
         Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
         Assert.Equal(3, checkpoint.ProcessedCount);
+    }
+
+    // Prod sends `reasoning.effort` only when OpenRouter:ReasoningEffort is set (#366);
+    // unset, the model keeps its own default.
+    [Theory]
+    [InlineData("low")]
+    [InlineData(null)]
+    public async Task ExecuteAsync_ReasoningEffortSetting_ReachesEveryModelCall(string? reasoningEffort)
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"), Attachment(12UL, "b.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.SetImage(12UL, Png(2));
+
+        await RunJobAsync(reasoningEffort: reasoningEffort);
+
+        Assert.Equal(2, _http.ModelRequests.Count);
+        Assert.All(_http.ModelRequests, request => Assert.Equal(("test/model", reasoningEffort), request));
     }
 
     [Fact]
@@ -536,12 +555,13 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal(6, checkpoint.TotalCount);
     }
 
-    private Task RunJobAsync(int maxImagesPerRun = 500, int maxImageBytes = DefaultMaxImageBytes)
-        => RunAsync(maxImagesPerRun, maxImageBytes, sweep: false);
+    private Task RunJobAsync(
+        int maxImagesPerRun = 500, int maxImageBytes = DefaultMaxImageBytes, string? reasoningEffort = null)
+        => RunAsync(maxImagesPerRun, maxImageBytes, sweep: false, reasoningEffort);
 
     private Task RunSweepAsync() => RunAsync(maxImagesPerRun: 500, DefaultMaxImageBytes, sweep: true);
 
-    private async Task RunAsync(int maxImagesPerRun, int maxImageBytes, bool sweep)
+    private async Task RunAsync(int maxImagesPerRun, int maxImageBytes, bool sweep, string? reasoningEffort = null)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -558,6 +578,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         {
             o.ApiKey = "test-key";
             o.Model = "test/model";
+            o.ReasoningEffort = reasoningEffort;
             o.RequestDelayMs = 0;
         });
         services.Configure<DiscordOptions>(o => o.Token = new string('x', 60));
@@ -624,6 +645,8 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
     // Runs mid model call — after the job added its row, before it saves (#311 concurrent-run race).
     public Func<Task>? DuringModelCall { get; set; }
     public int RefreshFailuresRemaining { get; set; }
+    // Model id and `reasoning.effort` of every model call; the effort is null when the field was not sent.
+    public ConcurrentQueue<(string Model, string? ReasoningEffort)> ModelRequests { get; } = new();
     public int ModelCalls { get; private set; }
     public int CdnRequests { get; private set; }
 
@@ -676,6 +699,7 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
     {
         var body = await request.Content!.ReadAsStringAsync(cancellationToken);
         var imageBytes = ExtractImageBytes(body);
+        ModelRequests.Enqueue(ExtractModelAndEffort(body));
         ModelCalls++;
         if (DuringModelCall is not null)
             await DuringModelCall();
@@ -710,6 +734,15 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
         var dataUrl = doc.RootElement.GetProperty("messages")[1].GetProperty("content")[0]
             .GetProperty("image_url").GetProperty("url").GetString()!;
         return Convert.FromBase64String(dataUrl[(dataUrl.IndexOf("base64,", StringComparison.Ordinal) + 7)..]);
+    }
+
+    private static (string Model, string? ReasoningEffort) ExtractModelAndEffort(string requestBody)
+    {
+        using var doc = JsonDocument.Parse(requestBody);
+        var effort = doc.RootElement.TryGetProperty("reasoning", out var reasoning)
+            ? reasoning.GetProperty("effort").GetString()
+            : null;
+        return (doc.RootElement.GetProperty("model").GetString()!, effort);
     }
 
     // .../attachments/{channelId}/{attachmentId}/{fileName}
