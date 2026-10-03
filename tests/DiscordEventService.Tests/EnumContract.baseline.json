@@ -213,6 +213,11 @@
     "Refusal": 1,
     "Success": 0
   },
+  "DiscordEventService.Services.MemeIndexing.MemeAnnotationWrite": {
+    "Added": 0,
+    "Overwritten": 1,
+    "Unchanged": 2
+  },
   "DiscordEventService.Services.MemeIndexing.MemePersonEvidence": {
     "NameVisible": 0,
     "WidelyRecognized": 1

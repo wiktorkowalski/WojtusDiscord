@@ -23,12 +23,12 @@ internal sealed class MemeIndexingJob(
     // The manual backfill also revisits Indexed attachments that lack the configured writer's
     // annotation (#367): that is how a second model reaches the corpus, on a human trigger.
     public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
-        => RunAsync(guildId, maxFailedAttempts: null, revisitIndexed: true, cancellationToken);
+        => RunAsync(guildId, sweep: false, cancellationToken);
 
     // Status only, like the live hook: a model or prompt change must never make the weekly
     // sweep pay for the whole corpus unasked.
     public Task ExecuteSweepAsync(ulong guildId, CancellationToken cancellationToken)
-        => RunAsync(guildId, SweepMaxFailedAttempts, revisitIndexed: false, cancellationToken);
+        => RunAsync(guildId, sweep: true, cancellationToken);
 
     public async Task IndexMessageAsync(ulong guildId, ulong messageDiscordId, CancellationToken cancellationToken)
     {
@@ -39,11 +39,11 @@ internal sealed class MemeIndexingJob(
 
         // Config can change between enqueue and execution (deploy restart);
         // anything dropped here is healed by the weekly sweep.
-        if (!memeOptions.IsConfigured || !openRouterOptions.IsConfigured
+        if (!memeOptions.AutomaticIndexing || !memeOptions.IsConfigured || !openRouterOptions.IsConfigured
             || string.IsNullOrWhiteSpace(openRouterOptions.Model))
         {
             logger.LogWarning(
-                "Live meme indexing for message {MessageId} in guild {GuildId} skipped: meme indexing is not fully configured",
+                "Live meme indexing for message {MessageId} in guild {GuildId} skipped: automatic meme indexing is off or not fully configured",
                 messageDiscordId, guildId);
             return;
         }
@@ -85,12 +85,16 @@ internal sealed class MemeIndexingJob(
             counters.Failed, counters.ModelCalls, counters.CostUsd);
     }
 
-    private Task RunAsync(ulong guildId, int? maxFailedAttempts, bool revisitIndexed, CancellationToken cancellationToken)
+    private Task RunAsync(ulong guildId, bool sweep, CancellationToken cancellationToken)
         => executor.RunAsync(BackfillType, guildId, async ctx =>
         {
             var memeOptions = ctx.Services.GetRequiredService<IOptions<MemeIndexOptions>>().Value;
             var openRouterOptions = ctx.Services.GetRequiredService<IOptions<OpenRouterOptions>>().Value;
 
+            // The sweep job checks this before it enqueues; here for a sweep enqueued before a restart
+            // that turned the switch off. The manual backfill is a human trigger and is not gated.
+            if (sweep && !memeOptions.AutomaticIndexing)
+                return BackfillOutcome.ShortCircuit("MemeIndex:AutomaticIndexing is off");
             if (!memeOptions.IsConfigured)
                 return BackfillOutcome.ShortCircuit("MemeIndex:ChannelIds is empty — no meme channels configured");
             if (!openRouterOptions.IsConfigured)
@@ -103,8 +107,8 @@ internal sealed class MemeIndexingJob(
             var indexer = ctx.Services.GetRequiredService<MemeAttachmentIndexer>();
 
             var allPending = await CollectPendingAsync(
-                ctx.Db, sampleService, guildId, ctx.Checkpoint, maxFailedAttempts,
-                revisitIndexed ? openRouterOptions.Model : null, cancellationToken);
+                ctx.Db, sampleService, guildId, ctx.Checkpoint, sweep ? SweepMaxFailedAttempts : null,
+                sweep ? null : openRouterOptions.Model, cancellationToken);
 
             var cap = memeOptions.MaxImagesPerRun;
             var capped = allPending.Count > cap;

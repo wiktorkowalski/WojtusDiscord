@@ -551,37 +551,121 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
         Assert.Empty(jobClient.Created);
     }
 
-    private async Task RunLiveAsync(ulong messageDiscordId)
+    // #369: ChannelIds plus an OpenRouter key must not start spending. The import needs
+    // ChannelIds too, so the two automatic paths have their own switch, and it is off by default.
+    [Fact]
+    public void AutomaticIndexing_Default_IsOff()
     {
-        await using var provider = BuildProvider();
+        Assert.False(new MemeIndexOptions().AutomaticIndexing);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AutomaticIndexingOff_EnqueuesNothing()
+    {
+        var jobClient = new RecordingJobClient();
+
+        await RunCoordinatorAsync(jobClient, configured: true, automaticIndexing: false);
+
+        Assert.Empty(jobClient.Created);
+        await using var verify = NewContext();
+        Assert.Equal(0, await verify.BackfillCheckpoints.CountAsync());
+    }
+
+    [Fact]
+    public async Task IndexMessageAsync_AutomaticIndexingOff_MakesNoDownloadNoModelCallAndWritesNoRow()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "fresh.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunLiveAsync(1001UL, automaticIndexing: false);
+
+        Assert.Equal(0, _http.ModelCalls);
+        Assert.Equal(0, _http.CdnRequests);
+        await using var verify = NewContext();
+        Assert.Equal(0, await verify.MemeIndex.CountAsync());
+        Assert.Equal(0, await verify.MemeAnnotations.CountAsync());
+    }
+
+    // A sweep job enqueued before a restart that turned the switch off: the job itself checks too.
+    [Fact]
+    public async Task ExecuteSweepAsync_AutomaticIndexingOff_MakesNoDownloadNoModelCallAndWritesNoRow()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "missed.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunSweepAsync(automaticIndexing: false);
+
+        Assert.Equal(0, _http.ModelCalls);
+        Assert.Equal(0, _http.CdnRequests);
+        await using var verify = NewContext();
+        Assert.Equal(0, await verify.MemeIndex.CountAsync());
+        Assert.Equal(0, await verify.MemeAnnotations.CountAsync());
+    }
+
+    // The manual backfill is a human trigger already: it does not read the switch.
+    [Fact]
+    public async Task ExecuteAsync_ManualBackfillWithAutomaticIndexingOff_StillIndexes()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunBackfillAsync(automaticIndexing: false);
+
+        Assert.Equal(1, _http.ModelCalls);
+        await using var verify = NewContext();
+        Assert.Equal(MemeIndexStatus.Indexed, (await verify.MemeIndex.SingleAsync()).Status);
+        await AssertConfiguredWriterAnnotationsAsync(verify, 11UL);
+    }
+
+    private async Task RunLiveAsync(ulong messageDiscordId, bool automaticIndexing = true)
+    {
+        await using var provider = BuildProvider(automaticIndexing: automaticIndexing);
         using var scope = provider.CreateScope();
         await scope.ServiceProvider.GetRequiredService<MemeIndexingJob>()
             .IndexMessageAsync(GuildDiscordId, messageDiscordId, CancellationToken.None);
     }
 
-    private async Task RunSweepAsync()
+    private async Task RunSweepAsync(bool automaticIndexing = true)
     {
-        await using var provider = BuildProvider();
+        await using var provider = BuildProvider(automaticIndexing: automaticIndexing);
         using var scope = provider.CreateScope();
         await scope.ServiceProvider.GetRequiredService<MemeIndexingJob>()
             .ExecuteSweepAsync(GuildDiscordId, CancellationToken.None);
     }
 
-    private async Task RunCoordinatorAsync(RecordingJobClient jobClient, bool configured)
+    private async Task RunBackfillAsync(bool automaticIndexing)
     {
-        await using var provider = BuildProvider(configured ? [ChannelDiscordId] : [], jobClient);
+        await using var provider = BuildProvider(automaticIndexing: automaticIndexing);
+        using var scope = provider.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<MemeIndexingJob>()
+            .ExecuteAsync(GuildDiscordId, CancellationToken.None);
+    }
+
+    private async Task RunCoordinatorAsync(RecordingJobClient jobClient, bool configured, bool automaticIndexing = true)
+    {
+        await using var provider = BuildProvider(configured ? [ChannelDiscordId] : [], jobClient, automaticIndexing);
         using var scope = provider.CreateScope();
         await scope.ServiceProvider.GetRequiredService<MemeIndexSweepJob>().ExecuteAsync(CancellationToken.None);
     }
 
-    private ServiceProvider BuildProvider(ulong[]? channelIds = null, IBackgroundJobClient? jobClient = null)
+    // automaticIndexing: true = the live hook and the weekly sweep are switched on (#369). The
+    // option's own default is false; the tests of that default pass false here.
+    private ServiceProvider BuildProvider(
+        ulong[]? channelIds = null, IBackgroundJobClient? jobClient = null, bool automaticIndexing = true)
     {
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDbContext<DiscordDbContext>(o => o
             .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention());
-        services.Configure<MemeIndexOptions>(o => o.ChannelIds = channelIds ?? [ChannelDiscordId]);
+        services.Configure<MemeIndexOptions>(o =>
+        {
+            o.ChannelIds = channelIds ?? [ChannelDiscordId];
+            o.AutomaticIndexing = automaticIndexing;
+        });
         services.Configure<OpenRouterOptions>(o =>
         {
             o.ApiKey = "test-key";

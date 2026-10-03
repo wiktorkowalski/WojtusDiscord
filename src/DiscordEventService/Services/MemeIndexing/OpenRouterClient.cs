@@ -20,6 +20,10 @@ internal sealed class OpenRouterClient(
     // SystemPrompt or ResponseSchema — an unchanged version makes new output look like old output.
     public const string PromptVersion = "v4";
 
+    // The prompt versions whose output has the MemeMetadata shape. The import (#369) takes only
+    // these: an annotation under another version would not be what its key says it is.
+    public static readonly string[] KnownPromptVersions = [PromptVersion];
+
     // v4 (#368) = v2 plus the schema v2 fields. v2's wording is benchmark-measured (#223): template
     // fill 40→52; v3's stricter template definition scored lower, so it is not reused here.
     private const string SystemPrompt =

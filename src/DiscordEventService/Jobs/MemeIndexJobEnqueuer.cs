@@ -9,6 +9,19 @@ namespace DiscordEventService.Jobs;
 // cancel / the startup sweep only flip a status that the still-running job then overwrites.
 internal static class MemeIndexJobEnqueuer
 {
+    // Staleness-aware (#293): a checkpoint whose job died before writing a terminal status stays
+    // InProgress forever; IsChainActive treats it as dead. A fresh Pending row (enqueued, not
+    // started yet — #312) counts as active the same way (#289).
+    public static async Task<HashSet<ulong>> GetActiveGuildIdsAsync(DiscordDbContext db, CancellationToken cancellationToken)
+    {
+        var nowUtc = DateTime.UtcNow;
+        var open = await db.BackfillCheckpoints.AsNoTracking()
+            .Where(c => c.Type == BackfillType.MemeIndex
+                && (c.Status == BackfillStatus.InProgress || c.Status == BackfillStatus.Pending))
+            .ToListAsync(cancellationToken);
+        return [.. open.Where(c => c.IsChainActive(nowUtc)).Select(c => c.GuildDiscordId)];
+    }
+
     public static async Task<string> EnqueueAsync(
         DiscordDbContext db,
         IBackgroundJobClient jobClient,

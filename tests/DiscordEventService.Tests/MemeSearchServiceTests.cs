@@ -523,7 +523,12 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         services.AddDbContext<DiscordDbContext>(o => o
             .UseNpgsql(fixture.ConnectionString)
             .UseSnakeCaseNamingConvention());
-        services.Configure<MemeIndexOptions>(o => o.ChannelIds = [ChannelDiscordId]);
+        services.Configure<MemeIndexOptions>(o =>
+        {
+            o.ChannelIds = [ChannelDiscordId];
+            // The live hook does nothing without it (#369).
+            o.AutomaticIndexing = true;
+        });
         services.Configure<OpenRouterOptions>(o =>
         {
             o.ApiKey = "test-key";
