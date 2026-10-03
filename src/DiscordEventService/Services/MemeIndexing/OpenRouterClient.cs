@@ -219,7 +219,9 @@ internal sealed class OpenRouterClient(
         catch (JsonException ex)
         {
             // strict schema should make this impossible; treat as a model bug, not retryable.
-            logger.LogWarning(ex, "Model {Model} violated the response schema: {Content}",
+            // The output goes to Debug only: for a cut-out it can hold the name the rule drops (#368).
+            logger.LogWarning(ex, "Model {Model} violated the response schema", model);
+            logger.LogDebug("Model {Model} output that violated the response schema: {Content}",
                 model, Truncate(choice.Message.Content, 500));
             return MemeAnalysisResult.Failed($"schema violation: {ex.Message}", isTransient: false);
         }

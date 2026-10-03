@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services.MemeIndexing;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -119,6 +120,29 @@ public sealed class OpenRouterClientTests
         Assert.False(result.IsTransient);
         Assert.StartsWith("schema violation", result.Error);
         Assert.Null(result.Metadata);
+    }
+
+    // The warning reaches the production log. For a cut-out the output can hold the name the
+    // cut-out rule drops, so the output itself is logged at Debug only.
+    [Fact]
+    public async Task AnalyzeImageAsync_SchemaViolation_KeepsTheModelOutputOutOfTheWarning()
+    {
+        var log = new RecordingLogger();
+        var metadata = FullMetadata();
+        metadata["image_kind"] = "cutout_face_or_emote, comic";
+        metadata["people"] = JsonNode.Parse("""[{"name":"Jan Kowalski","evidence":"widely_recognized"}]""");
+        var client = NewClient(
+            _ => JsonTask(HttpStatusCode.OK, CompletionBody(metadata.ToJsonString(), finishReason: "stop", cost: null)),
+            logger: log.For<OpenRouterClient>());
+
+        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", reasoningEffort: null, CancellationToken.None);
+
+        Assert.Equal(MemeAnalysisOutcome.Error, result.Outcome);
+        Assert.DoesNotContain("Kowalski", result.Error);
+        var warning = Assert.Single(log.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains("violated the response schema", warning.Message);
+        Assert.DoesNotContain(log.Entries, e => e.Level > LogLevel.Debug && e.Message.Contains("Kowalski"));
+        Assert.Contains(log.Entries, e => e.Level == LogLevel.Debug && e.Message.Contains("Kowalski"));
     }
 
     // System.Text.Json reads "a, b" as a flags list and ORs the values, also for an enum that is
@@ -439,10 +463,12 @@ public sealed class OpenRouterClientTests
             usage = new { prompt_tokens = 10, completion_tokens = 20, cost }
         });
 
-    private static OpenRouterClient NewClient(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond, string apiKey = "test-key")
+    private static OpenRouterClient NewClient(
+        Func<HttpRequestMessage, Task<HttpResponseMessage>> respond, string apiKey = "test-key", ILogger<OpenRouterClient>? logger = null)
     {
         var options = Options.Create(new OpenRouterOptions { ApiKey = apiKey });
-        return new OpenRouterClient(new StubHttpClientFactory(new StubHandler(respond)), options, NullLogger<OpenRouterClient>.Instance);
+        return new OpenRouterClient(
+            new StubHttpClientFactory(new StubHandler(respond)), options, logger ?? NullLogger<OpenRouterClient>.Instance);
     }
 
     private static HttpResponseMessage Json(HttpStatusCode status, string body) =>
