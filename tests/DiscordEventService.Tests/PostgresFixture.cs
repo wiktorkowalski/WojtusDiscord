@@ -7,7 +7,7 @@ using Xunit;
 namespace DiscordEventService.Tests;
 
 // One container for the suite, one database per class: cloning a pre-migrated template is a file
-// copy rather than a 29-migration replay, and keeping a database per class is what lets the
+// copy rather than a 30-migration replay, and keeping a database per class is what lets the
 // truncation-based isolation and whole-table assertions stay correct under xUnit's parallelism.
 // Public because the public test classes name it in IClassFixture<>.
 public sealed class PostgresFixture : IAsyncLifetime
@@ -48,6 +48,17 @@ public sealed class PostgresFixture : IAsyncLifetime
         }
 
         ConnectionString = WithDatabase(admin, database);
+    }
+
+    // For tests that cannot start from the migrated template, e.g. to run one migration over
+    // existing rows: a database made from any template on the shared container. Unpooled, so no
+    // session lingers and the new database can serve as a template itself.
+    public static async Task<string> CreateDatabaseAsync(string template = "template0")
+    {
+        var admin = await Template.Value;
+        var database = $"extra_{Interlocked.Increment(ref _databaseCounter)}";
+        await ExecuteAsync(admin, $"CREATE DATABASE {database} TEMPLATE {template}");
+        return WithDatabase(admin, database, pooling: false);
     }
 
     // The container outlives every fixture instance, so it is not disposed here; Testcontainers'

@@ -10,6 +10,7 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
 {
     private const ulong GuildDiscordId = 1UL;
     private const ulong ChannelDiscordId = 2UL;
+    private const string DefaultModel = "google/gemini-3-flash-preview";
 
     private DiscordDbContext _db = null!;
     private GuildEntity _guild = null!;
@@ -21,6 +22,7 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         _db = NewContext();
         await _db.Database.MigrateAsync();
 
+        await _db.MemeAnnotations.ExecuteDeleteAsync();
         await _db.MemeIndex.ExecuteDeleteAsync();
         await _db.Messages.ExecuteDeleteAsync();
         await _db.Channels.ExecuteDeleteAsync();
@@ -114,24 +116,38 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         Assert.Equal(41UL, hit.AttachmentDiscordId);
     }
 
-    [Fact]
-    public async Task SearchAsync_NonIndexedStatuses_AreExcluded()
+    // The status row is the gate: an annotation can sit under a row that is not Indexed
+    // (an import, or a status row that never reached Indexed). Search must not show it.
+    [Theory]
+    [InlineData(MemeIndexStatus.Pending)]
+    [InlineData(MemeIndexStatus.Failed)]
+    [InlineData(MemeIndexStatus.Skipped)]
+    public async Task SearchAsync_AnnotationUnderNonIndexedStatusRow_IsNotFound(MemeIndexStatus status)
     {
-        // A Failed row may carry metadata from an earlier attempt; the status
-        // CHECK allows it. Search must still ignore anything not Indexed.
-        var failed = await SeedIndexedMemeAsync(51UL, 1401UL,
+        var meme = await SeedMemeAsync(51UL, 1401UL, status: status);
+        await AddAnnotationAsync(meme,
             descriptionPl: "Niepowtarzalny borsuk gra na perkusji",
             ocrText: "",
             tags: ["borsuk"]);
-        failed.Status = MemeIndexStatus.Failed;
-        failed.Error = "model exploded";
-        failed.IndexedAtUtc = null;
-        failed.ModelId = null;
-        await _db.SaveChangesAsync();
 
         var hits = await RunSearchAsync("borsuk");
 
         Assert.Empty(hits);
+    }
+
+    [Fact]
+    public async Task SearchAsync_IndexedStatusRowWithoutAnnotation_IsNotFound()
+    {
+        await SeedMemeAsync(52UL, 1402UL);
+        await SeedIndexedMemeAsync(53UL, 1403UL,
+            descriptionPl: "Niepowtarzalny borsuk gra na perkusji",
+            ocrText: "",
+            tags: ["borsuk"]);
+
+        var hits = await RunSearchAsync("borsuk");
+
+        var hit = Assert.Single(hits);
+        Assert.Equal(53UL, hit.AttachmentDiscordId);
     }
 
     [Fact]
@@ -151,7 +167,7 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
     [Fact]
     public async Task SearchAsync_EqualScores_BreakTiesByMessageRecency()
     {
-        // Repost dedupe copies metadata verbatim → identical scores.
+        // Repost dedupe copies annotations verbatim → identical scores.
         await SeedIndexedMemeAsync(71UL, 1601UL,
             descriptionPl: "Słoń maluje płot",
             ocrText: "",
@@ -182,6 +198,87 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
     }
 
     [Fact]
+    public async Task SearchAsync_TwoAnnotationsOfOneMeme_ReturnsItOnceRankedByBestAnnotation()
+    {
+        // The weak annotation goes in first and is the newer one: a query that picks a row by
+        // insert order or by indexed_at_utc instead of by score takes the wrong one.
+        var meme = await SeedMemeAsync(111UL, 2001UL);
+        await AddAnnotationAsync(meme,
+            descriptionPl: "Start rakieta kończy się klapą",
+            ocrText: "",
+            tags: ["porażka"],
+            modelId: "model/weak",
+            indexedAtUtc: DateTime.UtcNow);
+        await AddAnnotationAsync(meme,
+            descriptionPl: "Mem o czymś zupełnie innym",
+            ocrText: "",
+            tags: ["rakieta"],
+            modelId: "model/best",
+            indexedAtUtc: DateTime.UtcNow.AddDays(-7));
+        // Control: one annotation with exactly the best annotation's content.
+        await SeedIndexedMemeAsync(112UL, 2002UL,
+            descriptionPl: "Mem o czymś zupełnie innym",
+            ocrText: "",
+            tags: ["rakieta"],
+            messageCreatedAtUtc: DateTime.UtcNow.AddDays(-1));
+        await SeedIndexedMemeAsync(113UL, 2003UL,
+            descriptionPl: "Statek kosmiczny na wyrzutni",
+            ocrText: "rakieta",
+            tags: ["kosmos"]);
+
+        var hits = await RunSearchAsync("rakieta");
+
+        // Tag hit (A) for 111 and its control, then the OCR hit (B). The tie goes to the newer message.
+        Assert.Equal([111UL, 112UL, 113UL], hits.Select(h => h.AttachmentDiscordId));
+        Assert.Equal(hits[1].Score, hits[0].Score, precision: 10);
+        Assert.Equal(["rakieta"], hits[0].Tags);
+        Assert.Equal("Mem o czymś zupełnie innym", hits[0].DescriptionPl);
+    }
+
+    [Fact]
+    public async Task SearchAsync_QueryMatchedByOnlyOneAnnotation_StillFindsMeme()
+    {
+        var meme = await SeedMemeAsync(121UL, 2101UL);
+        await AddAnnotationAsync(meme,
+            descriptionPl: "Zwierzak śpi na kanapie",
+            ocrText: "",
+            tags: ["kot"],
+            modelId: "model/a");
+        await AddAnnotationAsync(meme,
+            descriptionPl: "Skoczek narciarski w locie",
+            ocrText: "",
+            tags: ["małysz"],
+            modelId: "model/b");
+
+        var forSecondModel = await RunSearchAsync("malysz");
+        var forFirstModel = await RunSearchAsync("kot");
+        var forNeither = await RunSearchAsync("wielblad");
+
+        Assert.Equal(121UL, Assert.Single(forSecondModel).AttachmentDiscordId);
+        Assert.Equal(121UL, Assert.Single(forFirstModel).AttachmentDiscordId);
+        Assert.Empty(forNeither);
+    }
+
+    [Fact]
+    public async Task SearchAsync_MoreMatchingAnnotationsThanLimit_LimitCountsAttachments()
+    {
+        // All three annotations of 131 outscore the other two memes, so a LIMIT taken over
+        // annotation rows would fill both slots with 131.
+        var meme = await SeedMemeAsync(131UL, 2201UL);
+        await AddAnnotationAsync(meme, "Zwierzę na pustyni", "", ["wielbłąd"], modelId: "model/a");
+        await AddAnnotationAsync(meme, "Garbate zwierzę", "", ["wielbłąd", "pustynia"], modelId: "model/b");
+        await AddAnnotationAsync(meme, "Karawana o zachodzie", "", ["wielbłąd", "karawana"], modelId: "model/c");
+        await SeedIndexedMemeAsync(132UL, 2202UL, "Wielbłąd pije wodę w oazie", "", ["oaza"]);
+        await SeedIndexedMemeAsync(133UL, 2203UL, "Wielbłąd siedzi w biurze", "", ["biuro"]);
+
+        var hits = await RunSearchAsync("wielblad", limit: 2);
+
+        Assert.Equal(2, hits.Count);
+        Assert.Equal(2, hits.Select(h => h.AttachmentDiscordId).Distinct().Count());
+        Assert.Equal(131UL, hits[0].AttachmentDiscordId);
+    }
+
+    [Fact]
     public async Task SearchAsync_NoMatch_ReturnsEmpty()
     {
         await SeedIndexedMemeAsync(91UL, 1801UL, "Pies siedzi przy komputerze", "", ["pies"]);
@@ -208,12 +305,27 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
             .SearchAsync(GuildDiscordId, query, limit, CancellationToken.None);
     }
 
+    // One meme with one annotation — the shape every single-writer test needs.
     private async Task<MemeIndexEntity> SeedIndexedMemeAsync(
         ulong attachmentDiscordId,
         ulong messageDiscordId,
         string descriptionPl,
         string ocrText,
         string[] tags,
+        bool messageDeleted = false,
+        ulong guildDiscordId = GuildDiscordId,
+        DateTime? messageCreatedAtUtc = null)
+    {
+        var meme = await SeedMemeAsync(
+            attachmentDiscordId, messageDiscordId, MemeIndexStatus.Indexed, messageDeleted, guildDiscordId, messageCreatedAtUtc);
+        await AddAnnotationAsync(meme, descriptionPl, ocrText, tags);
+        return meme;
+    }
+
+    private async Task<MemeIndexEntity> SeedMemeAsync(
+        ulong attachmentDiscordId,
+        ulong messageDiscordId,
+        MemeIndexStatus status = MemeIndexStatus.Indexed,
         bool messageDeleted = false,
         ulong guildDiscordId = GuildDiscordId,
         DateTime? messageCreatedAtUtc = null)
@@ -243,18 +355,36 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
             FileSizeBytes = 1234,
             ContentType = "image/png",
             ContentHash = $"hash-{attachmentDiscordId}",
-            Status = MemeIndexStatus.Indexed,
-            DescriptionPl = descriptionPl,
-            DescriptionEn = "english description",
-            OcrText = ocrText,
-            Tags = tags,
-            ModelId = "google/gemini-3-flash-preview",
-            RawResponseJson = "{}",
-            IndexedAtUtc = DateTime.UtcNow
+            Status = status,
+            Error = status is MemeIndexStatus.Failed or MemeIndexStatus.Skipped ? "seeded by test" : null
         };
         _db.MemeIndex.Add(meme);
         await _db.SaveChangesAsync();
         return meme;
+    }
+
+    private async Task AddAnnotationAsync(
+        MemeIndexEntity meme,
+        string descriptionPl,
+        string ocrText,
+        string[] tags,
+        string modelId = DefaultModel,
+        DateTime? indexedAtUtc = null)
+    {
+        _db.MemeAnnotations.Add(new MemeAnnotationEntity
+        {
+            MemeIndexId = meme.Id,
+            AttachmentDiscordId = meme.AttachmentDiscordId,
+            ModelId = modelId,
+            PromptVersion = OpenRouterClient.PromptVersion,
+            IndexedAtUtc = indexedAtUtc ?? DateTime.UtcNow,
+            DescriptionPl = descriptionPl,
+            DescriptionEn = "english description",
+            OcrText = ocrText,
+            Tags = tags,
+            RawResponseJson = "{}"
+        });
+        await _db.SaveChangesAsync();
     }
 
     private DiscordDbContext NewContext()

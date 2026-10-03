@@ -63,8 +63,12 @@ The loose community metric: any message with an attachment or embed, in any chan
 _Avoid_: using bare "meme" for the searchable entity below.
 
 **Indexed meme**:
-One image attachment from a meme channel that has vision-model-generated metadata and is findable via meme search. The unit is the attachment, not the message — a message with three images yields three indexed memes.
+One image attachment from a meme channel that has at least one meme annotation and is findable via meme search. The unit is the attachment, not the message — a message with three images yields three indexed memes.
 _Avoid_: meme (collides with the stat), media message.
+
+**Meme annotation**:
+One writer's vision metadata for an indexed meme: at most one per attachment, model and prompt version. An indexed meme can have several, from different models; search finds it through whichever matches best.
+_Avoid_: index row, metadata row.
 
 **Meme channel**:
 A channel whose image attachments are in scope for meme indexing. A configurable set, seeded with #memes; not derived from channel name.

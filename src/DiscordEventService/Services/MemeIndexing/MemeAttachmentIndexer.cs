@@ -13,6 +13,7 @@ internal sealed class MemeIndexRunCounters
 {
     public int Indexed { get; set; }
     public int Deduped { get; set; }
+    public int AlreadyAnnotated { get; set; }
     public int Skipped { get; set; }
     public int Failed { get; set; }
     public int ModelCalls { get; set; }
@@ -30,6 +31,8 @@ internal sealed class MemeAttachmentIndexer(
     ILogger<MemeAttachmentIndexer> logger)
 {
     private const int PoisonErrorMaxLength = 500;
+
+    private readonly record struct AnnotationKey(string ModelId, string PromptVersion);
 
     public async Task<MemeIndexEntity> GetOrCreateRowAsync(
         DiscordDbContext db, MemeSampleItem item, CancellationToken cancellationToken)
@@ -65,6 +68,20 @@ internal sealed class MemeAttachmentIndexer(
         var memeOptions = memeIndexOptions.Value;
         var openRouter = openRouterOptions.Value;
 
+        // Idempotent per annotation key (#367): the configured writer's annotation is already
+        // there (an import, or a status row that never reached Indexed). Checked before any
+        // download or model call — a second INSERT of one key is a unique violation, not an update.
+        var existingKeys = await LoadAnnotationKeysAsync(db, row, cancellationToken);
+        var configuredKey = new AnnotationKey(openRouter.Model, OpenRouterClient.PromptVersion);
+        if (existingKeys.Contains(configuredKey))
+        {
+            MarkIndexed(row);
+            counters.AlreadyAnnotated++;
+            logger.LogDebug("Meme attachment {AttachmentId} already has the {Model} {PromptVersion} annotation",
+                row.AttachmentDiscordId, configuredKey.ModelId, configuredKey.PromptVersion);
+            return;
+        }
+
         // Discord metadata already carries the size — pre-skip oversized files
         // before spending a download. Deterministic, so no attempt is charged.
         // (0 = unknown size from pre-#221 data; those still go through the
@@ -85,7 +102,9 @@ internal sealed class MemeAttachmentIndexer(
             return;
         }
 
-        row.AttemptCount++;
+        // An Indexed row is here only to gain one more annotation; it has no attempt budget.
+        if (row.Status != MemeIndexStatus.Indexed)
+            row.AttemptCount++;
 
         if (refreshOutcome == AttachmentUrlRefreshOutcome.Declined)
         {
@@ -115,7 +134,7 @@ internal sealed class MemeAttachmentIndexer(
         var contentHash = Convert.ToHexStringLower(SHA256.HashData(imageBytes));
         row.ContentHash = contentHash;
 
-        if (await TryDedupeByContentHashAsync(db, row, contentHash, counters, cancellationToken))
+        if (await TryDedupeByContentHashAsync(db, row, contentHash, existingKeys, configuredKey, counters, cancellationToken))
             return;
 
         var result = await openRouterClient.AnalyzeImageAsync(
@@ -125,7 +144,7 @@ internal sealed class MemeAttachmentIndexer(
         counters.CompletionTokens += result.Usage?.CompletionTokens ?? 0;
         counters.CostUsd += result.Usage?.CostUsd ?? 0;
 
-        ApplyAnalysisResult(row, result, openRouter.Model, counters);
+        ApplyAnalysisResult(db, row, result, openRouter, counters);
 
         await Task.Delay(TimeSpan.FromMilliseconds(openRouter.RequestDelayMs), cancellationToken);
     }
@@ -162,58 +181,146 @@ internal sealed class MemeAttachmentIndexer(
         }
     }
 
-    // Repost dedupe: same bytes already Indexed → copy its metadata, no
-    // model call. RawResponseJson stays null — provenance lives on the
-    // original row, found via the shared content_hash.
-    private async Task<bool> TryDedupeByContentHashAsync(
-        DiscordDbContext db, MemeIndexEntity row, string contentHash, MemeIndexRunCounters counters, CancellationToken cancellationToken)
+    // A row not saved yet cannot have annotations; skip the round-trip for it.
+    private static async Task<HashSet<AnnotationKey>> LoadAnnotationKeysAsync(
+        DiscordDbContext db, MemeIndexEntity row, CancellationToken cancellationToken)
     {
-        var original = await db.MemeIndex.AsNoTracking()
-            .Where(m => m.ContentHash == contentHash && m.Status == MemeIndexStatus.Indexed && m.Id != row.Id)
-            .Select(m => new { m.DescriptionPl, m.DescriptionEn, m.OcrText, m.Tags, m.Source, m.Template, m.ModelId })
+        if (db.Entry(row).State == EntityState.Added)
+            return [];
+
+        var keys = await db.MemeAnnotations.AsNoTracking()
+            .Where(a => a.MemeIndexId == row.Id)
+            .Select(a => new { a.ModelId, a.PromptVersion })
+            .ToListAsync(cancellationToken);
+        return [.. keys.Select(k => new AnnotationKey(k.ModelId, k.PromptVersion))];
+    }
+
+    // Repost dedupe: the same bytes are already Indexed on another attachment → copy every
+    // annotation of the oldest such row that this one lacks, no model call. One-shot: annotations
+    // the original gains later do not follow. Copies carry no raw response — provenance stays
+    // on the original, found via the shared content_hash.
+    private async Task<bool> TryDedupeByContentHashAsync(
+        DiscordDbContext db,
+        MemeIndexEntity row,
+        string contentHash,
+        HashSet<AnnotationKey> existingKeys,
+        AnnotationKey configuredKey,
+        MemeIndexRunCounters counters,
+        CancellationToken cancellationToken)
+    {
+        // Oldest first: two Indexed rows with one hash can hold different annotation sets.
+        var originalId = await db.MemeIndex.AsNoTracking()
+            .Where(m => m.ContentHash == contentHash && m.Status == MemeIndexStatus.Indexed && m.Id != row.Id
+                        && m.Annotations.Any())
+            .OrderBy(m => m.FirstSeenUtc)
+            .ThenBy(m => m.Id)
+            .Select(m => (Guid?)m.Id)
             .FirstOrDefaultAsync(cancellationToken);
 
-        if (original is null) return false;
+        if (originalId is null) return false;
 
-        row.DescriptionPl = original.DescriptionPl;
-        row.DescriptionEn = original.DescriptionEn;
-        row.OcrText = original.OcrText;
-        row.Tags = original.Tags;
-        row.Source = original.Source;
-        row.Template = original.Template;
-        row.ModelId = original.ModelId;
-        row.RawResponseJson = null;
-        row.IndexedAtUtc = DateTime.UtcNow;
-        row.Status = MemeIndexStatus.Indexed;
-        row.Error = null;
+        var originals = await db.MemeAnnotations.AsNoTracking()
+            .Where(a => a.MemeIndexId == originalId)
+            .OrderBy(a => a.IndexedAtUtc)
+            .Select(a => new
+            {
+                a.ModelId,
+                a.PromptVersion,
+                a.ReasoningEffort,
+                a.DescriptionPl,
+                a.DescriptionEn,
+                a.OcrText,
+                a.Tags,
+                a.Source,
+                a.Template
+            })
+            .ToListAsync(cancellationToken);
+
+        var wasIndexed = row.Status == MemeIndexStatus.Indexed;
+        var copiedAtUtc = DateTime.UtcNow;
+        var copied = 0;
+        foreach (var original in originals)
+        {
+            if (!existingKeys.Add(new AnnotationKey(original.ModelId, original.PromptVersion)))
+                continue;
+
+            var metadata = new MemeMetadata
+            {
+                DescriptionPl = original.DescriptionPl,
+                DescriptionEn = original.DescriptionEn,
+                OcrText = original.OcrText,
+                Tags = original.Tags,
+                Source = original.Source,
+                Template = original.Template,
+            };
+            AddAnnotation(db, row, original.ModelId, original.PromptVersion, original.ReasoningEffort,
+                metadata, rawResponseJson: null, copiedAtUtc);
+            copied++;
+        }
+
+        // An already Indexed row is here for the configured writer's annotation (manual backfill).
+        // When the original lacks it too, only the model can supply it; the copies still save.
+        if (copied == 0 || (wasIndexed && !existingKeys.Contains(configuredKey)))
+            return false;
+
+        MarkIndexed(row);
         counters.Deduped++;
-        logger.LogDebug("Meme attachment {AttachmentId} deduped via content hash {ContentHash}",
-            row.AttachmentDiscordId, contentHash);
+        logger.LogDebug("Meme attachment {AttachmentId} deduped via content hash {ContentHash}: {Copied} annotations copied",
+            row.AttachmentDiscordId, contentHash, copied);
         return true;
     }
 
-    private void ApplyAnalysisResult(MemeIndexEntity row, MemeAnalysisResult result, string model, MemeIndexRunCounters counters)
+    // The one place an annotation is written: the model path and the repost copy both end here.
+    private static void AddAnnotation(
+        DiscordDbContext db,
+        MemeIndexEntity row,
+        string modelId,
+        string promptVersion,
+        string? reasoningEffort,
+        MemeMetadata metadata,
+        string? rawResponseJson,
+        DateTime indexedAtUtc) =>
+        db.MemeAnnotations.Add(new MemeAnnotationEntity
+        {
+            MemeIndex = row,
+            AttachmentDiscordId = row.AttachmentDiscordId,
+            ModelId = modelId,
+            PromptVersion = promptVersion,
+            ReasoningEffort = reasoningEffort,
+            IndexedAtUtc = indexedAtUtc,
+            DescriptionPl = metadata.DescriptionPl,
+            DescriptionEn = metadata.DescriptionEn,
+            OcrText = metadata.OcrText,
+            Tags = metadata.Tags,
+            Source = metadata.Source,
+            Template = metadata.Template,
+            RawResponseJson = rawResponseJson,
+        });
+
+    private static void MarkIndexed(MemeIndexEntity row)
+    {
+        row.Status = MemeIndexStatus.Indexed;
+        row.Error = null;
+    }
+
+    private void ApplyAnalysisResult(
+        DiscordDbContext db, MemeIndexEntity row, MemeAnalysisResult result, OpenRouterOptions openRouter, MemeIndexRunCounters counters)
     {
         switch (result.Outcome)
         {
             // `required` in System.Text.Json is presence-only: an explicit null passes deserialization
-            // but violates ck_meme_index_status at save time, which would poison the run (#311).
+            // but violates the NOT NULL metadata columns at save time, which would poison the run (#311).
             case MemeAnalysisOutcome.Success when result.Metadata is { DescriptionPl: null } or { DescriptionEn: null } or { OcrText: null } or { Tags: null }:
                 Fail(row, counters, "model returned null for a required metadata field");
                 break;
 
+            // The annotation and the status flip stay in one tracked unit: the caller's single
+            // SaveChanges is the only thing that keeps "Indexed has an annotation" true.
             case MemeAnalysisOutcome.Success:
-                row.DescriptionPl = result.Metadata!.DescriptionPl;
-                row.DescriptionEn = result.Metadata.DescriptionEn;
-                row.OcrText = result.Metadata.OcrText;
-                row.Tags = result.Metadata.Tags;
-                row.Source = result.Metadata.Source;
-                row.Template = result.Metadata.Template;
-                row.ModelId = model;
-                row.RawResponseJson = result.RawContent;
-                row.IndexedAtUtc = DateTime.UtcNow;
-                row.Status = MemeIndexStatus.Indexed;
-                row.Error = null;
+                AddAnnotation(db, row, openRouter.Model, OpenRouterClient.PromptVersion,
+                    string.IsNullOrEmpty(openRouter.ReasoningEffort) ? null : openRouter.ReasoningEffort,
+                    result.Metadata!, result.RawContent, DateTime.UtcNow);
+                MarkIndexed(row);
                 counters.Indexed++;
                 break;
 
@@ -232,10 +339,25 @@ internal sealed class MemeAttachmentIndexer(
 
     private void Skip(MemeIndexEntity row, MemeIndexRunCounters counters, string reason)
     {
+        counters.Skipped++;
+        if (StaysIndexed(row, reason))
+            return;
+
         row.Status = MemeIndexStatus.Skipped;
         row.Error = reason;
-        counters.Skipped++;
         logger.LogWarning("Meme attachment {AttachmentId} skipped: {Reason}", row.AttachmentDiscordId, reason);
+    }
+
+    // An Indexed row is revisited only to gain one more annotation (manual backfill, #367).
+    // People already find it through the annotations it has: a failed extra never takes it out of search.
+    private bool StaysIndexed(MemeIndexEntity row, string outcome)
+    {
+        if (row.Status != MemeIndexStatus.Indexed)
+            return false;
+
+        logger.LogWarning("Meme attachment {AttachmentId} stays Indexed without a new annotation: {Outcome}",
+            row.AttachmentDiscordId, outcome);
+        return true;
     }
 
     // Transient failures (429/5xx, transport, download hiccups) must not burn one of the sweep's
@@ -244,7 +366,9 @@ internal sealed class MemeAttachmentIndexer(
     // next sweep retries it.
     private void FailTransient(MemeIndexEntity row, MemeIndexRunCounters counters, string error)
     {
-        row.AttemptCount--;
+        // Mirrors the increment: an Indexed row was never charged.
+        if (row.Status != MemeIndexStatus.Indexed)
+            row.AttemptCount--;
         Fail(row, counters, error);
     }
 
@@ -274,9 +398,12 @@ internal sealed class MemeAttachmentIndexer(
 
     private void Fail(MemeIndexEntity row, MemeIndexRunCounters counters, string error)
     {
+        counters.Failed++;
+        if (StaysIndexed(row, error))
+            return;
+
         row.Status = MemeIndexStatus.Failed;
         row.Error = error;
-        counters.Failed++;
         logger.LogWarning("Meme attachment {AttachmentId} failed (attempt {Attempt}): {Error}",
             row.AttachmentDiscordId, row.AttemptCount, error);
     }

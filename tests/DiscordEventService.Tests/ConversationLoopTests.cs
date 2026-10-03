@@ -36,6 +36,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         _db = NewContext();
         await _db.Database.MigrateAsync();
 
+        await _db.MemeAnnotations.ExecuteDeleteAsync();
         await _db.MemeIndex.ExecuteDeleteAsync();
         await _db.Messages.ExecuteDeleteAsync();
         await _db.Channels.ExecuteDeleteAsync();
@@ -284,13 +285,21 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             ContentType = "image/png",
             ContentHash = "hash-41",
             Status = MemeIndexStatus.Indexed,
-            DescriptionPl = "Unikatowy żółw na deskorolce",
-            DescriptionEn = "A unique turtle on a skateboard",
-            OcrText = "",
-            Tags = ["żółw"],
-            ModelId = "google/gemini-3-flash-preview",
-            RawResponseJson = "{}",
-            IndexedAtUtc = DateTime.UtcNow,
+            Annotations =
+            [
+                new MemeAnnotationEntity
+                {
+                    AttachmentDiscordId = 41UL,
+                    ModelId = "google/gemini-3-flash-preview",
+                    PromptVersion = OpenRouterClient.PromptVersion,
+                    IndexedAtUtc = DateTime.UtcNow,
+                    DescriptionPl = "Unikatowy żółw na deskorolce",
+                    DescriptionEn = "A unique turtle on a skateboard",
+                    OcrText = "",
+                    Tags = ["żółw"],
+                    RawResponseJson = "{}",
+                },
+            ],
         });
         await _db.SaveChangesAsync();
     }

@@ -20,11 +20,15 @@ internal sealed class MemeIndexingJob(
 
     protected override BackfillType BackfillType => BackfillType.MemeIndex;
 
+    // The manual backfill also revisits Indexed attachments that lack the configured writer's
+    // annotation (#367): that is how a second model reaches the corpus, on a human trigger.
     public Task ExecuteAsync(ulong guildId, CancellationToken cancellationToken)
-        => RunAsync(guildId, maxFailedAttempts: null, cancellationToken);
+        => RunAsync(guildId, maxFailedAttempts: null, revisitIndexed: true, cancellationToken);
 
+    // Status only, like the live hook: a model or prompt change must never make the weekly
+    // sweep pay for the whole corpus unasked.
     public Task ExecuteSweepAsync(ulong guildId, CancellationToken cancellationToken)
-        => RunAsync(guildId, SweepMaxFailedAttempts, cancellationToken);
+        => RunAsync(guildId, SweepMaxFailedAttempts, revisitIndexed: false, cancellationToken);
 
     public async Task IndexMessageAsync(ulong guildId, ulong messageDiscordId, CancellationToken cancellationToken)
     {
@@ -76,12 +80,12 @@ internal sealed class MemeIndexingJob(
 
         logger.LogInformation(
             "Live meme indexing for message {MessageId} in guild {GuildId}: {Indexed} indexed, {Deduped} deduped, " +
-            "{Skipped} skipped, {Failed} failed; {ModelCalls} model calls, cost {CostUsd:F4} USD",
-            messageDiscordId, guildId, counters.Indexed, counters.Deduped, counters.Skipped, counters.Failed,
-            counters.ModelCalls, counters.CostUsd);
+            "{AlreadyAnnotated} already annotated, {Skipped} skipped, {Failed} failed; {ModelCalls} model calls, cost {CostUsd:F4} USD",
+            messageDiscordId, guildId, counters.Indexed, counters.Deduped, counters.AlreadyAnnotated, counters.Skipped,
+            counters.Failed, counters.ModelCalls, counters.CostUsd);
     }
 
-    private Task RunAsync(ulong guildId, int? maxFailedAttempts, CancellationToken cancellationToken)
+    private Task RunAsync(ulong guildId, int? maxFailedAttempts, bool revisitIndexed, CancellationToken cancellationToken)
         => executor.RunAsync(BackfillType, guildId, async ctx =>
         {
             var memeOptions = ctx.Services.GetRequiredService<IOptions<MemeIndexOptions>>().Value;
@@ -99,7 +103,8 @@ internal sealed class MemeIndexingJob(
             var indexer = ctx.Services.GetRequiredService<MemeAttachmentIndexer>();
 
             var allPending = await CollectPendingAsync(
-                ctx.Db, sampleService, guildId, ctx.Checkpoint, maxFailedAttempts, cancellationToken);
+                ctx.Db, sampleService, guildId, ctx.Checkpoint, maxFailedAttempts,
+                revisitIndexed ? openRouterOptions.Model : null, cancellationToken);
 
             var cap = memeOptions.MaxImagesPerRun;
             var capped = allPending.Count > cap;
@@ -127,8 +132,9 @@ internal sealed class MemeIndexingJob(
             }
 
             logger.LogInformation(
-                "Meme indexing starting for guild {GuildId}: {Count} attachments, model {Model}, reasoning effort {ReasoningEffort}",
-                guildId, pending.Count, openRouterOptions.Model, openRouterOptions.ReasoningEffort);
+                "Meme indexing starting for guild {GuildId}: {Count} attachments, model {Model}, " +
+                "prompt version {PromptVersion}, reasoning effort {ReasoningEffort}",
+                guildId, pending.Count, openRouterOptions.Model, OpenRouterClient.PromptVersion, openRouterOptions.ReasoningEffort);
 
             // When the cap slices a multi-attachment message in half, the last capped
             // item is NOT the end of its message — the cursor must not advance past it.
@@ -140,9 +146,10 @@ internal sealed class MemeIndexingJob(
             await ProcessPendingBatchesAsync(ctx, indexer, urlRefreshService, pending, messageSplitByCap, counters, cancellationToken);
 
             logger.LogInformation(
-                "Meme indexing finished for guild {GuildId}: {Indexed} indexed, {Deduped} deduped, {Skipped} skipped, {Failed} failed; " +
+                "Meme indexing finished for guild {GuildId}: {Indexed} indexed, {Deduped} deduped, " +
+                "{AlreadyAnnotated} already annotated, {Skipped} skipped, {Failed} failed; " +
                 "{ModelCalls} model calls, tokens {PromptTokens}/{CompletionTokens}, cost {CostUsd:F4} USD{CapNote}",
-                guildId, counters.Indexed, counters.Deduped, counters.Skipped, counters.Failed,
+                guildId, counters.Indexed, counters.Deduped, counters.AlreadyAnnotated, counters.Skipped, counters.Failed,
                 counters.ModelCalls, counters.PromptTokens, counters.CompletionTokens, counters.CostUsd,
                 capped ? " (cap reached — re-trigger to continue)" : "");
 
@@ -152,14 +159,16 @@ internal sealed class MemeIndexingJob(
     // All image attachments in this guild's meme channels that still need work:
     // no row yet, or a Failed row (retried, optionally attempt-capped for the
     // sweep). Terminal rows (Indexed/Skipped) are skipped — this is what makes
-    // re-runs idempotent. Deterministic order is what makes the message-id
-    // resume cursor valid across runs.
+    // re-runs idempotent. With revisitIndexedForModel set, an Indexed row is terminal
+    // only once it has that model's annotation for the current prompt version (#367).
+    // Deterministic order is what makes the message-id resume cursor valid across runs.
     private static async Task<List<MemeSampleItem>> CollectPendingAsync(
         DiscordDbContext db,
         MemeSampleService sampleService,
         ulong guildId,
         BackfillCheckpointEntity checkpoint,
         int? maxFailedAttempts,
+        string? revisitIndexedForModel,
         CancellationToken cancellationToken)
     {
         var candidates = (await sampleService.GetCandidatesAsync(cancellationToken))
@@ -172,6 +181,15 @@ internal sealed class MemeIndexingJob(
             .Where(m => m.GuildDiscordId == guildId)
             .Select(m => new { m.AttachmentDiscordId, m.Status, m.AttemptCount })
             .ToDictionaryAsync(m => m.AttachmentDiscordId, m => (m.Status, m.AttemptCount), cancellationToken);
+
+        HashSet<ulong> annotatedByConfiguredWriter = revisitIndexedForModel is null
+            ? []
+            : [.. await db.MemeAnnotations
+                .Where(a => a.MemeIndex.GuildDiscordId == guildId
+                            && a.ModelId == revisitIndexedForModel
+                            && a.PromptVersion == OpenRouterClient.PromptVersion)
+                .Select(a => a.AttachmentDiscordId)
+                .ToListAsync(cancellationToken)];
 
         // Only Indexed/Skipped are terminal. Failed retries by design; Pending
         // means a prior run persisted the row but never reached a terminal
@@ -187,6 +205,8 @@ internal sealed class MemeIndexingJob(
                     MemeIndexStatus.Pending => true,
                     MemeIndexStatus.Failed => maxFailedAttempts is not { } capAttempts
                         || row.AttemptCount < capAttempts,
+                    MemeIndexStatus.Indexed => revisitIndexedForModel is not null
+                        && !annotatedByConfiguredWriter.Contains(c.AttachmentDiscordId),
                     _ => false
                 };
             })
@@ -287,11 +307,12 @@ internal sealed class MemeIndexingJob(
         await ctx.Db.Entry(ctx.Checkpoint).ReloadAsync(cancellationToken);
 
         var row = await indexer.GetOrCreateRowAsync(ctx.Db, item, cancellationToken);
-        // The reload returns whatever is persisted now, which may be a concurrent run's terminal row —
-        // exactly what a unique violation on attachment_discord_id means. Never downgrade its result.
+        // The reload returns whatever is persisted now. A terminal row here is a concurrent run's
+        // result (a unique violation on attachment_discord_id or on the annotation key), or an
+        // Indexed row whose extra annotation was rejected (#367). Never downgrade it.
         if (row.Status is MemeIndexStatus.Indexed or MemeIndexStatus.Skipped)
             logger.LogInformation(
-                "Meme attachment {AttachmentId} already {Status} by a concurrent run; leaving it untouched",
+                "Meme attachment {AttachmentId} is {Status} after the failed save; leaving it untouched",
                 item.AttachmentDiscordId, row.Status);
         else
             indexer.FailRejectedSave(row, counters, ex);

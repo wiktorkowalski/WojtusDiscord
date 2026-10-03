@@ -2,6 +2,7 @@ using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Jobs;
+using DiscordEventService.Services.MemeIndexing;
 using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -57,6 +58,7 @@ internal static class MemeIndexEndpoints
             HangfireJobId = jobId,
             GuildId = guildId,
             Model = openRouterOptions.Value.Model,
+            PromptVersion = OpenRouterClient.PromptVersion,
             ReasoningEffort = openRouterOptions.Value.ReasoningEffort,
             MaxImagesPerRun = memeIndexOptions.Value.MaxImagesPerRun,
         });
@@ -85,6 +87,18 @@ internal static class MemeIndexEndpoints
             .Select(g => new { g.Key, Count = g.Count() })
             .ToDictionaryAsync(g => g.Key, g => g.Count);
 
+        var annotations = await db.MemeAnnotations
+            .GroupBy(a => new { a.ModelId, a.PromptVersion })
+            .Select(g => new MemeAnnotationCountDto
+            {
+                ModelId = g.Key.ModelId,
+                PromptVersion = g.Key.PromptVersion,
+                Count = g.Count(),
+            })
+            .OrderBy(a => a.ModelId)
+            .ThenBy(a => a.PromptVersion)
+            .ToListAsync();
+
         return Results.Ok(new MemeIndexStatusResponse
         {
             Checkpoints = checkpoints,
@@ -94,7 +108,8 @@ internal static class MemeIndexEndpoints
                 Indexed = countsByStatus.GetValueOrDefault(MemeIndexStatus.Indexed),
                 Failed = countsByStatus.GetValueOrDefault(MemeIndexStatus.Failed),
                 Skipped = countsByStatus.GetValueOrDefault(MemeIndexStatus.Skipped),
-            }
+            },
+            Annotations = annotations,
         });
     }
 }
@@ -104,6 +119,7 @@ internal sealed record MemeIndexStartResponse
     public required string HangfireJobId { get; init; }
     public required ulong GuildId { get; init; }
     public required string Model { get; init; }
+    public required string PromptVersion { get; init; }
     // null = no `reasoning` field is sent; the model runs at its own default effort.
     public string? ReasoningEffort { get; init; }
     public required int MaxImagesPerRun { get; init; }
@@ -113,6 +129,15 @@ internal sealed record MemeIndexStatusResponse
 {
     public required List<MemeIndexCheckpointDto> Checkpoints { get; init; }
     public required MemeIndexRowCounts Rows { get; init; }
+    // How far each writer got: one entry per (model, prompt version) that has annotations.
+    public required List<MemeAnnotationCountDto> Annotations { get; init; }
+}
+
+internal sealed record MemeAnnotationCountDto
+{
+    public required string ModelId { get; init; }
+    public required string PromptVersion { get; init; }
+    public required int Count { get; init; }
 }
 
 internal sealed record MemeIndexRowCounts
