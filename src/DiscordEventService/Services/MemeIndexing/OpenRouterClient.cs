@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DiscordEventService.Configuration;
+using DiscordEventService.Data.Entities.Core;
 using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.MemeIndexing;
@@ -17,9 +18,10 @@ internal sealed class OpenRouterClient(
 
     // Stored on every annotation as half of its key. Bump it by hand with ANY change to
     // SystemPrompt or ResponseSchema — an unchanged version makes new output look like old output.
-    public const string PromptVersion = "v2";
+    public const string PromptVersion = "v4";
 
-    // Wording is benchmark-measured (#223): template fill 40→52; a stricter template definition scored lower.
+    // v4 (#368) = v2 plus the schema v2 fields. v2's wording is benchmark-measured (#223): template
+    // fill 40→52; v3's stricter template definition scored lower, so it is not reused here.
     private const string SystemPrompt =
         """
         You analyze meme images from a Polish Discord community and produce search metadata.
@@ -28,9 +30,14 @@ internal sealed class OpenRouterClient(
         - description_pl: 1-3 zdania po polsku — co przedstawia mem i o czym jest.
         - description_en: 1-3 sentences in English describing what the meme shows and what it is about.
         - ocr_text: ALL text visible in the image, verbatim, in its original language, preserving line breaks. Empty string if there is no text.
-        - tags: 10-20 lowercase keywords mixing BOTH Polish and English: topics, objects, people, characters, shows, games, emotions/tone, recognizable technologies/brands, meme template name. Duplicate the same concept in both languages (e.g. both "kot" and "cat"). Name a real person only when you clearly recognize them or their name is visible; never guess an identity from appearance alone — describe the person instead.
-        - source: the platform whose watermark or UI is visible in the image (e.g. reddit, twitter, x, facebook, instagram, tiktok, kwejk, jbzd, 9gag, demotywatory, wykop), or null if none is visible.
-        - template: the canonical, most commonly used name of the meme template or recurring meme format, as people would search for it. Covers international templates (e.g. "drake", "distracted boyfriend", "doge", "this is fine", "gigachad", "wojak", "stonks") AND Polish ones (e.g. "paski tvp", "cenzopapa", "nosacz sundajski", "świat według kiepskich", "kononowicz", "typowy polak"). Plain screenshots of posts or chats are not templates. null only when no recognizable template or recurring format is present.
+        - tags: 10-20 lowercase keywords mixing BOTH Polish and English: topics, objects, people, characters, shows, games, emotions/tone, recognizable technologies/brands. Duplicate the same concept in both languages (e.g. both "kot" and "cat").
+        - image_kind: exactly one of: template_meme (a known meme template or recurring format), screenshot_post_or_chat (a screenshot of a post, comment or chat), comic (a drawn comic or multi-panel cartoon), photo_with_caption (a photo with caption text added), cutout_face_or_emote (a cut-out face, sticker or emote with little or no context, usually of a private person), edited_photo (a photoshopped or otherwise edited photo), video_frame (a frame from a film, show, stream or video), other.
+        - templates: the canonical, most commonly used names of the meme templates or recurring meme formats in the image, as people would search for them. Usually one; several when the image fits more than one. Covers international templates (e.g. "drake", "distracted boyfriend", "doge", "this is fine", "gigachad", "wojak", "stonks") AND Polish ones (e.g. "paski tvp", "cenzopapa", "nosacz sundajski", "świat według kiepskich", "kononowicz", "typowy polak"). A description of the scene is not a template. Plain screenshots of posts or chats are not templates. Empty list when no recognizable template or recurring format is present.
+        - people: real people shown or named in the image. Add a person ONLY when their name is visible in the image (evidence "name_visible") or they are a widely recognized public figure (evidence "widely_recognized"). Never guess the identity of a private person from appearance alone — describe the person instead. For image_kind cutout_face_or_emote this list MUST be empty and no other field may name the person.
+        - search_phrases: 3-6 short phrases in Polish or English that a person would actually type to find this exact meme.
+        - franchise: the game, show, film or other franchise the image comes from or refers to, or null if none.
+        - source: the platform whose watermark or UI is visible in the image. Use "other" for a visible platform that is not on the list, and "none" when no platform is visible.
+        - language: the language of the text in the image: pl, en, mixed, or none when there is no text.
         """;
 
     private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
@@ -38,8 +45,12 @@ internal sealed class OpenRouterClient(
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
+    private static readonly object StringArraySchema = new { type = "array", items = new { type = "string" } };
+
     // strict json_schema makes the model return the MemeMetadata contract directly (no
     // markdown-fence scraping): every property required, nullability expressed in types.
+    // Kept to what every provider's strict mode takes: no minItems/maxItems, and no null inside
+    // an enum — "no source" is the string "none" (#223 research).
     private static readonly object ResponseSchema = new
     {
         type = "json_schema",
@@ -51,15 +62,38 @@ internal sealed class OpenRouterClient(
             {
                 type = "object",
                 additionalProperties = false,
-                required = new[] { "description_pl", "description_en", "ocr_text", "tags", "source", "template" },
+                required = new[]
+                {
+                    "description_pl", "description_en", "ocr_text", "tags", "image_kind", "templates",
+                    "people", "search_phrases", "franchise", "source", "language",
+                },
                 properties = new
                 {
                     description_pl = new { type = "string" },
                     description_en = new { type = "string" },
                     ocr_text = new { type = "string" },
-                    tags = new { type = "array", items = new { type = "string" } },
-                    source = new { type = new[] { "string", "null" } },
-                    template = new { type = new[] { "string", "null" } },
+                    tags = StringArraySchema,
+                    image_kind = new { type = "string", @enum = MemeJsonNames.Of<MemeImageKind>() },
+                    templates = StringArraySchema,
+                    people = new
+                    {
+                        type = "array",
+                        items = new
+                        {
+                            type = "object",
+                            additionalProperties = false,
+                            required = new[] { "name", "evidence" },
+                            properties = new
+                            {
+                                name = new { type = "string" },
+                                evidence = new { type = "string", @enum = MemeJsonNames.Of<MemePersonEvidence>() },
+                            },
+                        },
+                    },
+                    search_phrases = StringArraySchema,
+                    franchise = new { type = new[] { "string", "null" } },
+                    source = new { type = "string", @enum = (string[])[.. MemeSources.Known, MemeSources.None] },
+                    language = new { type = "string", @enum = MemeJsonNames.Of<MemeLanguage>() },
                 },
             },
         },

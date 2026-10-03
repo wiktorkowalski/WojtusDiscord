@@ -3,6 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
@@ -139,6 +140,105 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
 
         Assert.Equal(2, _http.ModelRequests.Count);
         Assert.All(_http.ModelRequests, request => Assert.Equal((ConfiguredModel, reasoningEffort), request));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FullRun_StoresEverySchemaV2FieldOfTheModelOutput()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        var annotation = await verify.MemeAnnotations.SingleAsync();
+        Assert.Equal(OpenRouterClient.PromptVersion, annotation.PromptVersion);
+        StoredMemeOutput.AssertDefaultOutput(annotation);
+        StoredMemeOutput.AssertVerbatimRawResponse(annotation, _http.MetadataJsonFor(Png(1)));
+    }
+
+    // "none" is the model's word for no platform. The column holds NULL, and the check
+    // constraint would refuse the word.
+    [Fact]
+    public async Task ExecuteAsync_SourceNone_IsStoredAsNull()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.Overrides.Add((Png(1), "source", "none"));
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        Assert.Equal(MemeIndexStatus.Indexed, (await verify.MemeIndex.SingleAsync()).Status);
+        Assert.Null((await verify.MemeAnnotations.SingleAsync()).Source);
+    }
+
+    // The acceptance criterion of #368, through the backfill writer.
+    [Fact]
+    public async Task ExecuteAsync_CutoutThatNamesAPerson_IsStoredWithoutThePerson()
+    {
+        AddMessage(1001UL, Attachment(11UL, "cutout.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.CutoutFor.Add(Png(1));
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        Assert.Equal(MemeIndexStatus.Indexed, (await verify.MemeIndex.SingleAsync()).Status);
+        StoredMemeOutput.AssertCutoutWithoutThePerson(await verify.MemeAnnotations.SingleAsync());
+    }
+
+    // wojtus_query reads every table, the raw column too.
+    [Fact]
+    public async Task ExecuteAsync_CutoutThatNamesAPerson_StoresARawResponseWithoutTheName()
+    {
+        AddMessage(1001UL, Attachment(11UL, "cutout.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.CutoutFor.Add(Png(1));
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        StoredMemeOutput.AssertRawResponseWithoutTheName(await verify.MemeAnnotations.SingleAsync());
+    }
+
+    // The control: the same output, only the image kind differs. The rule is about cut-outs, not about people.
+    [Fact]
+    public async Task ExecuteAsync_NamedPersonOnAnotherImageKind_KeepsThePersonTheTagsAndTheVerbatimRawResponse()
+    {
+        AddMessage(1001UL, Attachment(11UL, "photo.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.NamedPersonFor.Add(Png(1));
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        var annotation = await verify.MemeAnnotations.SingleAsync();
+        StoredMemeOutput.AssertNamedPersonKept(annotation);
+        StoredMemeOutput.AssertVerbatimRawResponse(annotation, _http.MetadataJsonFor(Png(1)));
+    }
+
+    // Nothing was dropped, so the provenance stays the model's own output.
+    [Fact]
+    public async Task ExecuteAsync_CutoutWithoutPeople_KeepsTheVerbatimRawResponse()
+    {
+        AddMessage(1001UL, Attachment(11UL, "cutout.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.CutoutFor.Add(Png(1));
+        _http.Overrides.Add((Png(1), "people", new JsonArray()));
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        var annotation = await verify.MemeAnnotations.SingleAsync();
+        Assert.Equal(MemeImageKind.CutoutFaceOrEmote, annotation.ImageKind);
+        StoredMemeOutput.AssertVerbatimRawResponse(annotation, _http.MetadataJsonFor(Png(1)));
     }
 
     [Fact]
@@ -332,6 +432,80 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
             Assert.True(c.IndexedAtUtc > originalIndexedAtUtc.AddDays(29));
         });
         Assert.Equal(2, await verify.MemeAnnotations.CountAsync(a => a.AttachmentDiscordId == 11UL && a.RawResponseJson != null));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SameBytesTwice_CopyCarriesTheSchemaV2FieldsOfTheOriginal()
+    {
+        AddMessage(1001UL, Attachment(11UL, "original.png"));
+        AddMessage(1002UL, Attachment(12UL, "repost.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(7));
+        _http.SetImage(12UL, Png(7));
+
+        await RunJobAsync();
+
+        Assert.Equal(1, _http.ModelCalls);
+        await using var verify = NewContext();
+        var copy = await verify.MemeAnnotations.SingleAsync(a => a.AttachmentDiscordId == 12UL);
+        StoredMemeOutput.AssertDefaultOutput(copy);
+        Assert.Null(copy.RawResponseJson);
+    }
+
+    // image_kind and language of an annotation written before schema v2 are unknown. A copy must
+    // not turn that into TemplateMeme / Pl, the enums' zero values.
+    [Fact]
+    public async Task ExecuteSweepAsync_RepostOfAnnotationWrittenBeforeSchemaV2_KeepsImageKindAndLanguageNull()
+    {
+        AddMessage(1001UL, Attachment(11UL, "original.png"));
+        AddMessage(1002UL, Attachment(12UL, "repost.png"));
+        await _db.SaveChangesAsync();
+        Annotate(SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, contentHash: HashOf(Png(7))), "model/a", "legacy");
+        await _db.SaveChangesAsync();
+        _http.SetImage(12UL, Png(7));
+
+        await RunSweepAsync();
+
+        Assert.Equal(0, _http.ModelCalls);
+        await using var verify = NewContext();
+        var copy = await verify.MemeAnnotations.SingleAsync(a => a.AttachmentDiscordId == 12UL);
+        Assert.Null(copy.ImageKind);
+        Assert.Null(copy.Language);
+        Assert.Null(copy.Franchise);
+        Assert.Null(copy.Source);
+        Assert.Empty(copy.Templates);
+        Assert.Empty(copy.SearchPhrases);
+        Assert.Empty(copy.PeopleNames);
+        Assert.Equal("[]", copy.People);
+    }
+
+    // The original comes from a writer without the rule (an import, an older build). The copy is
+    // a new write, so the rule holds for it.
+    [Fact]
+    public async Task ExecuteSweepAsync_RepostOfCutoutThatStillNamesAPerson_IsCopiedWithoutThePerson()
+    {
+        AddMessage(1001UL, Attachment(11UL, "original.png"));
+        AddMessage(1002UL, Attachment(12UL, "repost.png"));
+        await _db.SaveChangesAsync();
+        Annotate(SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, contentHash: HashOf(Png(7))), "model/a", configure: a =>
+        {
+            a.ImageKind = MemeImageKind.CutoutFaceOrEmote;
+            a.People = $$"""[{"name": "{{FakeMemeHttpHandler.PersonName}}", "evidence": "widely_recognized"}]""";
+            a.PeopleNames = [FakeMemeHttpHandler.PersonName];
+            a.Tags = [.. FakeMemeHttpHandler.NameTags, .. FakeMemeHttpHandler.NameFreeTags];
+            a.Templates = [FakeMemeHttpHandler.PersonName, .. FakeMemeHttpHandler.NameFreeTemplates];
+            a.SearchPhrases = ["kowalski emotka", .. FakeMemeHttpHandler.NameFreeSearchPhrases];
+        });
+        await _db.SaveChangesAsync();
+        _http.SetImage(12UL, Png(7));
+
+        await RunSweepAsync();
+
+        Assert.Equal(0, _http.ModelCalls);
+        await using var verify = NewContext();
+        var copy = await verify.MemeAnnotations.SingleAsync(a => a.AttachmentDiscordId == 12UL);
+        StoredMemeOutput.AssertCutoutWithoutThePerson(copy);
+        Assert.Null(copy.RawResponseJson);
     }
 
     [Fact]
@@ -599,27 +773,62 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal(1002UL, checkpoint.LastProcessedId);
     }
 
-    [Fact]
-    public async Task ExecuteAsync_NullRequiredMetadataField_LandsFailedWithoutPoisoningTheRun()
+    // `required` in System.Text.Json is presence-only, so every one of these parses. Without the
+    // guard the null reaches a NOT NULL column or the cut-out rule and takes the whole save down.
+    [Theory]
+    [InlineData("description_pl", "null")]
+    [InlineData("description_en", "null")]
+    [InlineData("ocr_text", "null")]
+    [InlineData("tags", "null")]
+    [InlineData("tags", """["test", null]""")]
+    [InlineData("image_kind", "null")]
+    [InlineData("templates", "null")]
+    [InlineData("templates", "[null]")]
+    [InlineData("people", "null")]
+    [InlineData("people", "[null]")]
+    [InlineData("people", """[{"name": null, "evidence": "name_visible"}]""")]
+    [InlineData("search_phrases", "null")]
+    [InlineData("search_phrases", "[null]")]
+    [InlineData("language", "null")]
+    public async Task ExecuteAsync_NullRequiredMetadataField_LandsFailedWithoutPoisoningTheRun(string member, string valueJson)
     {
-        AddMessage(1001UL, Attachment(11UL, "null-description.png"));
+        AddMessage(1001UL, Attachment(11UL, "null-field.png"));
         AddMessage(1002UL, Attachment(12UL, "fine.png"));
         await _db.SaveChangesAsync();
         _http.SetImage(11UL, Png(1));
         _http.SetImage(12UL, Png(2));
-        _http.NullDescriptionFor.Add(Png(1));
+        _http.Overrides.Add((Png(1), member, JsonNode.Parse(valueJson)));
 
         await RunJobAsync();
 
         await using var verify = NewContext();
         var byId = await verify.MemeIndex.ToDictionaryAsync(m => m.AttachmentDiscordId);
         Assert.Equal(MemeIndexStatus.Failed, byId[11UL].Status);
-        Assert.Contains("null", byId[11UL].Error);
-        Assert.DoesNotContain("poisoned", byId[11UL].Error);
+        Assert.Equal("model returned null for a required metadata field", byId[11UL].Error);
         Assert.Equal(1, byId[11UL].AttemptCount);
         Assert.Equal(MemeIndexStatus.Indexed, byId[12UL].Status);
+        Assert.Equal([12UL], await verify.MemeAnnotations.Select(a => a.AttachmentDiscordId).ToListAsync());
         var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
         Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
+    }
+
+    // franchise and source are the two members the contract lets be null.
+    [Theory]
+    [InlineData("franchise")]
+    [InlineData("source")]
+    public async Task ExecuteAsync_NullFranchiseOrSource_IsIndexedWithANullColumn(string member)
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.Overrides.Add((Png(1), member, null));
+
+        await RunJobAsync();
+
+        await using var verify = NewContext();
+        Assert.Equal(MemeIndexStatus.Indexed, (await verify.MemeIndex.SingleAsync()).Status);
+        var annotation = await verify.MemeAnnotations.SingleAsync();
+        Assert.Null(member == "franchise" ? annotation.Franchise : annotation.Source);
     }
 
     [Fact]
@@ -963,8 +1172,10 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         string promptVersion = OpenRouterClient.PromptVersion,
         string descriptionPl = "Opis z seeda",
         string? reasoningEffort = null,
-        DateTime? indexedAtUtc = null) =>
-        row.Annotations.Add(new MemeAnnotationEntity
+        DateTime? indexedAtUtc = null,
+        Action<MemeAnnotationEntity>? configure = null)
+    {
+        var annotation = new MemeAnnotationEntity
         {
             AttachmentDiscordId = row.AttachmentDiscordId,
             ModelId = modelId,
@@ -976,7 +1187,10 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
             OcrText = "",
             Tags = ["seed"],
             RawResponseJson = "{}"
-        });
+        };
+        configure?.Invoke(annotation);
+        row.Annotations.Add(annotation);
+    }
 
     private static string HashOf(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
 
@@ -1000,6 +1214,14 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
 
 internal sealed class FakeMemeHttpHandler : HttpMessageHandler
 {
+    // The person the model names for CutoutFor / NamedPersonFor: in people, in NameTags, in one
+    // template and in one search phrase. Never in the descriptions or the OCR text.
+    public const string PersonName = "Jan Kowalski";
+    public static readonly string[] NameTags = ["jan kowalski", "kowalski", "jan_kowalski"];
+    public static readonly string[] NameFreeTags = ["emotka", "twarz"];
+    public static readonly string[] NameFreeTemplates = ["wojak"];
+    public static readonly string[] NameFreeSearchPhrases = ["śmieszna mina"];
+
     private readonly Dictionary<ulong, byte[]> _imagesByAttachment = [];
 
     public HashSet<ulong> DeadAttachments { get; } = [];
@@ -1007,8 +1229,12 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
     public List<byte[]> TransientErrorFor { get; } = [];
     // Valid JSON, but Postgres rejects U+0000 in text columns — the save throws (#311).
     public List<byte[]> NulOcrFor { get; } = [];
-    // Passes System.Text.Json's presence-only `required`, violates the NOT NULL metadata columns (#311).
-    public List<byte[]> NullDescriptionFor { get; } = [];
+    // A cut-out that names PersonName all the same — the output the cut-out rule exists for (#368).
+    public List<byte[]> CutoutFor { get; } = [];
+    // The same output on an image kind the rule does not cover.
+    public List<byte[]> NamedPersonFor { get; } = [];
+    // Replaces one member of the output for one image: a null, an empty list, another source.
+    public List<(byte[] Image, string Member, JsonNode? Value)> Overrides { get; } = [];
     // Runs mid model call — after the job added its row, before it saves (#311 concurrent-run race).
     public Func<Task>? DuringModelCall { get; set; }
     public int RefreshFailuresRemaining { get; set; }
@@ -1078,21 +1304,40 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
             return Json(HttpStatusCode.OK,
                 """{"choices":[{"message":{"content":null,"refusal":"safety"},"finish_reason":"stop"}]}""");
 
-        var metadata = JsonSerializer.Serialize(new
-        {
-            description_pl = NullDescriptionFor.Any(b => b.AsSpan().SequenceEqual(imageBytes)) ? null : $"Opis obrazka {imageBytes[^1]}",
-            description_en = $"Description of image {imageBytes[^1]}",
-            ocr_text = NulOcrFor.Any(b => b.AsSpan().SequenceEqual(imageBytes)) ? "top text \0 bottom text" : "",
-            tags = new[] { "test", "mem" },
-            source = (string?)null,
-            template = (string?)null
-        });
         var response = JsonSerializer.Serialize(new
         {
-            choices = new[] { new { message = new { content = metadata, refusal = (string?)null }, finish_reason = "stop" } },
+            choices = new[] { new { message = new { content = MetadataJsonFor(imageBytes), refusal = (string?)null }, finish_reason = "stop" } },
             usage = new { prompt_tokens = 100, completion_tokens = 50, cost = 0.0016m }
         });
         return Json(HttpStatusCode.OK, response);
+    }
+
+    // The schema v2 output the model sends for one image. Every member holds a value by default,
+    // so a column the writer forgets shows up as a difference.
+    public string MetadataJsonFor(byte[] imageBytes)
+    {
+        bool IsThisImage(byte[] other) => other.AsSpan().SequenceEqual(imageBytes);
+
+        var isCutout = CutoutFor.Any(IsThisImage);
+        var namesPerson = isCutout || NamedPersonFor.Any(IsThisImage);
+        var metadata = new Dictionary<string, object?>
+        {
+            ["description_pl"] = $"Opis obrazka {imageBytes[^1]}",
+            ["description_en"] = $"Description of image {imageBytes[^1]}",
+            ["ocr_text"] = NulOcrFor.Any(IsThisImage) ? "top text \0 bottom text" : "",
+            ["tags"] = namesPerson ? [.. NameTags, .. NameFreeTags] : new[] { "test", "mem" },
+            ["image_kind"] = isCutout ? "cutout_face_or_emote" : "template_meme",
+            ["templates"] = namesPerson ? [PersonName, .. NameFreeTemplates] : new[] { "drake" },
+            ["people"] = new[] { new { name = namesPerson ? PersonName : "Adam Małysz", evidence = "widely_recognized" } },
+            ["search_phrases"] = namesPerson ? ["kowalski emotka", .. NameFreeSearchPhrases] : new[] { "mem testowy", "test meme" },
+            ["franchise"] = "Wiedźmin",
+            ["source"] = "kwejk",
+            ["language"] = "pl",
+        };
+        foreach (var (_, member, value) in Overrides.Where(o => IsThisImage(o.Image)))
+            metadata[member] = value;
+
+        return JsonSerializer.Serialize(metadata);
     }
 
     private static byte[] ExtractImageBytes(string requestBody)
@@ -1124,6 +1369,78 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
+}
+
+// What a writer must store for each FakeMemeHttpHandler output. Shared: the backfill, the sweep
+// and the live hook all have to store the same thing.
+internal static class StoredMemeOutput
+{
+    public static void AssertDefaultOutput(MemeAnnotationEntity annotation)
+    {
+        Assert.Equal(["test", "mem"], annotation.Tags);
+        Assert.Equal(MemeImageKind.TemplateMeme, annotation.ImageKind);
+        Assert.Equal(["drake"], annotation.Templates);
+        Assert.Equal(["mem testowy", "test meme"], annotation.SearchPhrases);
+        Assert.Equal(["Adam Małysz"], annotation.PeopleNames);
+        AssertPeopleColumn(annotation, "Adam Małysz");
+        Assert.Equal("Wiedźmin", annotation.Franchise);
+        Assert.Equal("kwejk", annotation.Source);
+        Assert.Equal(MemeLanguage.Pl, annotation.Language);
+    }
+
+    // Nothing that search reads names the person any more.
+    public static void AssertCutoutWithoutThePerson(MemeAnnotationEntity annotation)
+    {
+        Assert.Equal(MemeImageKind.CutoutFaceOrEmote, annotation.ImageKind);
+        Assert.Equal("[]", annotation.People);
+        Assert.Empty(annotation.PeopleNames);
+        Assert.Equal(FakeMemeHttpHandler.NameFreeTags, annotation.Tags);
+        Assert.Equal(FakeMemeHttpHandler.NameFreeTemplates, annotation.Templates);
+        Assert.Equal(FakeMemeHttpHandler.NameFreeSearchPhrases, annotation.SearchPhrases);
+        AssertNoNameIn(annotation.SearchText);
+    }
+
+    public static void AssertRawResponseWithoutTheName(MemeAnnotationEntity annotation)
+    {
+        Assert.NotNull(annotation.RawResponseJson);
+        AssertNoNameIn(annotation.RawResponseJson);
+
+        // Still the contract's shape: the sanitised metadata, not an empty object.
+        using var raw = JsonDocument.Parse(annotation.RawResponseJson);
+        Assert.Equal("cutout_face_or_emote", raw.RootElement.GetProperty("image_kind").GetString());
+        Assert.Equal(0, raw.RootElement.GetProperty("people").GetArrayLength());
+        Assert.Equal(FakeMemeHttpHandler.NameFreeTags, raw.RootElement.GetProperty("tags").EnumerateArray().Select(t => t.GetString()));
+        Assert.StartsWith("Opis obrazka", raw.RootElement.GetProperty("description_pl").GetString());
+    }
+
+    public static void AssertNamedPersonKept(MemeAnnotationEntity annotation)
+    {
+        Assert.Equal(MemeImageKind.TemplateMeme, annotation.ImageKind);
+        Assert.Equal([FakeMemeHttpHandler.PersonName], annotation.PeopleNames);
+        AssertPeopleColumn(annotation, FakeMemeHttpHandler.PersonName);
+        Assert.Equal([.. FakeMemeHttpHandler.NameTags, .. FakeMemeHttpHandler.NameFreeTags], annotation.Tags);
+        Assert.Equal([FakeMemeHttpHandler.PersonName, .. FakeMemeHttpHandler.NameFreeTemplates], annotation.Templates);
+        Assert.Equal(["kowalski emotka", .. FakeMemeHttpHandler.NameFreeSearchPhrases], annotation.SearchPhrases);
+    }
+
+    // jsonb keeps the value, not the text: key order and spacing change, the content must not.
+    public static void AssertVerbatimRawResponse(MemeAnnotationEntity annotation, string modelOutput) =>
+        Assert.True(
+            JsonNode.DeepEquals(JsonNode.Parse(modelOutput), JsonNode.Parse(annotation.RawResponseJson!)),
+            $"raw_response_json is not the model's output: {annotation.RawResponseJson}");
+
+    // One { name, evidence } object, the evidence under its JSON name.
+    private static void AssertPeopleColumn(MemeAnnotationEntity annotation, string name)
+    {
+        using var people = JsonDocument.Parse(annotation.People);
+        var person = Assert.Single(people.RootElement.EnumerateArray());
+        Assert.Equal(["evidence", "name"], person.EnumerateObject().Select(p => p.Name).Order());
+        Assert.Equal(name, person.GetProperty("name").GetString());
+        Assert.Equal("widely_recognized", person.GetProperty("evidence").GetString());
+    }
+
+    private static void AssertNoNameIn(string text) =>
+        Assert.All(FakeMemeHttpHandler.PersonName.Split(' '), word => Assert.DoesNotContain(word, text, StringComparison.OrdinalIgnoreCase));
 }
 
 internal sealed class FakeHttpClientFactory(HttpMessageHandler handler, long maxImageBytes = 25 * 1024 * 1024) : IHttpClientFactory

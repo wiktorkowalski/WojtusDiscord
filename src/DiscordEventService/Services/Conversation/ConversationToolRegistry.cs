@@ -173,7 +173,8 @@ internal sealed class ConversationToolRegistry(
                 Name = "meme_search",
                 Description =
                     "Search the server's indexed memes and images by description, the text on the image (OCR), "
-                    + "tags, or template. Returns a ranked list, each with a jump link, tags, a short description, "
+                    + "tags, template, the people shown or named, the franchise (game, show, film), or the phrases "
+                    + "someone would type to find it. Returns a ranked list, each with a jump link, tags, a short description, "
                     + "and the post date. Use it whenever the user wants to find a meme/image or refers to one by "
                     + "its content. `query` is free-text keywords in any language; `limit` is how many results to "
                     + "return (1-10, use 5 unless the user asks for more).",

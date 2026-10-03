@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Jobs;
@@ -107,6 +108,55 @@ public sealed class MemeBenchmarkJobTests : IDisposable
         Assert.Equal([2019, 2024], sampledYears.Order());
     }
 
+    // The JSON report is the input of the next evaluation (#370): it carries the model contract
+    // under its own names, enums included.
+    [Fact]
+    public async Task RunFromFileAsync_JsonReport_CarriesTheSchemaV2Metadata()
+    {
+        var linksFile = WriteLinksFile("links.json", Link(11UL, year: 2024));
+        _http.SetImage(11UL, Png(1));
+
+        await RunFromFileAsync(linksFile, "vendor/a");
+
+        using var report = ReadReport();
+        var metadata = report.RootElement.GetProperty("Items")[0].GetProperty("Cells")[0].GetProperty("Result").GetProperty("Metadata");
+        Assert.Equal(
+            [
+                "description_pl", "description_en", "ocr_text", "tags", "image_kind", "templates",
+                "people", "search_phrases", "franchise", "source", "language",
+            ],
+            metadata.EnumerateObject().Select(p => p.Name));
+        Assert.Equal("template_meme", metadata.GetProperty("image_kind").GetString());
+        Assert.Equal("pl", metadata.GetProperty("language").GetString());
+        Assert.Equal("kwejk", metadata.GetProperty("source").GetString());
+        Assert.Equal("Wiedźmin", metadata.GetProperty("franchise").GetString());
+        Assert.Equal(["drake"], metadata.GetProperty("templates").EnumerateArray().Select(t => t.GetString()));
+        Assert.Equal(["mem testowy", "test meme"], metadata.GetProperty("search_phrases").EnumerateArray().Select(t => t.GetString()));
+        var person = Assert.Single(metadata.GetProperty("people").EnumerateArray());
+        Assert.Equal("Adam Małysz", person.GetProperty("name").GetString());
+        Assert.Equal("widely_recognized", person.GetProperty("evidence").GetString());
+    }
+
+    [Fact]
+    public async Task RunFromFileAsync_MarkdownReport_ShowsTheSchemaV2RowsAndNoTemplateRow()
+    {
+        var linksFile = WriteLinksFile("links.json", Link(11UL, year: 2024));
+        _http.SetImage(11UL, Png(1));
+        _http.Overrides.Add((Png(1), "search_phrases", new JsonArray()));
+
+        await RunFromFileAsync(linksFile, "vendor/a");
+
+        var markdown = ReadMarkdownReport();
+        Assert.Contains("| image_kind | template_meme |", markdown);
+        Assert.Contains("| templates | drake |", markdown);
+        Assert.Contains("| people | Adam Małysz (widely_recognized) |", markdown);
+        Assert.Contains("| search_phrases | — |", markdown);
+        Assert.Contains("| franchise | Wiedźmin |", markdown);
+        Assert.Contains("| source | kwejk |", markdown);
+        Assert.Contains("| language | pl |", markdown);
+        Assert.DoesNotContain("| template |", markdown);
+    }
+
     [Theory]
     [InlineData]
     [InlineData("vendor/a", "vendor/b|effort=nope")]
@@ -178,6 +228,9 @@ public sealed class MemeBenchmarkJobTests : IDisposable
             .First();
         return JsonDocument.Parse(File.ReadAllText(path));
     }
+
+    private string ReadMarkdownReport() =>
+        File.ReadAllText(Directory.EnumerateFiles(MemeBenchmarkJob.ReportDirectory(NewEnvironment()), "benchmark-*.md").Single());
 
     private static IEnumerable<string?> SlotsOf(JsonDocument report) =>
         report.RootElement.GetProperty("Slots").EnumerateArray().Select(s => s.GetString());

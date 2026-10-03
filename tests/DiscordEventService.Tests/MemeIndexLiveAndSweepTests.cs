@@ -92,6 +92,87 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     }
 
     [Fact]
+    public async Task IndexMessageAsync_StoresEverySchemaV2FieldOfTheModelOutput()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "fresh.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunLiveAsync(1001UL);
+
+        await using var verify = NewContext();
+        var annotation = await verify.MemeAnnotations.SingleAsync();
+        Assert.Equal(OpenRouterClient.PromptVersion, annotation.PromptVersion);
+        StoredMemeOutput.AssertDefaultOutput(annotation);
+        StoredMemeOutput.AssertVerbatimRawResponse(annotation, _http.MetadataJsonFor(Png(1)));
+    }
+
+    // The acceptance criterion of #368, through the live hook: one leaky writer is enough to
+    // bring a guessed name back into search.
+    [Fact]
+    public async Task IndexMessageAsync_CutoutThatNamesAPerson_IsStoredWithoutThePerson()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "cutout.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.CutoutFor.Add(Png(1));
+
+        await RunLiveAsync(1001UL);
+
+        await using var verify = NewContext();
+        Assert.Equal(MemeIndexStatus.Indexed, (await verify.MemeIndex.SingleAsync()).Status);
+        StoredMemeOutput.AssertCutoutWithoutThePerson(await verify.MemeAnnotations.SingleAsync());
+    }
+
+    [Fact]
+    public async Task IndexMessageAsync_CutoutThatNamesAPerson_StoresARawResponseWithoutTheName()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "cutout.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.CutoutFor.Add(Png(1));
+
+        await RunLiveAsync(1001UL);
+
+        await using var verify = NewContext();
+        StoredMemeOutput.AssertRawResponseWithoutTheName(await verify.MemeAnnotations.SingleAsync());
+    }
+
+    // The control: the same output, only the image kind differs.
+    [Fact]
+    public async Task IndexMessageAsync_NamedPersonOnAnotherImageKind_KeepsThePersonTheTagsAndTheVerbatimRawResponse()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "photo.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.NamedPersonFor.Add(Png(1));
+
+        await RunLiveAsync(1001UL);
+
+        await using var verify = NewContext();
+        var annotation = await verify.MemeAnnotations.SingleAsync();
+        StoredMemeOutput.AssertNamedPersonKept(annotation);
+        StoredMemeOutput.AssertVerbatimRawResponse(annotation, _http.MetadataJsonFor(Png(1)));
+    }
+
+    // The sweep is the third way in. It shares the indexer, and this keeps it that way.
+    [Fact]
+    public async Task ExecuteSweepAsync_CutoutThatNamesAPerson_IsStoredWithoutThePerson()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "cutout.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.CutoutFor.Add(Png(1));
+
+        await RunSweepAsync();
+
+        await using var verify = NewContext();
+        var annotation = await verify.MemeAnnotations.SingleAsync();
+        StoredMemeOutput.AssertCutoutWithoutThePerson(annotation);
+        StoredMemeOutput.AssertRawResponseWithoutTheName(annotation);
+    }
+
+    [Fact]
     public async Task IndexMessageAsync_Rerun_KeepsOneAnnotationPerKey()
     {
         AddMessage(1001UL, _channel, Attachment(11UL, "a.png"));

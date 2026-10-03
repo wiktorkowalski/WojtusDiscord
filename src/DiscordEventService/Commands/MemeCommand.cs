@@ -9,7 +9,7 @@ namespace DiscordEventService.Commands;
 public sealed class MemeCommand(MemeSearchService searchService, ILogger<MemeCommand> logger)
 {
     [Command("meme")]
-    [Description("Szuka mema po opisie, tekście z obrazka, tagach lub szablonie")]
+    [Description("Szuka mema po opisie, tekście z obrazka, tagach, szablonie, osobie albo tytule gry, filmu, serialu")]
     public async ValueTask ExecuteAsync(
         SlashCommandContext ctx,
         [Description("Co znaleźć — np. \"kot lodówka\" albo tekst z mema")] string query)
