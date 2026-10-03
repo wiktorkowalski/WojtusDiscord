@@ -225,6 +225,29 @@ internal sealed class MemeAttachmentIndexer(
             .ToListAsync(cancellationToken);
 
         var wasIndexed = row.Status == MemeIndexStatus.Indexed;
+        var copied = CopyMissingAnnotations(db, row, originals, existingKeys);
+
+        // An already Indexed row is here for the configured writer's annotation (manual backfill).
+        // When the original lacks it too, only the model can supply it; the copies still save.
+        if (copied == 0 || (wasIndexed && !existingKeys.Contains(configuredKey)))
+        {
+            if (copied > 0)
+                logger.LogDebug(
+                    "Meme attachment {AttachmentId}: {Copied} annotations copied via content hash {ContentHash}; the configured writer's annotation still needs the model",
+                    row.AttachmentDiscordId, copied, contentHash);
+            return false;
+        }
+
+        MarkIndexed(row);
+        counters.Deduped++;
+        logger.LogDebug("Meme attachment {AttachmentId} deduped via content hash {ContentHash}: {Copied} annotations copied",
+            row.AttachmentDiscordId, contentHash, copied);
+        return true;
+    }
+
+    private static int CopyMissingAnnotations(
+        DiscordDbContext db, MemeIndexEntity row, List<MemeAnnotationEntity> originals, HashSet<AnnotationKey> existingKeys)
+    {
         var copiedAtUtc = DateTime.UtcNow;
         var copied = 0;
         foreach (var original in originals)
@@ -246,22 +269,7 @@ internal sealed class MemeAttachmentIndexer(
             copied++;
         }
 
-        // An already Indexed row is here for the configured writer's annotation (manual backfill).
-        // When the original lacks it too, only the model can supply it; the copies still save.
-        if (copied == 0 || (wasIndexed && !existingKeys.Contains(configuredKey)))
-        {
-            if (copied > 0)
-                logger.LogDebug(
-                    "Meme attachment {AttachmentId}: {Copied} annotations copied via content hash {ContentHash}; the configured writer's annotation still needs the model",
-                    row.AttachmentDiscordId, copied, contentHash);
-            return false;
-        }
-
-        MarkIndexed(row);
-        counters.Deduped++;
-        logger.LogDebug("Meme attachment {AttachmentId} deduped via content hash {ContentHash}: {Copied} annotations copied",
-            row.AttachmentDiscordId, contentHash, copied);
-        return true;
+        return copied;
     }
 
     // The one place an annotation is written: the model path and the repost copy both end here.
