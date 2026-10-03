@@ -58,11 +58,27 @@
     "Unknown": -1,
     "Voice": 2
   },
+  "DiscordEventService.Data.Entities.Core.MemeImageKind": {
+    "Comic": 2,
+    "CutoutFaceOrEmote": 4,
+    "EditedPhoto": 5,
+    "Other": 7,
+    "PhotoWithCaption": 3,
+    "ScreenshotPostOrChat": 1,
+    "TemplateMeme": 0,
+    "VideoFrame": 6
+  },
   "DiscordEventService.Data.Entities.Core.MemeIndexStatus": {
     "Failed": 2,
     "Indexed": 1,
     "Pending": 0,
     "Skipped": 3
+  },
+  "DiscordEventService.Data.Entities.Core.MemeLanguage": {
+    "En": 1,
+    "Mixed": 2,
+    "None": 3,
+    "Pl": 0
   },
   "DiscordEventService.Data.Entities.Core.MessageMentionType": {
     "Channel": 4,
@@ -196,5 +212,9 @@
     "Error": 2,
     "Refusal": 1,
     "Success": 0
+  },
+  "DiscordEventService.Services.MemeIndexing.MemePersonEvidence": {
+    "NameVisible": 0,
+    "WidelyRecognized": 1
   }
 }

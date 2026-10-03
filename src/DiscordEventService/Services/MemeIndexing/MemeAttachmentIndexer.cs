@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
@@ -245,7 +246,7 @@ internal sealed class MemeAttachmentIndexer(
         return true;
     }
 
-    private static int CopyMissingAnnotations(
+    private int CopyMissingAnnotations(
         DiscordDbContext db, MemeIndexEntity row, List<MemeAnnotationEntity> originals, HashSet<AnnotationKey> existingKeys)
     {
         var copiedAtUtc = DateTime.UtcNow;
@@ -261,8 +262,13 @@ internal sealed class MemeAttachmentIndexer(
                 DescriptionEn = original.DescriptionEn,
                 OcrText = original.OcrText,
                 Tags = original.Tags,
+                ImageKind = original.ImageKind,
+                Templates = original.Templates,
+                People = JsonSerializer.Deserialize<MemePerson[]>(original.People) ?? [],
+                SearchPhrases = original.SearchPhrases,
+                Franchise = original.Franchise,
                 Source = original.Source,
-                Template = original.Template,
+                Language = original.Language,
             };
             AddAnnotation(db, row, original.ModelId, original.PromptVersion, original.ReasoningEffort,
                 metadata, rawResponseJson: null, copiedAtUtc);
@@ -272,8 +278,9 @@ internal sealed class MemeAttachmentIndexer(
         return copied;
     }
 
-    // The one place an annotation is written: the model path and the repost copy both end here.
-    private static void AddAnnotation(
+    // The one place an annotation is written: the model path and the repost copy both end here,
+    // so the cut-out rule (#368) holds for every writer.
+    private void AddAnnotation(
         DiscordDbContext db,
         MemeIndexEntity row,
         string modelId,
@@ -281,7 +288,25 @@ internal sealed class MemeAttachmentIndexer(
         string? reasoningEffort,
         MemeMetadata metadata,
         string? rawResponseJson,
-        DateTime indexedAtUtc) =>
+        DateTime indexedAtUtc)
+    {
+        var stored = MemeMetadataSanitizer.Sanitize(metadata);
+        if (!ReferenceEquals(stored, metadata))
+        {
+            // wojtus_query reads every table: a name the rule dropped must not survive in the raw column.
+            if (rawResponseJson is not null)
+                rawResponseJson = JsonSerializer.Serialize(stored);
+
+            // Counts only. A name in the log would undo the rule.
+            var droppedTerms = metadata.Tags.Length - stored.Tags.Length
+                + metadata.Templates.Length - stored.Templates.Length
+                + metadata.SearchPhrases.Length - stored.SearchPhrases.Length
+                + (metadata.Franchise is not null && stored.Franchise is null ? 1 : 0);
+            logger.LogInformation(
+                "Cut-out rule applied to meme attachment {AttachmentId} ({Model} {PromptVersion}): dropped {DroppedPeople} people and {DroppedTerms} terms that name them",
+                row.AttachmentDiscordId, modelId, promptVersion, metadata.People.Length, droppedTerms);
+        }
+
         db.MemeAnnotations.Add(new MemeAnnotationEntity
         {
             MemeIndex = row,
@@ -290,14 +315,21 @@ internal sealed class MemeAttachmentIndexer(
             PromptVersion = promptVersion,
             ReasoningEffort = reasoningEffort,
             IndexedAtUtc = indexedAtUtc,
-            DescriptionPl = metadata.DescriptionPl,
-            DescriptionEn = metadata.DescriptionEn,
-            OcrText = metadata.OcrText,
-            Tags = metadata.Tags,
-            Source = metadata.Source,
-            Template = metadata.Template,
+            DescriptionPl = stored.DescriptionPl,
+            DescriptionEn = stored.DescriptionEn,
+            OcrText = stored.OcrText,
+            Tags = stored.Tags,
+            Templates = stored.Templates,
+            SearchPhrases = stored.SearchPhrases,
+            People = JsonSerializer.Serialize(stored.People),
+            PeopleNames = [.. stored.People.Select(p => p.Name)],
+            ImageKind = stored.ImageKind,
+            Language = stored.Language,
+            Franchise = string.IsNullOrWhiteSpace(stored.Franchise) ? null : stored.Franchise,
+            Source = stored.Source,
             RawResponseJson = rawResponseJson,
         });
+    }
 
     private static void MarkIndexed(MemeIndexEntity row)
     {
@@ -310,9 +342,7 @@ internal sealed class MemeAttachmentIndexer(
     {
         switch (result.Outcome)
         {
-            // `required` in System.Text.Json is presence-only: an explicit null passes deserialization
-            // but violates the NOT NULL metadata columns at save time, which would poison the run (#311).
-            case MemeAnalysisOutcome.Success when result.Metadata is { DescriptionPl: null } or { DescriptionEn: null } or { OcrText: null } or { Tags: null }:
+            case MemeAnalysisOutcome.Success when HasNullRequiredField(result.Metadata!):
                 Fail(row, counters, "model returned null for a required metadata field");
                 break;
 
@@ -338,6 +368,17 @@ internal sealed class MemeAttachmentIndexer(
                 break;
         }
     }
+
+    // `required` in System.Text.Json is presence-only: an explicit null passes deserialization
+    // but violates the NOT NULL metadata columns at save time, which would poison the run (#311).
+    // franchise and source are the only members the contract lets be null.
+    private static bool HasNullRequiredField(MemeMetadata metadata) =>
+        metadata.DescriptionPl is null || metadata.DescriptionEn is null || metadata.OcrText is null
+        || metadata.ImageKind is null || metadata.Language is null
+        || HasNull(metadata.Tags) || HasNull(metadata.Templates) || HasNull(metadata.SearchPhrases)
+        || metadata.People is null || metadata.People.Any(p => p?.Name is null);
+
+    private static bool HasNull(string[]? values) => values is null || values.Any(v => v is null);
 
     private void Skip(MemeIndexEntity row, MemeIndexRunCounters counters, string reason)
     {

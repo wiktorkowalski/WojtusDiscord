@@ -247,6 +247,118 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
         Assert.Contains(61L, forInflected);
     }
 
+    // Schema v2 (#368): the generated columns read the new fields, unaccented like the old ones.
+    [Theory]
+    [InlineData("templates", "świat według kiepskich", "swiat")]
+    [InlineData("search_phrases", "żółw na deskorolce", "zolw")]
+    [InlineData("people_names", "Adam Małysz", "malysz")]
+    [InlineData("franchise", "Wiedźmin", "wiedzmin")]
+    public async Task SearchVector_AccentlessQuery_MatchesAnAccentedSchemaV2Field(string column, string value, string query)
+    {
+        var withField = IndexedMeme(62UL);
+        withField.Annotations.Add(WithColumn(Annotation(62UL, "Opis obrazka", "A picture", "", []), column, value));
+        var without = IndexedMeme(63UL);
+        without.Annotations.Add(Annotation(63UL, "Opis obrazka", "A picture", "", []));
+        _db.MemeIndex.AddRange(withField, without);
+        await _db.SaveChangesAsync();
+
+        var hits = await SearchByVectorAsync(query);
+
+        Assert.Equal([62L], hits);
+    }
+
+    // The trigram side holds the same fields: an inflected query still reaches them.
+    [Theory]
+    [InlineData("templates", "nosacz sundajski", "nosacze")]
+    [InlineData("search_phrases", "kiedy deploy w piątek", "piatku")]
+    [InlineData("people_names", "Adam Małysz", "malysza")]
+    [InlineData("franchise", "Wiedźmin", "wiedzmina")]
+    public async Task SearchText_TrigramSimilarity_MatchesAnInflectedQueryOnASchemaV2Field(string column, string value, string query)
+    {
+        var withField = IndexedMeme(64UL);
+        withField.Annotations.Add(WithColumn(Annotation(64UL, "Opis obrazka", "A picture", "", []), column, value));
+        var without = IndexedMeme(65UL);
+        without.Annotations.Add(Annotation(65UL, "Opis obrazka", "A picture", "", []));
+        _db.MemeIndex.AddRange(withField, without);
+        await _db.SaveChangesAsync();
+
+        // Not a word of the row: the vector cannot be what finds it.
+        Assert.Empty(await SearchByVectorAsync(query));
+
+        var hits = await SearchByTrigramAsync(query);
+
+        Assert.Equal([64L], hits);
+    }
+
+    // "Twitter" and "x" are the variants the closed set exists to stop; "none" is the model's
+    // word for no platform and is stored as NULL, never as text.
+    [Theory]
+    [InlineData("Twitter")]
+    [InlineData("x")]
+    [InlineData("none")]
+    [InlineData("")]
+    public async Task InsertAnnotation_WhenSourceIsOutsideTheClosedSet_ViolatesSourceConstraint(string source)
+    {
+        var meme = IndexedMeme(66UL);
+        var annotation = Annotation(66UL, "Opis", "Description", "", ["tag"]);
+        annotation.Source = source;
+        meme.Annotations.Add(annotation);
+        _db.MemeIndex.Add(meme);
+
+        var ex = await Assert.ThrowsAsync<DbUpdateException>(() => _db.SaveChangesAsync());
+
+        Assert.Equal("ck_meme_annotations_source", Assert.IsType<PostgresException>(ex.InnerException).ConstraintName);
+    }
+
+    // The migration froze its own copy of the list. This fails when MemeSources.Known gains a
+    // value without a migration that widens the constraint.
+    [Fact]
+    public async Task InsertAnnotation_WhenSourceIsNullOrAnyKnownValue_Persists()
+    {
+        string?[] sources = [null, .. MemeSources.Known];
+        var meme = IndexedMeme(67UL);
+        foreach (var source in sources)
+        {
+            var annotation = Annotation(67UL, "Opis", "Description", "", ["tag"], modelId: $"model/{source ?? "no-source"}");
+            annotation.Source = source;
+            meme.Annotations.Add(annotation);
+        }
+
+        _db.MemeIndex.Add(meme);
+        await _db.SaveChangesAsync();
+
+        await using var verify = NewContext();
+        var stored = await verify.MemeAnnotations.Where(a => a.AttachmentDiscordId == 67UL).Select(a => a.Source).ToListAsync();
+        Assert.Equal(sources.Order(), stored.Order());
+    }
+
+    // A writer that knows nothing of schema v2 (an old import script, a hand INSERT) still gets
+    // a row that reads as "no value", not NULL arrays.
+    [Fact]
+    public async Task InsertAnnotation_RawSqlWithoutTheSchemaV2Columns_GetsTheDefaults()
+    {
+        var meme = IndexedMeme(68UL);
+        _db.MemeIndex.Add(meme);
+        await _db.SaveChangesAsync();
+
+        await _db.Database.ExecuteSqlAsync($"""
+            INSERT INTO meme_annotations (meme_index_id, attachment_discord_id, model_id, prompt_version, indexed_at_utc,
+                description_pl, description_en, ocr_text, tags, first_seen_utc, last_updated_utc)
+            VALUES ({meme.Id}, 68, 'raw/model', 'legacy', now(), 'Opis', 'Description', '', ARRAY['tag'], now(), now())
+            """);
+
+        await using var verify = NewContext();
+        var annotation = await verify.MemeAnnotations.SingleAsync(a => a.AttachmentDiscordId == 68UL);
+        Assert.Empty(annotation.Templates);
+        Assert.Empty(annotation.SearchPhrases);
+        Assert.Empty(annotation.PeopleNames);
+        Assert.Equal("[]", annotation.People);
+        Assert.Null(annotation.ImageKind);
+        Assert.Null(annotation.Language);
+        Assert.Null(annotation.Franchise);
+        Assert.Null(annotation.Source);
+    }
+
     [Fact]
     public async Task MessagesJoin_WhenMessageSoftDeleted_RowIsExcludable()
     {
@@ -348,6 +460,29 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
             Tags = tags,
             RawResponseJson = "{}"
         };
+
+    private static MemeAnnotationEntity WithColumn(MemeAnnotationEntity annotation, string column, string value)
+    {
+        switch (column)
+        {
+            case "templates":
+                annotation.Templates = [value];
+                break;
+            case "search_phrases":
+                annotation.SearchPhrases = [value];
+                break;
+            case "people_names":
+                annotation.PeopleNames = [value];
+                break;
+            case "franchise":
+                annotation.Franchise = value;
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(column), column, "not a schema v2 search column");
+        }
+
+        return annotation;
+    }
 
     private DiscordDbContext NewContext()
     {

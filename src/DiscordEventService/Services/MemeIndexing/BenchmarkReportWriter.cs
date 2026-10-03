@@ -102,14 +102,24 @@ internal static class BenchmarkReportWriter
         AppendRow(sb, "description_pl", item.Cells, c => c.Result.Metadata?.DescriptionPl);
         AppendRow(sb, "description_en", item.Cells, c => c.Result.Metadata?.DescriptionEn);
         AppendRow(sb, "ocr_text", item.Cells, c => c.Result.Metadata?.OcrText);
-        AppendRow(sb, "tags", item.Cells, c => c.Result.Metadata is { } m ? string.Join(", ", m.Tags) : null);
+        AppendRow(sb, "tags", item.Cells, c => JoinOrNull(c.Result.Metadata?.Tags));
+        AppendRow(sb, "image_kind", item.Cells, c => c.Result.Metadata?.ImageKind is { } kind ? MemeJsonNames.Of(kind) : null);
+        AppendRow(sb, "templates", item.Cells, c => JoinOrNull(c.Result.Metadata?.Templates));
+        AppendRow(sb, "people", item.Cells,
+            c => JoinOrNull(c.Result.Metadata?.People?.Where(p => p is not null).Select(p => $"{p.Name} ({MemeJsonNames.Of(p.Evidence)})")));
+        AppendRow(sb, "search_phrases", item.Cells, c => JoinOrNull(c.Result.Metadata?.SearchPhrases));
+        AppendRow(sb, "franchise", item.Cells, c => c.Result.Metadata?.Franchise);
         AppendRow(sb, "source", item.Cells, c => c.Result.Metadata?.Source);
-        AppendRow(sb, "template", item.Cells, c => c.Result.Metadata?.Template);
+        AppendRow(sb, "language", item.Cells, c => c.Result.Metadata?.Language is { } language ? MemeJsonNames.Of(language) : null);
         sb.AppendLine();
     }
 
     private static void AppendRow(StringBuilder sb, string field, List<BenchmarkCell> cells, Func<BenchmarkCell, string?> value) =>
         sb.AppendLine($"| {field} | {string.Join(" | ", cells.Select(c => Escape(value(c) ?? "—")))} |");
+
+    // An empty list renders as the dash too: "none" reads the same as "not returned" in a comparison table.
+    private static string? JoinOrNull(IEnumerable<string>? values) =>
+        values is null ? null : string.Join(", ", values) is { Length: > 0 } joined ? joined : null;
 
     private static string JumpLink(MemeSampleItem sample) =>
         $"https://discord.com/channels/{sample.GuildDiscordId}/{sample.ChannelDiscordId}/{sample.MessageDiscordId}";
