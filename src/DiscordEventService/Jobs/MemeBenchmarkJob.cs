@@ -64,10 +64,18 @@ internal sealed class MemeBenchmarkJob(
 
     private async Task RunCoreAsync(List<MemeSampleItem> sample, int requestedSampleSize, CancellationToken cancellationToken)
     {
-        var models = openRouterOptions.Value.BenchmarkModels;
+        // The endpoints reject a bad slot list with 400; config can still change
+        // between enqueue and execution (deploy restart).
+        if (!BenchmarkSlot.TryParseAll(openRouterOptions.Value.BenchmarkModels, out var slots, out var slotError))
+        {
+            logger.LogWarning("Meme benchmark not started: {Error}", slotError);
+            return;
+        }
+
+        var slotKeys = slots.Select(s => s.Key).ToArray();
         var startedUtc = DateTime.UtcNow;
-        logger.LogInformation("Meme benchmark starting: {Count} images, models=[{Models}]",
-            sample.Count, string.Join(", ", models));
+        logger.LogInformation("Meme benchmark starting: {Count} images, slots {Slots}",
+            sample.Count, string.Join(", ", slotKeys));
 
         var freshUrls = await urlRefreshService.RefreshAsync(
             sample.Select(s => s.StoredUrl).ToList(), cancellationToken);
@@ -80,24 +88,24 @@ internal sealed class MemeBenchmarkJob(
             cancellationToken.ThrowIfCancellationRequested();
             processed++;
 
-            items.Add(await BenchmarkOneAsync(sampleItem, models, freshUrls, cancellationToken));
+            items.Add(await BenchmarkOneAsync(sampleItem, slots, freshUrls, cancellationToken));
 
             if (processed % 10 == 0)
                 logger.LogInformation("Meme benchmark progress: {Processed}/{Total} images", processed, sample.Count);
         }
 
-        var run = new BenchmarkRun(startedUtc, DateTime.UtcNow, requestedSampleSize, models, items);
+        var run = new BenchmarkRun(startedUtc, DateTime.UtcNow, requestedSampleSize, slotKeys, items);
         var (markdownPath, jsonPath) = await WriteReportAsync(run, cancellationToken);
 
         var totalCost = items.SelectMany(i => i.Cells).Sum(c => c.Result.Usage?.CostUsd ?? 0);
         logger.LogInformation(
-            "Meme benchmark finished: {Images} images x {Models} models, total cost {Cost:F4} USD. Report: {MarkdownPath} (raw: {JsonPath})",
-            items.Count(i => i.SkipReason is null), models.Length, totalCost, markdownPath, jsonPath);
+            "Meme benchmark finished: {Images} images x {Slots} slots, total cost {Cost:F4} USD. Report: {MarkdownPath} (raw: {JsonPath})",
+            items.Count(i => i.SkipReason is null), slots.Count, totalCost, markdownPath, jsonPath);
     }
 
     private async Task<BenchmarkItem> BenchmarkOneAsync(
         MemeSampleItem sampleItem,
-        string[] models,
+        List<BenchmarkSlot> slots,
         AttachmentUrlRefreshResult freshUrls,
         CancellationToken cancellationToken)
     {
@@ -129,25 +137,34 @@ internal sealed class MemeBenchmarkJob(
         if (mimeType is null)
             return Skip(sampleItem, "bytes are not a recognized image format");
 
-        var cells = new List<BenchmarkCell>(models.Length);
-        foreach (var model in models)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
+        // All slots of one image run at once (#366: 9 slots x 100 images went from 103 to 17 min).
+        // Images stay sequential, so the burst is one request per slot. Task.WhenAll returns the
+        // cells in slot order — the report's totals match cells to slots by position.
+        var cells = await Task.WhenAll(slots.Select(slot =>
+            AnalyzeCellAsync(sampleItem, slot, imageBytes, mimeType, cancellationToken)));
 
-            var stopwatch = Stopwatch.StartNew();
-            var result = await openRouterClient.AnalyzeImageAsync(imageBytes, mimeType, model, cancellationToken);
-            stopwatch.Stop();
+        await Task.Delay(TimeSpan.FromMilliseconds(openRouterOptions.Value.RequestDelayMs), cancellationToken);
 
-            cells.Add(new BenchmarkCell(model, result, stopwatch.Elapsed.TotalSeconds));
+        return new BenchmarkItem(sampleItem, freshUrl, SkipReason: null, [.. cells]);
+    }
 
-            if (result.Outcome == MemeAnalysisOutcome.Error)
-                logger.LogWarning("Benchmark cell failed: message {MessageId}, model {Model}: {Error}",
-                    sampleItem.MessageDiscordId, model, result.Error);
+    private async Task<BenchmarkCell> AnalyzeCellAsync(
+        MemeSampleItem sampleItem,
+        BenchmarkSlot slot,
+        byte[] imageBytes,
+        string mimeType,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var result = await openRouterClient.AnalyzeImageAsync(
+            imageBytes, mimeType, slot.Model, slot.ReasoningEffort, cancellationToken);
+        stopwatch.Stop();
 
-            await Task.Delay(TimeSpan.FromMilliseconds(openRouterOptions.Value.RequestDelayMs), cancellationToken);
-        }
+        if (result.Outcome == MemeAnalysisOutcome.Error)
+            logger.LogWarning("Benchmark cell failed: message {MessageId}, slot {Slot}: {Error}",
+                sampleItem.MessageDiscordId, slot.Key, result.Error);
 
-        return new BenchmarkItem(sampleItem, freshUrl, SkipReason: null, cells);
+        return new BenchmarkCell(slot.Key, result, stopwatch.Elapsed.TotalSeconds);
     }
 
     private BenchmarkItem Skip(MemeSampleItem sampleItem, string reason)

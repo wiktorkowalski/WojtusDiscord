@@ -35,7 +35,7 @@ public sealed class OpenRouterClientTests
             return Json(HttpStatusCode.OK, CompletionBody(content, finishReason: "stop", cost: 0.0123m));
         });
 
-        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "google/gemini-2.5-flash", CancellationToken.None);
+        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "google/gemini-2.5-flash", reasoningEffort: null, CancellationToken.None);
 
         Assert.Equal(MemeAnalysisOutcome.Success, result.Outcome);
         Assert.NotNull(result.Metadata);
@@ -54,6 +54,27 @@ public sealed class OpenRouterClientTests
         Assert.Contains("data:image/jpeg;base64,", sentBody);
     }
 
+    [Fact]
+    public async Task AnalyzeImageAsync_WithReasoningEffort_SendsItAsReasoningEffort()
+    {
+        var sent = await CaptureRequestBodyAsync(reasoningEffort: "low");
+
+        Assert.Equal("low", sent.GetProperty("reasoning").GetProperty("effort").GetString());
+        Assert.Equal(4000, sent.GetProperty("max_tokens").GetInt32());
+    }
+
+    // Unset must stay off the wire: a forced effort made gemini-2.5-flash return empty content.
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task AnalyzeImageAsync_WithoutReasoningEffort_SendsNoReasoningField(string? reasoningEffort)
+    {
+        var sent = await CaptureRequestBodyAsync(reasoningEffort);
+
+        Assert.False(sent.TryGetProperty("reasoning", out _));
+        Assert.Equal(4000, sent.GetProperty("max_tokens").GetInt32());
+    }
+
     [Theory]
     [InlineData("stop", "no thanks")]
     [InlineData("content_filter", null)]
@@ -62,7 +83,7 @@ public sealed class OpenRouterClientTests
         var client = NewClient(_ => JsonTask(HttpStatusCode.OK,
             CompletionBody(content: null, finishReason: finishReason, cost: null, refusal: refusal)));
 
-        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", CancellationToken.None);
+        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", reasoningEffort: null, CancellationToken.None);
 
         Assert.Equal(MemeAnalysisOutcome.Refusal, result.Outcome);
     }
@@ -76,7 +97,7 @@ public sealed class OpenRouterClientTests
     {
         var client = NewClient(_ => JsonTask(status, "{\"error\":\"boom\"}"));
 
-        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", CancellationToken.None);
+        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", reasoningEffort: null, CancellationToken.None);
 
         Assert.Equal(MemeAnalysisOutcome.Error, result.Outcome);
         Assert.Equal(expectTransient, result.IsTransient);
@@ -88,7 +109,7 @@ public sealed class OpenRouterClientTests
         var client = NewClient(_ => JsonTask(HttpStatusCode.OK,
             CompletionBody("{\"description_pl\":\"truncat", finishReason: "length", cost: null)));
 
-        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", CancellationToken.None);
+        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", reasoningEffort: null, CancellationToken.None);
 
         Assert.Equal(MemeAnalysisOutcome.Error, result.Outcome);
         Assert.False(result.IsTransient);
@@ -101,7 +122,7 @@ public sealed class OpenRouterClientTests
         var client = NewClient(_ => JsonTask(HttpStatusCode.OK,
             CompletionBody("this is not the agreed json", finishReason: "stop", cost: null)));
 
-        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", CancellationToken.None);
+        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", reasoningEffort: null, CancellationToken.None);
 
         Assert.Equal(MemeAnalysisOutcome.Error, result.Outcome);
         Assert.False(result.IsTransient);
@@ -113,11 +134,27 @@ public sealed class OpenRouterClientTests
         var called = false;
         var client = NewClient(_ => { called = true; return JsonTask(HttpStatusCode.OK, "{}"); }, apiKey: "");
 
-        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", CancellationToken.None);
+        var result = await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", reasoningEffort: null, CancellationToken.None);
 
         Assert.Equal(MemeAnalysisOutcome.Error, result.Outcome);
         Assert.False(result.IsTransient);
         Assert.False(called);
+    }
+
+    private static async Task<JsonElement> CaptureRequestBodyAsync(string? reasoningEffort)
+    {
+        // Capture inside the handler — the client disposes the request after sending.
+        string? sentBody = null;
+        var client = NewClient(async req =>
+        {
+            sentBody = await req.Content!.ReadAsStringAsync();
+            return Json(HttpStatusCode.OK, CompletionBody(content: null, finishReason: "stop", cost: null));
+        });
+
+        await client.AnalyzeImageAsync(FakeImage, "image/jpeg", "m", reasoningEffort, CancellationToken.None);
+
+        using var document = JsonDocument.Parse(sentBody!);
+        return document.RootElement.Clone();
     }
 
     private static string CompletionBody(string? content, string finishReason, decimal? cost, string? refusal = null) =>

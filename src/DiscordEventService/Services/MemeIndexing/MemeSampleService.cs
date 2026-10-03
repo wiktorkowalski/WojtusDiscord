@@ -39,8 +39,13 @@ internal sealed class MemeSampleService(
     }
 
     // Round-robin across years so old low-res memes are represented, not drowned out by recent years.
+    // When every candidate fits there is nothing to choose: return them in the given order, so a
+    // fixed-ids links file gives the same sample on every run (#366).
     public static List<MemeSampleItem> Stratify(IReadOnlyCollection<MemeSampleItem> candidates, int sampleSize)
     {
+        if (candidates.Count <= sampleSize)
+            return [.. candidates];
+
         var byYear = candidates
             .GroupBy(c => c.CreatedAtUtc.Year)
             .OrderBy(g => g.Key)
