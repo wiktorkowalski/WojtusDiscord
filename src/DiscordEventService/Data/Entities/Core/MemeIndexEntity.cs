@@ -1,5 +1,3 @@
-using NpgsqlTypes;
-
 namespace DiscordEventService.Data.Entities.Core;
 
 // Persisted as int in the DB — values are a data contract; never renumber or strip explicit values.
@@ -13,6 +11,7 @@ public enum MemeIndexStatus
 
 // One row per image attachment in a meme channel (an "Indexed meme",
 // CONTEXT.md / ADR-0004 / ADR-0005) — a 3-image message yields 3 rows.
+// Lifecycle only (#367): the vision metadata lives in meme_annotations.
 public class MemeIndexEntity : ITimestamped
 {
     public Guid Id { get; set; }
@@ -34,19 +33,8 @@ public class MemeIndexEntity : ITimestamped
     // SHA-256 hex of the downloaded bytes; null until indexed. Dedupe handle.
     public string? ContentHash { get; set; }
 
-    // Vision metadata (MemeMetadata shape); null/empty until status = Indexed.
-    public string? DescriptionPl { get; set; }
-    public string? DescriptionEn { get; set; }
-    public string? OcrText { get; set; }
-    public string[] Tags { get; set; } = [];
-    public string? Source { get; set; }
-    public string? Template { get; set; }
-
-    // Provenance: which model produced the metadata, and its raw response.
-    public string? ModelId { get; set; }
-    public string? RawResponseJson { get; set; }
-    public DateTime? IndexedAtUtc { get; set; }
-
+    // Indexed = the attachment has at least one annotation. No CHECK can span the two
+    // tables, so every writer adds the annotation and flips the status in one SaveChanges.
     public MemeIndexStatus Status { get; set; }
     public string? Error { get; set; }
     public int AttemptCount { get; set; }
@@ -54,10 +42,7 @@ public class MemeIndexEntity : ITimestamped
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastUpdatedUtc { get; set; }
 
-    // Stored generated columns (#220 binding design comment) — never set from
-    // code; the database derives them from the metadata columns.
-    public NpgsqlTsVector SearchVector { get; set; } = null!;
-    public string SearchText { get; set; } = null!;
-
     public MessageEntity Message { get; set; } = null!;
+
+    public List<MemeAnnotationEntity> Annotations { get; set; } = [];
 }

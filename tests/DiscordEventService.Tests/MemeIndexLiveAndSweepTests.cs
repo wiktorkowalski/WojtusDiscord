@@ -17,6 +17,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     private const ulong GuildDiscordId = 1UL;
     private const ulong ChannelDiscordId = 2UL;
     private const ulong OtherChannelDiscordId = 99UL;
+    private const string ConfiguredModel = "test/model";
 
     private DiscordDbContext _db = null!;
     private GuildEntity _guild = null!;
@@ -30,6 +31,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
         _db = NewContext();
         await _db.Database.MigrateAsync();
 
+        await _db.MemeAnnotations.ExecuteDeleteAsync();
         await _db.MemeIndex.ExecuteDeleteAsync();
         await _db.BackfillCheckpoints.ExecuteDeleteAsync();
         await _db.Messages.ExecuteDeleteAsync();
@@ -76,6 +78,34 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
     }
 
     [Fact]
+    public async Task IndexMessageAsync_WritesOneAnnotationPerImage()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "fresh.png"), Attachment(12UL, "also-fresh.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.SetImage(12UL, Png(2));
+
+        await RunLiveAsync(1001UL);
+
+        await using var verify = NewContext();
+        await AssertConfiguredWriterAnnotationsAsync(verify, 11UL, 12UL);
+    }
+
+    [Fact]
+    public async Task IndexMessageAsync_Rerun_KeepsOneAnnotationPerKey()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunLiveAsync(1001UL);
+        await RunLiveAsync(1001UL);
+
+        await using var verify = NewContext();
+        await AssertConfiguredWriterAnnotationsAsync(verify, 11UL);
+    }
+
+    [Fact]
     public async Task IndexMessageAsync_Rerun_MakesNoExtraModelCalls()
     {
         AddMessage(1001UL, _channel, Attachment(11UL, "a.png"));
@@ -91,6 +121,50 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
         Assert.Equal(1, _http.ModelCalls);
         await using var verify = NewContext();
         Assert.Equal(1, await verify.MemeIndex.CountAsync());
+    }
+
+    // The live hook looks at the status only: an Indexed attachment is done, even when the
+    // configured writer has not annotated it. Only the manual backfill pays for that (#367).
+    [Fact]
+    public async Task IndexMessageAsync_IndexedRowWithoutConfiguredKeyAnnotation_IsNotRevisited()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _db.MemeIndex.Add(new MemeIndexEntity
+        {
+            MessageId = _db.Messages.Local.Single(m => m.DiscordId == 1001UL).Id,
+            GuildDiscordId = GuildDiscordId,
+            ChannelDiscordId = ChannelDiscordId,
+            MessageDiscordId = 1001UL,
+            AttachmentDiscordId = 11UL,
+            FileName = "a.png",
+            FileSizeBytes = 123,
+            Status = MemeIndexStatus.Indexed,
+            AttemptCount = 1,
+            Annotations =
+            [
+                new MemeAnnotationEntity
+                {
+                    AttachmentDiscordId = 11UL,
+                    ModelId = "other/model",
+                    PromptVersion = OpenRouterClient.PromptVersion,
+                    IndexedAtUtc = DateTime.UtcNow,
+                    DescriptionPl = "Opis innego modelu",
+                    DescriptionEn = "Another model's description",
+                    OcrText = "",
+                    Tags = ["seed"],
+                },
+            ],
+        });
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunLiveAsync(1001UL);
+
+        Assert.Equal(0, _http.ModelCalls);
+        Assert.Equal(0, _http.CdnRequests);
+        await using var verify = NewContext();
+        Assert.Equal("other/model", (await verify.MemeAnnotations.SingleAsync()).ModelId);
     }
 
     [Fact]
@@ -127,6 +201,21 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
 
         var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
         Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
+    }
+
+    [Fact]
+    public async Task ExecuteSweepAsync_WritesAnnotationsForAttachmentsMissedDuringDowntime()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "missed-1.png"));
+        AddMessage(1002UL, _channel, Attachment(12UL, "missed-2.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.SetImage(12UL, Png(2));
+
+        await RunSweepAsync();
+
+        await using var verify = NewContext();
+        await AssertConfiguredWriterAnnotationsAsync(verify, 11UL, 12UL);
     }
 
     [Fact]
@@ -414,7 +503,7 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
         services.Configure<OpenRouterOptions>(o =>
         {
             o.ApiKey = "test-key";
-            o.Model = "test/model";
+            o.Model = ConfiguredModel;
             o.RequestDelayMs = 0;
         });
         services.Configure<DiscordOptions>(o => o.Token = new string('x', 60));
@@ -428,6 +517,24 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
         services.AddScoped<MemeIndexingJob>();
         services.AddScoped<MemeIndexSweepJob>();
         return services.BuildServiceProvider();
+    }
+
+    // Exactly one annotation per attachment, each under the configured writer's key.
+    private static async Task AssertConfiguredWriterAnnotationsAsync(DiscordDbContext verify, params ulong[] attachmentIds)
+    {
+        var annotations = await verify.MemeAnnotations
+            .Include(a => a.MemeIndex)
+            .OrderBy(a => a.AttachmentDiscordId)
+            .ToListAsync();
+        Assert.Equal(attachmentIds, annotations.Select(a => a.AttachmentDiscordId));
+        Assert.All(annotations, a =>
+        {
+            Assert.Equal(a.AttachmentDiscordId, a.MemeIndex.AttachmentDiscordId);
+            Assert.Equal(MemeIndexStatus.Indexed, a.MemeIndex.Status);
+            Assert.Equal(ConfiguredModel, a.ModelId);
+            Assert.Equal(OpenRouterClient.PromptVersion, a.PromptVersion);
+            Assert.NotNull(a.RawResponseJson);
+        });
     }
 
     private void AddMessage(ulong discordId, ChannelEntity channel, params string[] attachments)

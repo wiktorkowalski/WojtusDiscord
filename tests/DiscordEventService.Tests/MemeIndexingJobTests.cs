@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using DiscordEventService.Configuration;
@@ -17,6 +18,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
 {
     private const ulong GuildDiscordId = 1UL;
     private const ulong ChannelDiscordId = 2UL;
+    private const string ConfiguredModel = "test/model";
     // Mirrors the MemeIndexOptions.MaxImageBytes default.
     private const int DefaultMaxImageBytes = 25 * 1024 * 1024;
 
@@ -31,6 +33,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         _db = NewContext();
         await _db.Database.MigrateAsync();
 
+        await _db.MemeAnnotations.ExecuteDeleteAsync();
         await _db.MemeIndex.ExecuteDeleteAsync();
         await _db.BackfillCheckpoints.ExecuteDeleteAsync();
         await _db.Messages.ExecuteDeleteAsync();
@@ -73,9 +76,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
             Assert.Equal(MemeIndexStatus.Indexed, r.Status);
             Assert.Equal(GuildDiscordId, r.GuildDiscordId);
             Assert.Equal(ChannelDiscordId, r.ChannelDiscordId);
-            Assert.Equal("test/model", r.ModelId);
             Assert.NotNull(r.ContentHash);
-            Assert.NotNull(r.IndexedAtUtc);
             Assert.NotEqual(Guid.Empty, r.MessageId);
         });
         Assert.Equal(3, _http.ModelCalls);
@@ -83,6 +84,43 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
         Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
         Assert.Equal(3, checkpoint.ProcessedCount);
+    }
+
+    // The effort is provenance on the annotation: unset and "" both mean the model's own default.
+    [Theory]
+    [InlineData("low", "low")]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    public async Task ExecuteAsync_FullRun_WritesOneAnnotationPerAttachment(string? reasoningEffort, string? storedEffort)
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"), Attachment(12UL, "b.png"));
+        AddMessage(1002UL, Attachment(13UL, "c.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.SetImage(12UL, Png(2));
+        _http.SetImage(13UL, Png(3));
+        var startedAtUtc = DateTime.UtcNow;
+
+        await RunJobAsync(reasoningEffort: reasoningEffort);
+
+        await using var verify = NewContext();
+        var annotations = await verify.MemeAnnotations
+            .Include(a => a.MemeIndex)
+            .OrderBy(a => a.AttachmentDiscordId)
+            .ToListAsync();
+        Assert.Equal([11UL, 12UL, 13UL], annotations.Select(a => a.AttachmentDiscordId));
+        Assert.Equal(["Opis obrazka 1", "Opis obrazka 2", "Opis obrazka 3"], annotations.Select(a => a.DescriptionPl));
+        Assert.All(annotations, a =>
+        {
+            Assert.Equal(a.AttachmentDiscordId, a.MemeIndex.AttachmentDiscordId);
+            Assert.Equal(MemeIndexStatus.Indexed, a.MemeIndex.Status);
+            Assert.Equal(ConfiguredModel, a.ModelId);
+            Assert.Equal(OpenRouterClient.PromptVersion, a.PromptVersion);
+            Assert.Equal(storedEffort, a.ReasoningEffort);
+            Assert.Equal(["test", "mem"], a.Tags);
+            Assert.NotNull(a.RawResponseJson);
+            Assert.InRange(a.IndexedAtUtc, startedAtUtc.AddSeconds(-1), DateTime.UtcNow.AddSeconds(1));
+        });
     }
 
     // Prod sends `reasoning.effort` only when OpenRouter:ReasoningEffort is set (#366);
@@ -100,7 +138,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         await RunJobAsync(reasoningEffort: reasoningEffort);
 
         Assert.Equal(2, _http.ModelRequests.Count);
-        Assert.All(_http.ModelRequests, request => Assert.Equal(("test/model", reasoningEffort), request));
+        Assert.All(_http.ModelRequests, request => Assert.Equal((ConfiguredModel, reasoningEffort), request));
     }
 
     [Fact]
@@ -121,6 +159,120 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
+    public async Task ExecuteAsync_Rerun_KeepsOneAnnotationPerKey()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunJobAsync();
+        await RunJobAsync();
+
+        Assert.Equal(1, _http.ModelCalls);
+        await using var verify = NewContext();
+        var annotation = await verify.MemeAnnotations.SingleAsync();
+        Assert.Equal((11UL, ConfiguredModel, OpenRouterClient.PromptVersion),
+            (annotation.AttachmentDiscordId, annotation.ModelId, annotation.PromptVersion));
+    }
+
+    // Both halves of the key count: another model, or this model under an older prompt.
+    [Theory]
+    [InlineData("other/model", OpenRouterClient.PromptVersion)]
+    [InlineData(ConfiguredModel, "legacy")]
+    public async Task ExecuteAsync_IndexedRowWithoutConfiguredKeyAnnotation_GetsOneMoreAnnotation(
+        string existingModel, string existingPromptVersion)
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        Annotate(SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, attemptCount: 1), existingModel, existingPromptVersion);
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunJobAsync();
+
+        Assert.Equal(1, _http.ModelCalls);
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync();
+        Assert.Equal(MemeIndexStatus.Indexed, row.Status);
+        Assert.Null(row.Error);
+        Assert.Equal(1, row.AttemptCount);
+        var annotations = await verify.MemeAnnotations.ToListAsync();
+        Assert.Equal(2, annotations.Count);
+        Assert.Contains(annotations, a => a.ModelId == existingModel && a.PromptVersion == existingPromptVersion);
+        Assert.Contains(annotations, a => a.ModelId == ConfiguredModel && a.PromptVersion == OpenRouterClient.PromptVersion
+            && a.DescriptionPl == "Opis obrazka 1" && a.RawResponseJson is not null);
+    }
+
+    [Fact]
+    public async Task ExecuteSweepAsync_IndexedRowWithoutConfiguredKeyAnnotation_IsNotRevisited()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        Annotate(SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, attemptCount: 1), "other/model");
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunSweepAsync();
+
+        Assert.Equal(0, _http.ModelCalls);
+        Assert.Equal(0, _http.CdnRequests);
+        await using var verify = NewContext();
+        Assert.Equal("other/model", (await verify.MemeAnnotations.SingleAsync()).ModelId);
+    }
+
+    // The key is unique: a second INSERT of it would be a violation, so the writer must see the
+    // annotation before it spends a download or a model call.
+    [Theory]
+    [InlineData(MemeIndexStatus.Failed)]
+    [InlineData(MemeIndexStatus.Pending)]
+    public async Task ExecuteAsync_RowAlreadyHasConfiguredKeyAnnotation_BecomesIndexedWithoutDownloadOrModelCall(
+        MemeIndexStatus status)
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        Annotate(SeedRow(1001UL, 11UL, status, attemptCount: 2), ConfiguredModel);
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunJobAsync();
+
+        Assert.Equal(0, _http.ModelCalls);
+        Assert.Equal(0, _http.CdnRequests);
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync();
+        Assert.Equal(MemeIndexStatus.Indexed, row.Status);
+        Assert.Null(row.Error);
+        Assert.Equal(2, row.AttemptCount);
+        Assert.Equal(1, await verify.MemeAnnotations.CountAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteAsync_ExtraAnnotationFailsOrIsRefused_IndexedRowIsNotDowngraded(bool refusal)
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        Annotate(SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, attemptCount: 1), "other/model");
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        (refusal ? _http.RefusalFor : _http.TransientErrorFor).Add(Png(1));
+
+        await RunJobAsync();
+
+        // The model was asked: the row is still Indexed because of the rule, not because nothing ran.
+        Assert.Equal(1, _http.ModelCalls);
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync();
+        Assert.Equal(MemeIndexStatus.Indexed, row.Status);
+        Assert.Null(row.Error);
+        Assert.Equal(1, row.AttemptCount);
+        Assert.Equal("other/model", (await verify.MemeAnnotations.SingleAsync()).ModelId);
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_SameBytesTwice_DedupesWithoutSecondModelCall()
     {
         AddMessage(1001UL, Attachment(11UL, "original.png"));
@@ -136,9 +288,167 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         var rows = await verify.MemeIndex.OrderBy(m => m.AttachmentDiscordId).ToListAsync();
         Assert.All(rows, r => Assert.Equal(MemeIndexStatus.Indexed, r.Status));
         Assert.Equal(rows[0].ContentHash, rows[1].ContentHash);
-        Assert.Equal(rows[0].DescriptionPl, rows[1].DescriptionPl);
-        Assert.NotNull(rows[0].RawResponseJson);
-        Assert.Null(rows[1].RawResponseJson);
+        var annotations = await verify.MemeAnnotations.OrderBy(a => a.AttachmentDiscordId).ToListAsync();
+        Assert.Equal([11UL, 12UL], annotations.Select(a => a.AttachmentDiscordId));
+        Assert.Equal(annotations[0].DescriptionPl, annotations[1].DescriptionPl);
+        Assert.Equal((annotations[0].ModelId, annotations[0].PromptVersion), (annotations[1].ModelId, annotations[1].PromptVersion));
+        // Provenance stays on the original: the copy carries no raw response.
+        Assert.NotNull(annotations[0].RawResponseJson);
+        Assert.Null(annotations[1].RawResponseJson);
+    }
+
+    // Driven by the sweep: it never revisits the Indexed original, so the repost is the only work.
+    [Fact]
+    public async Task ExecuteSweepAsync_RepostOfMemeWithTwoAnnotations_CopiesAllAnnotations()
+    {
+        AddMessage(1001UL, Attachment(11UL, "original.png"));
+        AddMessage(1002UL, Attachment(12UL, "repost.png"));
+        await _db.SaveChangesAsync();
+        var originalIndexedAtUtc = DateTime.UtcNow.AddDays(-30);
+        var original = SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, contentHash: HashOf(Png(7)));
+        Annotate(original, "model/a", "legacy", descriptionPl: "Opis modelu A", reasoningEffort: "low", indexedAtUtc: originalIndexedAtUtc);
+        Annotate(original, "model/b", descriptionPl: "Opis modelu B", indexedAtUtc: originalIndexedAtUtc);
+        await _db.SaveChangesAsync();
+        _http.SetImage(12UL, Png(7));
+
+        await RunSweepAsync();
+
+        Assert.Equal(0, _http.ModelCalls);
+        await using var verify = NewContext();
+        var repost = await verify.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 12UL);
+        Assert.Equal(MemeIndexStatus.Indexed, repost.Status);
+        var copies = await verify.MemeAnnotations
+            .Where(a => a.AttachmentDiscordId == 12UL)
+            .OrderBy(a => a.ModelId)
+            .ToListAsync();
+        Assert.Equal(
+            [("model/a", "legacy", "low", "Opis modelu A"), ("model/b", OpenRouterClient.PromptVersion, null, "Opis modelu B")],
+            copies.Select(c => (c.ModelId, c.PromptVersion, c.ReasoningEffort, c.DescriptionPl)));
+        Assert.All(copies, c =>
+        {
+            Assert.Equal(repost.Id, c.MemeIndexId);
+            Assert.Null(c.RawResponseJson);
+            // A copy is dated by the copy, not by the original's model call.
+            Assert.True(c.IndexedAtUtc > originalIndexedAtUtc.AddDays(29));
+        });
+        Assert.Equal(2, await verify.MemeAnnotations.CountAsync(a => a.AttachmentDiscordId == 11UL && a.RawResponseJson != null));
+    }
+
+    [Fact]
+    public async Task ExecuteSweepAsync_TwoIndexedRowsShareTheHash_RepostCopiesFromTheOldest()
+    {
+        AddMessage(1001UL, Attachment(11UL, "newer.png"));
+        AddMessage(1002UL, Attachment(12UL, "older.png"));
+        AddMessage(1003UL, Attachment(13UL, "repost.png"));
+        await _db.SaveChangesAsync();
+        // The newer row goes in first, so it wins on id and on physical order: only
+        // first_seen_utc makes the other row the oldest.
+        var newer = SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, contentHash: HashOf(Png(7)));
+        Annotate(newer, "model/b", descriptionPl: "z nowszego");
+        Annotate(newer, "model/c", descriptionPl: "z nowszego");
+        await _db.SaveChangesAsync();
+        Annotate(SeedRow(1002UL, 12UL, MemeIndexStatus.Indexed, contentHash: HashOf(Png(7))), "model/a", descriptionPl: "z najstarszego");
+        await _db.SaveChangesAsync();
+        await _db.MemeIndex
+            .Where(m => m.AttachmentDiscordId == 12UL)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.FirstSeenUtc, DateTime.UtcNow.AddDays(-30)));
+        _http.SetImage(13UL, Png(7));
+
+        await RunSweepAsync();
+
+        Assert.Equal(0, _http.ModelCalls);
+        await using var verify = NewContext();
+        var copy = await verify.MemeAnnotations.SingleAsync(a => a.AttachmentDiscordId == 13UL);
+        Assert.Equal("model/a", copy.ModelId);
+        Assert.Equal("z najstarszego", copy.DescriptionPl);
+    }
+
+    // The manual backfill revisits an Indexed repost for the configured writer's annotation. When
+    // the original lacks that key too, the copy cannot finish the job: the model still has to run.
+    [Fact]
+    public async Task ExecuteAsync_IndexedRepostLacksConfiguredKeyAfterCopy_SavesTheCopyAndCallsTheModel()
+    {
+        // No attachment on the original's message: it is not a candidate, so only the repost is revisited.
+        AddMessage(1001UL);
+        AddMessage(1002UL, Attachment(12UL, "repost.png"));
+        await _db.SaveChangesAsync();
+        var original = SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, contentHash: HashOf(Png(7)));
+        Annotate(original, "model/a");
+        Annotate(original, "model/b", descriptionPl: "Opis modelu B");
+        Annotate(SeedRow(1002UL, 12UL, MemeIndexStatus.Indexed, contentHash: HashOf(Png(7)), attemptCount: 1), "model/a");
+        await _db.SaveChangesAsync();
+        _http.SetImage(12UL, Png(7));
+
+        await RunJobAsync();
+
+        Assert.Equal(1, _http.ModelCalls);
+        await using var verify = NewContext();
+        var annotations = await verify.MemeAnnotations
+            .Where(a => a.AttachmentDiscordId == 12UL)
+            .OrderBy(a => a.ModelId)
+            .ToListAsync();
+        Assert.Equal(["model/a", "model/b", ConfiguredModel], annotations.Select(a => a.ModelId));
+        Assert.Equal("Opis modelu B", annotations[1].DescriptionPl);
+        Assert.Null(annotations[1].RawResponseJson);
+        Assert.NotNull(annotations[2].RawResponseJson);
+    }
+
+    // The usual repost in a second-model backfill: the original already has the configured
+    // writer's annotation, so the copy finishes the job and no model call is paid.
+    [Fact]
+    public async Task ExecuteAsync_IndexedRepostWhoseOriginalHasConfiguredKey_CopiesItWithoutModelCall()
+    {
+        AddMessage(1001UL);
+        AddMessage(1002UL, Attachment(12UL, "repost.png"));
+        await _db.SaveChangesAsync();
+        var original = SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, contentHash: HashOf(Png(7)));
+        Annotate(original, "model/a");
+        Annotate(original, ConfiguredModel, descriptionPl: "Opis z oryginału");
+        Annotate(SeedRow(1002UL, 12UL, MemeIndexStatus.Indexed, contentHash: HashOf(Png(7)), attemptCount: 1), "model/a");
+        await _db.SaveChangesAsync();
+        _http.SetImage(12UL, Png(7));
+
+        await RunJobAsync();
+
+        Assert.Equal(0, _http.ModelCalls);
+        await using var verify = NewContext();
+        var repost = await verify.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 12UL);
+        Assert.Equal(MemeIndexStatus.Indexed, repost.Status);
+        Assert.Null(repost.Error);
+        Assert.Equal(1, repost.AttemptCount);
+        var annotations = await verify.MemeAnnotations
+            .Where(a => a.AttachmentDiscordId == 12UL)
+            .OrderBy(a => a.ModelId)
+            .ToListAsync();
+        Assert.Equal(["model/a", ConfiguredModel], annotations.Select(a => a.ModelId));
+        Assert.Equal("Opis z oryginału", annotations[1].DescriptionPl);
+        Assert.Null(annotations[1].RawResponseJson);
+    }
+
+    // Postgres rejects the extra annotation (NUL byte). The recovery path must leave the Indexed
+    // row alone: recording the rejection would charge it an attempt on every manual run.
+    [Fact]
+    public async Task ExecuteAsync_ExtraAnnotationRejectedBySave_IndexedRowIsLeftUntouched()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        Annotate(SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, attemptCount: 1), "other/model");
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.NulOcrFor.Add(Png(1));
+
+        await RunJobAsync();
+
+        Assert.Equal(1, _http.ModelCalls);
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 11UL);
+        Assert.Equal(MemeIndexStatus.Indexed, row.Status);
+        Assert.Null(row.Error);
+        Assert.Equal(1, row.AttemptCount);
+        var annotation = await verify.MemeAnnotations.SingleAsync(a => a.AttachmentDiscordId == 11UL);
+        Assert.Equal("other/model", annotation.ModelId);
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
     }
 
     [Fact]
@@ -205,8 +515,10 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal(MemeIndexStatus.Failed, byId[12UL].Status);
         Assert.StartsWith("poisoned: ", byId[12UL].Error);
         Assert.Equal(1, byId[12UL].AttemptCount);
-        Assert.Null(byId[12UL].OcrText);
         Assert.Equal(MemeIndexStatus.Indexed, byId[13UL].Status);
+        // The rejected annotation went down with its save; the neighbours kept theirs.
+        Assert.Equal([11UL, 13UL],
+            await verify.MemeAnnotations.OrderBy(a => a.AttachmentDiscordId).Select(a => a.AttachmentDiscordId).ToListAsync());
 
         // The run outlived the poison row: checkpoint terminal, progress counted, cursor at the end.
         var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
@@ -220,6 +532,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         var retried = await verify2.MemeIndex.SingleAsync(m => m.AttachmentDiscordId == 12UL);
         Assert.Equal(MemeIndexStatus.Failed, retried.Status);
         Assert.Equal(2, retried.AttemptCount);
+        Assert.False(await verify2.MemeAnnotations.AnyAsync(a => a.AttachmentDiscordId == 12UL));
     }
 
     [Fact]
@@ -251,13 +564,21 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
                 FileName = "raced.png",
                 FileSizeBytes = 123,
                 Status = MemeIndexStatus.Indexed,
-                DescriptionPl = "wygrany",
-                DescriptionEn = "winner",
-                OcrText = "",
-                ModelId = "other/run",
-                RawResponseJson = "{}",
-                IndexedAtUtc = DateTime.UtcNow,
                 AttemptCount = 1,
+                Annotations =
+                [
+                    new MemeAnnotationEntity
+                    {
+                        AttachmentDiscordId = 11UL,
+                        ModelId = "other/run",
+                        PromptVersion = OpenRouterClient.PromptVersion,
+                        IndexedAtUtc = DateTime.UtcNow,
+                        DescriptionPl = "wygrany",
+                        DescriptionEn = "winner",
+                        OcrText = "",
+                        RawResponseJson = "{}",
+                    },
+                ],
             });
             await other.SaveChangesAsync();
         };
@@ -267,7 +588,8 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         await using var verify = NewContext();
         var byId = await verify.MemeIndex.ToDictionaryAsync(m => m.AttachmentDiscordId);
         Assert.Equal(MemeIndexStatus.Indexed, byId[11UL].Status);
-        Assert.Equal("other/run", byId[11UL].ModelId);
+        // This run's own annotation was in the rejected save; the winner's row and annotation stand.
+        Assert.Equal("other/run", (await verify.MemeAnnotations.SingleAsync(a => a.AttachmentDiscordId == 11UL)).ModelId);
         Assert.Null(byId[11UL].Error);
         Assert.Equal(1, byId[11UL].AttemptCount);
         Assert.Equal(MemeIndexStatus.Indexed, byId[12UL].Status);
@@ -577,7 +899,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         services.Configure<OpenRouterOptions>(o =>
         {
             o.ApiKey = "test-key";
-            o.Model = "test/model";
+            o.Model = ConfiguredModel;
             o.ReasoningEffort = reasoningEffort;
             o.RequestDelayMs = 0;
         });
@@ -613,6 +935,51 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         });
     }
 
+    // Call after the message is saved: the status row needs the message's database id.
+    private MemeIndexEntity SeedRow(
+        ulong messageDiscordId, ulong attachmentId, MemeIndexStatus status, string? contentHash = null, int attemptCount = 0)
+    {
+        var row = new MemeIndexEntity
+        {
+            MessageId = _db.Messages.Local.Single(m => m.DiscordId == messageDiscordId).Id,
+            GuildDiscordId = GuildDiscordId,
+            ChannelDiscordId = ChannelDiscordId,
+            MessageDiscordId = messageDiscordId,
+            AttachmentDiscordId = attachmentId,
+            FileName = $"seeded-{attachmentId}.png",
+            FileSizeBytes = 123,
+            ContentHash = contentHash,
+            Status = status,
+            Error = status is MemeIndexStatus.Failed or MemeIndexStatus.Skipped ? "seeded by test" : null,
+            AttemptCount = attemptCount
+        };
+        _db.MemeIndex.Add(row);
+        return row;
+    }
+
+    private static void Annotate(
+        MemeIndexEntity row,
+        string modelId,
+        string promptVersion = OpenRouterClient.PromptVersion,
+        string descriptionPl = "Opis z seeda",
+        string? reasoningEffort = null,
+        DateTime? indexedAtUtc = null) =>
+        row.Annotations.Add(new MemeAnnotationEntity
+        {
+            AttachmentDiscordId = row.AttachmentDiscordId,
+            ModelId = modelId,
+            PromptVersion = promptVersion,
+            ReasoningEffort = reasoningEffort,
+            IndexedAtUtc = indexedAtUtc ?? DateTime.UtcNow,
+            DescriptionPl = descriptionPl,
+            DescriptionEn = "Seeded description",
+            OcrText = "",
+            Tags = ["seed"],
+            RawResponseJson = "{}"
+        });
+
+    private static string HashOf(byte[] bytes) => Convert.ToHexStringLower(SHA256.HashData(bytes));
+
     // The 4-field PascalCase shape MessageEventHandler/MessagesBackfillJob serialize.
     private static string Attachment(ulong id, string fileName, long fileSize = 123) =>
         $"{{\"Id\":{id},\"Url\":\"https://cdn.test/attachments/{ChannelDiscordId}/{id}/{fileName}?ex=expired\",\"FileName\":\"{fileName}\",\"FileSize\":{fileSize}}}";
@@ -640,7 +1007,7 @@ internal sealed class FakeMemeHttpHandler : HttpMessageHandler
     public List<byte[]> TransientErrorFor { get; } = [];
     // Valid JSON, but Postgres rejects U+0000 in text columns — the save throws (#311).
     public List<byte[]> NulOcrFor { get; } = [];
-    // Passes System.Text.Json's presence-only `required`, violates ck_meme_index_status (#311).
+    // Passes System.Text.Json's presence-only `required`, violates the NOT NULL metadata columns (#311).
     public List<byte[]> NullDescriptionFor { get; } = [];
     // Runs mid model call — after the job added its row, before it saves (#311 concurrent-run race).
     public Func<Task>? DuringModelCall { get; set; }

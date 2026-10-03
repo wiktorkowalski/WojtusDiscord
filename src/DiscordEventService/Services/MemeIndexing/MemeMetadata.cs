@@ -49,7 +49,7 @@ internal sealed record MemeAnalysisResult
     public bool IsTransient { get; init; }
 
     // The model's verbatim structured-output JSON — provenance for
-    // meme_index.raw_response_json (#221).
+    // meme_annotations.raw_response_json (#221, #367).
     public string? RawContent { get; init; }
 
     public static MemeAnalysisResult Success(MemeMetadata metadata, MemeAnalysisUsage usage, string? rawContent = null) =>

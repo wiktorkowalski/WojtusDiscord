@@ -42,6 +42,7 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         await _db.ConversationMessages.ExecuteDeleteAsync();
         await _db.ConversationUsage.ExecuteDeleteAsync();
         await _db.Conversations.ExecuteDeleteAsync();
+        await _db.MemeAnnotations.ExecuteDeleteAsync();
         await _db.MemeIndex.ExecuteDeleteAsync();
         await _db.Messages.ExecuteDeleteAsync();
         await _db.Channels.ExecuteDeleteAsync();
@@ -488,13 +489,21 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
             ContentType = "image/png",
             ContentHash = "hash-61",
             Status = MemeIndexStatus.Indexed,
-            DescriptionPl = "Żółw na deskorolce",
-            DescriptionEn = "A turtle on a skateboard",
-            OcrText = "",
-            Tags = ["żółw"],
-            ModelId = "google/gemini-3-flash-preview",
-            RawResponseJson = "{}",
-            IndexedAtUtc = DateTime.UtcNow,
+            Annotations =
+            [
+                new MemeAnnotationEntity
+                {
+                    AttachmentDiscordId = 61UL,
+                    ModelId = "google/gemini-3-flash-preview",
+                    PromptVersion = OpenRouterClient.PromptVersion,
+                    IndexedAtUtc = DateTime.UtcNow,
+                    DescriptionPl = "Żółw na deskorolce",
+                    DescriptionEn = "A turtle on a skateboard",
+                    OcrText = "",
+                    Tags = ["żółw"],
+                    RawResponseJson = "{}",
+                },
+            ],
         });
         await _db.SaveChangesAsync();
     }

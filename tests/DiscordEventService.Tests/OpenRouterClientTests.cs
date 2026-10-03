@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using DiscordEventService.Configuration;
@@ -73,6 +74,22 @@ public sealed class OpenRouterClientTests
 
         Assert.False(sent.TryGetProperty("reasoning", out _));
         Assert.Equal(4000, sent.GetProperty("max_tokens").GetInt32());
+    }
+
+    // PromptVersion is half of an annotation's key (#367). A prompt or schema edit under the same
+    // version makes new output look like old output. This pin fails until both move together:
+    // bump OpenRouterClient.PromptVersion, then update the version and the fingerprint here.
+    [Fact]
+    public async Task AnalyzeImageAsync_PromptAndSchema_MatchThePinnedPromptVersion()
+    {
+        var sent = await CaptureRequestBodyAsync(reasoningEffort: null);
+
+        var prompt = sent.GetProperty("messages")[0].GetProperty("content").GetString()!.ReplaceLineEndings("\n");
+        var schema = sent.GetProperty("response_format").GetRawText();
+        var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(prompt + "\n" + schema)));
+
+        Assert.Equal("v2", OpenRouterClient.PromptVersion);
+        Assert.Equal("781baad602ef984d53da889af0b2727c7c14f7ae81892a2b2cae3ef12dd8478d", fingerprint);
     }
 
     [Theory]

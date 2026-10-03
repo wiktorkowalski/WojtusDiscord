@@ -156,13 +156,21 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
             ContentType = "image/png",
             ContentHash = "hash-cat",
             Status = MemeIndexStatus.Indexed,
-            DescriptionPl = "Zły kot patrzy w kamerę",
-            DescriptionEn = "Grumpy cat staring at the camera",
-            OcrText = "",
-            Tags = ["kot"],
-            ModelId = "google/gemini-3-flash-preview",
-            RawResponseJson = "{}",
-            IndexedAtUtc = DateTime.UtcNow,
+            Annotations =
+            [
+                new MemeAnnotationEntity
+                {
+                    AttachmentDiscordId = 91UL,
+                    ModelId = "google/gemini-3-flash-preview",
+                    PromptVersion = OpenRouterClient.PromptVersion,
+                    IndexedAtUtc = DateTime.UtcNow,
+                    DescriptionPl = "Zły kot patrzy w kamerę",
+                    DescriptionEn = "Grumpy cat staring at the camera",
+                    OcrText = "",
+                    Tags = ["kot"],
+                    RawResponseJson = "{}",
+                },
+            ],
         });
         await _db.SaveChangesAsync();
     }

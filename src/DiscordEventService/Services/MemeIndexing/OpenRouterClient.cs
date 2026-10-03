@@ -15,6 +15,10 @@ internal sealed class OpenRouterClient(
 {
     public const string HttpClientName = "openrouter";
 
+    // Stored on every annotation as half of its key. Bump it by hand with ANY change to
+    // SystemPrompt or ResponseSchema — an unchanged version makes new output look like old output.
+    public const string PromptVersion = "v2";
+
     // Wording is benchmark-measured (#223): template fill 40→52; a stricter template definition scored lower.
     private const string SystemPrompt =
         """

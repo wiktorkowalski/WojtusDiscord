@@ -77,8 +77,10 @@ public sealed class DiscordDbContext(DbContextOptions<DiscordDbContext> options)
     // Bot heartbeats (single-row liveness signal for power-loss detection)
     public DbSet<BotHeartbeatEntity> BotHeartbeats => Set<BotHeartbeatEntity>();
 
-    // Indexed memes (#218): vision metadata per meme-channel image attachment
+    // Indexed memes (#218): one lifecycle row per meme-channel image attachment,
+    // and its vision metadata — one annotation per (model, prompt version) (#367).
     public DbSet<MemeIndexEntity> MemeIndex => Set<MemeIndexEntity>();
+    public DbSet<MemeAnnotationEntity> MemeAnnotations => Set<MemeAnnotationEntity>();
 
     // Conversational assistant memory + usage ledger (#267) — the assistant's replay
     // store, deliberately separate from the ingestion tables above.
@@ -111,7 +113,7 @@ public sealed class DiscordDbContext(DbContextOptions<DiscordDbContext> options)
         base.OnModelCreating(modelBuilder);
 
         // Meme search (#220, ADR-0005): unaccent feeds f_unaccent inside the
-        // meme_index generated columns; pg_trgm backs the trigram GIN index.
+        // meme_annotations generated columns; pg_trgm backs the trigram GIN index.
         modelBuilder.HasPostgresExtension("unaccent");
         modelBuilder.HasPostgresExtension("pg_trgm");
 

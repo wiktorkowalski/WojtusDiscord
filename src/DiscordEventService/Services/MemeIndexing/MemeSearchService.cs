@@ -48,25 +48,44 @@ public sealed class MemeSearchService(DiscordDbContext db)
         // Column names are snake_case: the EFCore.NamingConventions plugin
         // applies to SqlQuery DTOs too, so MemeSearchRow.Score binds to
         // "score", MessageCreatedAtUtc to "message_created_at_utc", etc.
+        //
+        // An attachment has one annotation per model + prompt version (#367). DISTINCT ON keeps
+        // its best-scoring one, so the score is max(score) and the description/tags shown come
+        // from the row that earned it — a weak or wrong annotation can add a hit, never hide one.
+        // LIMIT applies after that, to attachments.
         var rows = await db.Database.SqlQuery<MemeSearchRow>($"""
-            SELECT m.channel_discord_id,
-                   m.message_discord_id,
-                   m.attachment_discord_id,
-                   m.file_name,
-                   m.description_pl,
-                   m.description_en,
-                   m.tags,
-                   msg.created_at_utc AS message_created_at_utc,
-                   (ts_rank(m.search_vector, to_tsquery('simple', public.f_unaccent({orQuery})))
-                    + {TrigramWeight} * word_similarity(public.f_unaccent({query}), m.search_text))::float8 AS score
-            FROM meme_index AS m
-            JOIN messages AS msg ON msg.id = m.message_id
-            WHERE m.guild_discord_id = {guild}
-              AND m.status = {indexed}
-              AND NOT msg.is_deleted
-              AND (m.search_vector @@ to_tsquery('simple', public.f_unaccent({orQuery}))
-                   OR word_similarity(public.f_unaccent({query}), m.search_text) >= {TrigramThreshold})
-            ORDER BY score DESC, msg.created_at_utc DESC
+            SELECT channel_discord_id,
+                   message_discord_id,
+                   attachment_discord_id,
+                   file_name,
+                   description_pl,
+                   description_en,
+                   tags,
+                   message_created_at_utc,
+                   score
+            FROM (
+                SELECT DISTINCT ON (m.attachment_discord_id)
+                       m.channel_discord_id,
+                       m.message_discord_id,
+                       m.attachment_discord_id,
+                       m.file_name,
+                       a.description_pl,
+                       a.description_en,
+                       a.tags,
+                       msg.created_at_utc AS message_created_at_utc,
+                       (ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({orQuery})))
+                        + {TrigramWeight} * word_similarity(public.f_unaccent({query}), a.search_text))::float8 AS score
+                FROM meme_annotations AS a
+                JOIN meme_index AS m ON m.id = a.meme_index_id
+                JOIN messages AS msg ON msg.id = m.message_id
+                WHERE m.guild_discord_id = {guild}
+                  AND m.status = {indexed}
+                  AND NOT msg.is_deleted
+                  AND (a.search_vector @@ to_tsquery('simple', public.f_unaccent({orQuery}))
+                       OR word_similarity(public.f_unaccent({query}), a.search_text) >= {TrigramThreshold})
+                ORDER BY m.attachment_discord_id, score DESC, a.indexed_at_utc DESC, a.model_id, a.prompt_version
+            ) AS best
+            ORDER BY score DESC, message_created_at_utc DESC
             LIMIT {limit}
             """).ToListAsync(cancellationToken);
 
