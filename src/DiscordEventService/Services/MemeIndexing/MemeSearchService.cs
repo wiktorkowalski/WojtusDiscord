@@ -29,6 +29,16 @@ public sealed class MemeSearchService(DiscordDbContext db)
     // inflections (postgres ~ postgresie) still match without false positives.
     private const double TrigramThreshold = 0.4;
 
+    // Polish and English function words kept out of the ts_rank query (#380). Compared with the
+    // tokens before unaccent, hence both "sie" and "się". Measured on #370; the same list is
+    // STOP_WORDS in tools/meme-eval/retrieval_eval.py.
+    private static readonly HashSet<string> RankStopWords =
+    [
+        "w", "we", "z", "ze", "na", "do", "od", "o", "u", "i", "a", "po", "za", "to", "ten", "ta", "te", "tym",
+        "jak", "co", "sie", "się", "że", "czy", "dla",
+        "the", "an", "of", "in", "on", "at", "is", "and", "or", "for", "with"
+    ];
+
     public async Task<List<MemeSearchHit>> SearchAsync(
         ulong guildId, string query, int limit, CancellationToken cancellationToken)
     {
@@ -39,7 +49,14 @@ public sealed class MemeSearchService(DiscordDbContext db)
         // OR not AND: the 'simple' config keeps stopwords, so AND-semantics would
         // zero out natural-language queries. Tokens are alphanumeric-only, so the
         // OR operator cannot inject other tsquery syntax (&, !, parens, prefix stars).
-        var orQuery = string.Join(" | ", tokens);
+        //
+        // Two queries (#380). The filter keeps every token: a function word is often what lets
+        // an inflected query through ("steamie" is not "steam" in 'simple'), and the trigram
+        // score then ranks the row. The rank query drops function words, which otherwise score
+        // like content words against the weight-A search_phrases.
+        var filterQuery = string.Join(" | ", tokens);
+        var contentTokens = tokens.Where(t => !RankStopWords.Contains(t)).ToList();
+        var rankQuery = contentTokens.Count > 0 ? string.Join(" | ", contentTokens) : filterQuery;
         var guild = (long)guildId;
         var indexed = (int)MemeIndexStatus.Indexed;
 
@@ -73,7 +90,7 @@ public sealed class MemeSearchService(DiscordDbContext db)
                        a.description_en,
                        a.tags,
                        msg.created_at_utc AS message_created_at_utc,
-                       (ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({orQuery})))
+                       (ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({rankQuery})))
                         + {TrigramWeight} * word_similarity(public.f_unaccent({query}), a.search_text))::float8 AS score
                 FROM meme_annotations AS a
                 JOIN meme_index AS m ON m.id = a.meme_index_id
@@ -81,7 +98,7 @@ public sealed class MemeSearchService(DiscordDbContext db)
                 WHERE m.guild_discord_id = {guild}
                   AND m.status = {indexed}
                   AND NOT msg.is_deleted
-                  AND (a.search_vector @@ to_tsquery('simple', public.f_unaccent({orQuery}))
+                  AND (a.search_vector @@ to_tsquery('simple', public.f_unaccent({filterQuery}))
                        OR word_similarity(public.f_unaccent({query}), a.search_text) >= {TrigramThreshold})
                 ORDER BY m.attachment_discord_id, score DESC, a.indexed_at_utc DESC, a.model_id, a.prompt_version
             ) AS best

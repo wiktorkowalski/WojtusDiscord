@@ -2,8 +2,8 @@
 """Retrieval eval for meme search (#370): owner-style queries against the real search SQL.
 
 The SQL in rank_sql is MemeSearchService.SearchAsync, copied verbatim apart from inlined
-parameters and a separate tsquery for the WHERE filter. Keep the two in step: a change to the
-ranking there must be repeated here.
+parameters. Keep the two in step: a change to the ranking there must be repeated here.
+STOP_WORDS is MemeSearchService.RankStopWords.
 
 A writer set is scored through a temporary view named meme_annotations that holds only that set's
 rows. pg_temp resolves before public, so the query text stays the production query (best
@@ -14,13 +14,12 @@ annotation per attachment) and nothing is written.
 <dir> holds blindq*.json ([{id, queries: [{q, type}]}]) and optionally labels/<attachmentId>.json
 ({data: {own: "query, query"}}), as exported from the calibration artifact.
 
-Tokenizer variants (the two questions on #370):
-  prod   what Tokenize does today: split on whitespace, delete every non letter/digit
-  split  every non letter/digit is a separator ("korwin-mikke" -> korwin, mikke)
-  stop   prod + drop a short PL/EN stop list when another token remains
-  both   split + stop
-  rank   stop list in the ts_rank query only; the WHERE filter keeps every token, so a row that
-         only a function word lets through is still returned and ranked by its trigram score
+Tokenizer variants:
+  prod    what SearchAsync does since #380: split on whitespace, delete every non letter/digit;
+          stop list in the ts_rank query only, when another token remains
+  nostop  search before #380: every token in both queries
+  split   prod, but every non letter/digit is a separator ("korwin-mikke" -> korwin, mikke)
+  filter  stop list in the WHERE filter too (measured on #370: it loses rows; kept as the control)
 The raw query that feeds word_similarity is never changed.
 
 Every row is compared with the baseline: the prod tokenizer at the production trigram weight.
@@ -44,7 +43,7 @@ TOP_K = 5  # MemeSearchService.DefaultLimit
 RANK_DEPTH = 100  # SearchAsync takes a limit; the eval needs ranks past 5 for MRR
 
 STOP_WORDS = frozenset(
-    "w we z ze na do od o u i a po za to ten ta te tym jak co sie się ze że czy dla "
+    "w we z ze na do od o u i a po za to ten ta te tym jak co sie się że czy dla "
     "the an of in on at is and or for with".split())
 
 
@@ -64,13 +63,20 @@ def drop_stop_words(tokens):
     return [t for t in tokens if t not in STOP_WORDS] or tokens
 
 
+def rank_only(tokenize):
+    """Stop list in the ts_rank query only, as SearchAsync does."""
+    def tokens_for(query):
+        tokens = tokenize(query)
+        return drop_stop_words(tokens), tokens
+    return tokens_for
+
+
 # name -> query -> (tokens for ts_rank, tokens for the WHERE filter)
 TOKENIZERS = {
-    "prod": lambda q: (tokenize_prod(q),) * 2,
-    "split": lambda q: (tokenize_split(q),) * 2,
-    "stop": lambda q: (drop_stop_words(tokenize_prod(q)),) * 2,
-    "both": lambda q: (drop_stop_words(tokenize_split(q)),) * 2,
-    "rank": lambda q: (drop_stop_words(tokenize_prod(q)), tokenize_prod(q)),
+    "prod": rank_only(tokenize_prod),
+    "nostop": lambda q: (tokenize_prod(q),) * 2,
+    "split": rank_only(tokenize_split),
+    "filter": lambda q: (drop_stop_words(tokenize_prod(q)),) * 2,
 }
 
 
@@ -91,7 +97,7 @@ class Db:
 
 
 def rank_sql(index, guild, target, query, rank_tokens, filter_tokens, trigram_weight):
-    or_query = lit(" | ".join(rank_tokens))
+    rank_query = lit(" | ".join(rank_tokens))
     filter_query = lit(" | ".join(filter_tokens))
     raw = lit(query)
     return f"""
@@ -101,7 +107,7 @@ SELECT {index}, COALESCE((SELECT r FROM (
     SELECT DISTINCT ON (m.attachment_discord_id)
            m.attachment_discord_id,
            msg.created_at_utc AS message_created_at_utc,
-           (ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({or_query})))
+           (ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({rank_query})))
             + {trigram_weight} * word_similarity(public.f_unaccent({raw}), a.search_text))::float8 AS score
     FROM meme_annotations AS a
     JOIN meme_index AS m ON m.id = a.meme_index_id
@@ -194,7 +200,7 @@ def sweep(db, guild, queries, writers, weights):
                 versus = (f"  better={delta['better']} worse={delta['worse']} "
                           f"top1 +{delta['top1_gained']}/-{delta['top1_lost']}")
             rows.append(row)
-            print(f"{label:44} tok={name:5} k={weight:<4} top1={row['top1']:.1%} r@5={row['recall5']:.1%} "
+            print(f"{label:44} tok={name:6} k={weight:<4} top1={row['top1']:.1%} r@5={row['recall5']:.1%} "
                   f"MRR={row['mrr']:.3f} miss={row['not_returned']:3}{versus}")
     return rows
 
