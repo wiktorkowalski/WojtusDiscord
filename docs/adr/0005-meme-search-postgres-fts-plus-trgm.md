@@ -44,3 +44,12 @@ The model contract and `meme_annotations` gained fields that match how people se
 - **`raw_response_json`** holds the item's `metadata` serialized again from the parsed contract, after the cut-out rule. A member outside the contract is dropped: an external writer has no strict schema, and such a member could carry a name past the rule.
 - **Access.** A shared secret in the `X-Import-Secret` header (`MemeIndex:ImportSecret`), until #339. With no secret configured the endpoint refuses every request.
 - **`MemeIndex:AutomaticIndexing`, default off.** The import needs `MemeIndex:ChannelIds` to know which attachments are memes. Before this change `ChannelIds` plus an OpenRouter key (the model has a default) was enough to start the live hook (a model call for every new meme, not capped by `MaxImagesPerRun`) and the weekly sweep. Now both do nothing until `AutomaticIndexing` is true. The manual backfill endpoint does not read the switch: it is a human trigger already.
+
+## Addendum 2026-10-04 (#380): function words stay out of the rank query
+
+Search builds two OR-joined `to_tsquery` values from the same tokens.
+
+- **The filter** (`@@`) keeps every token. A function word is often what lets an inflected query through: "steamie" is not "steam" in the `simple` config, and the trigram score then ranks the row.
+- **The rank** (`ts_rank`) drops a short Polish and English stop list (`MemeSearchService.RankStopWords`). `search_phrases` are natural language at weight A, so "w" and "na" scored like content words. A query of function words only keeps them in the rank query.
+- The raw query for `word_similarity` is unchanged. The list is compared with the tokens before `unaccent`.
+- **Measured** on #370 (249 queries, 100 memes): top-1 77.9 → 81.5 % for one writer, 80.3 → 83.1 % for both. The same list in the filter loses 6–9 rows, so it is not there.
