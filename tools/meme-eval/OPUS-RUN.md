@@ -63,7 +63,8 @@ Annotate one batch of meme images.
 
 - Rate limit: an annotator that stops leaves no `annotations.json` or a partial one. Delete the partial file and start a new annotator on the same batch. Nothing else needs a reset.
 - An image the annotator will not describe: the validator fails with `--require-all`. Take the image out of the batch with the reason, then validate again:
-  `opus_run.py skip --run-dir <run dir> --batch batch-NNNN --id <attachment id> --reason "annotator refused: <why>"`
+  `opus_run.py skip --run-dir <run dir> --batch batch-NNNN --id <attachment id> --reason "annotator declined: <why>"`
+  The command moves the item from `items` to `failed` in the manifest and records the reason in `skipped` of the state file. `--require-all` then accepts the batch without it, and no export takes the attachment again. The image file stays in the batch dir.
 
 ## 3. Validate
 

@@ -87,7 +87,7 @@ Rules:
 Use the first case that fits:
 
 1. The UI of a platform is visible (the layout of a tweet, an Instagram post, a Reddit thread, a Discord chat): `source` is that platform. A watermark of a repost site in the same image does not change it. Put the repost site in `tags`.
-2. No platform UI, but the watermark or logo of a site is visible (jbzd, kwejk, imgflip, 9gag): `source` is that site.
+2. No platform UI, but the watermark or logo of a site is visible (jbzd, kwejk, imgflip, 9gag): `source` is that site. With two site watermarks: a meme-generator mark (imgflip) loses to any other site. With two other sites, take the one that comes first in the `source` enum of the json_schema. Put the site that lost in `tags`.
 3. The visible platform is not in the enum (a chat app such as iMessage, WhatsApp or Messenger, the ChatGPT UI, a web-comic site, a news site): `source` is `"other"`. Do not pick the nearest enum value. Put the name of the platform in `tags`.
 4. Nothing of the above: `source` is `"none"`. An account handle (`@name`), an artist signature or a channel name without a platform logo or UI is not a platform: `"none"`.
 
