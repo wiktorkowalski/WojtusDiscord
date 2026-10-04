@@ -247,7 +247,7 @@ def fetch_chunk(chunk, images, token):
                 yield candidate, "path", path
 
 
-def export_batch(name, pending, state, args, token):
+def export_batch(name, pending, args, token):
     """Takes attachments from the front of `pending` until the batch is full. Returns the transient failures."""
     batch_dir = (args.run_dir / name).resolve()
     images = batch_dir / "images"
@@ -262,12 +262,18 @@ def export_batch(name, pending, state, args, token):
             if outcome == "path":
                 items.append({**entry, "local_path": str(value)})
                 continue
-            if outcome == "skip":
-                record_skip(state, candidate["id"], candidate["file_name"], value)
             failed.append({**entry, "reason": value, "retried_later": outcome == "transient"})
 
     if items:
         (batch_dir / "manifest.json").write_text(json.dumps({"items": items, "failed": failed}, ensure_ascii=False, indent=1))
+
+    # The downloads take minutes. Read the state again here: a `validate` or `skip` that ran
+    # in that time stays in the file.
+    state = load_state(args.run_dir)
+    for entry in failed:
+        if not entry["retried_later"]:
+            record_skip(state, entry["attachment_discord_id"], entry["file_name"], entry["reason"])
+    if items:
         state["batches"][name] = {
             "dir": str(batch_dir), "status": "exported", "exported_at": now(),
             "annotations_file": str(batch_dir / "annotations.json"),
@@ -305,7 +311,7 @@ def command_export(args):
             print("nothing is pending")
             break
         number += 1
-        transient += export_batch(f"batch-{number:04d}", pending, state, args, token)
+        transient += export_batch(f"batch-{number:04d}", pending, args, token)
 
     if transient:
         sys.exit(f"{len(transient)} attachments failed for now; the next export takes them again")
