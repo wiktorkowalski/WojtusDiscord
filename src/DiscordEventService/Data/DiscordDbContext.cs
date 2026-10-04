@@ -82,6 +82,10 @@ public sealed class DiscordDbContext(DbContextOptions<DiscordDbContext> options)
     public DbSet<MemeIndexEntity> MemeIndex => Set<MemeIndexEntity>();
     public DbSet<MemeAnnotationEntity> MemeAnnotations => Set<MemeAnnotationEntity>();
 
+    // Every meme search and its ranked hits (#384).
+    public DbSet<MemeSearchLogEntity> MemeSearchLog => Set<MemeSearchLogEntity>();
+    public DbSet<MemeSearchLogResultEntity> MemeSearchLogResults => Set<MemeSearchLogResultEntity>();
+
     // Conversational assistant memory + usage ledger (#267) — the assistant's replay
     // store, deliberately separate from the ingestion tables above.
     public DbSet<ConversationEntity> Conversations => Set<ConversationEntity>();

@@ -17,6 +17,11 @@ public sealed record EnumValue(int Value, string Name);
 // __EFMigrationsHistory are not EF entities so they never appear here (the latter filtered defensively).
 public sealed class SchemaCatalog
 {
+    // Kept out of the catalog, so out of the explorer and out of the assistant's schema hint (#384):
+    // the meme search log holds what each person typed. The AddMemeSearchLog migration revokes the
+    // assistant role's SELECT on the same tables; this list keeps the hint from naming them.
+    private static readonly HashSet<string> HiddenTables = ["meme_search_log", "meme_search_log_results"];
+
     private readonly Dictionary<string, TableMeta> _tables;
 
     private SchemaCatalog(Dictionary<string, TableMeta> tables) => _tables = tables;
@@ -36,7 +41,7 @@ public sealed class SchemaCatalog
                 continue;
 
             var tableName = entityType.GetTableName();
-            if (string.IsNullOrEmpty(tableName) || tableName == "__EFMigrationsHistory")
+            if (string.IsNullOrEmpty(tableName) || tableName == "__EFMigrationsHistory" || HiddenTables.Contains(tableName))
                 continue;
 
             var storeObject = StoreObjectIdentifier.Table(tableName, entityType.GetSchema());

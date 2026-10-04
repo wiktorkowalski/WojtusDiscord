@@ -1,8 +1,14 @@
+using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.MemeIndexing;
+
+// Who asked, for the search log (#384). Set by the caller from the Discord event, never by a model.
+public sealed record MemeSearchCaller(MemeSearchSource Source, ulong ChannelDiscordId, ulong UserDiscordId);
 
 public sealed record MemeSearchHit(
     ulong ChannelDiscordId,
@@ -15,7 +21,7 @@ public sealed record MemeSearchHit(
     DateTime MessageCreatedAtUtc,
     double Score);
 
-public sealed class MemeSearchService(DiscordDbContext db)
+public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter searchLog)
 {
     public const int DefaultLimit = 5;
 
@@ -29,6 +35,9 @@ public sealed class MemeSearchService(DiscordDbContext db)
     // inflections (postgres ~ postgresie) still match without false positives.
     private const double TrigramThreshold = 0.4;
 
+    // Hex characters of the stop-list hash kept as its marker: enough to tell two lists apart.
+    private const int StopListVersionLength = 12;
+
     // Polish and English function words kept out of the ts_rank query (#380). Compared with the
     // tokens before unaccent, hence both "sie" and "się". Measured on #370; the same list is
     // STOP_WORDS in tools/meme-eval/retrieval_eval.py.
@@ -39,72 +48,34 @@ public sealed class MemeSearchService(DiscordDbContext db)
         "the", "an", "of", "in", "on", "at", "is", "and", "or", "for", "with"
     ];
 
-    public async Task<List<MemeSearchHit>> SearchAsync(
-        ulong guildId, string query, int limit, CancellationToken cancellationToken)
-    {
-        var tokens = Tokenize(query);
-        if (tokens.Count == 0)
-            return [];
+    // The stop-list marker in the search log (#384): a hash of the list, so an edit of the list
+    // changes it with no version to bump by hand.
+    internal static readonly string RankStopListVersion = Convert.ToHexStringLower(
+        SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', RankStopWords.Order(StringComparer.Ordinal)))))[..StopListVersionLength];
 
-        // OR not AND: the 'simple' config keeps stopwords, so AND-semantics would
-        // zero out natural-language queries. Tokens are alphanumeric-only, so the
-        // OR operator cannot inject other tsquery syntax (&, !, parens, prefix stars).
-        //
-        // Two queries (#380). The filter keeps every token: a function word is often what lets
+    // Every call leaves one row in meme_search_log (#384), also a search with no hits. The row
+    // is written after this method returns (MemeSearchLogWriter), so it adds no wait and its
+    // failure cannot reach the caller. A search that throws leaves no row.
+    public async Task<List<MemeSearchHit>> SearchAsync(
+        ulong guildId, string query, int limit, MemeSearchCaller caller, CancellationToken cancellationToken)
+    {
+        var searchedAtUtc = DateTime.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
+
+        // Two token lists (#380). The filter keeps every token: a function word is often what lets
         // an inflected query through ("steamie" is not "steam" in 'simple'), and the trigram
         // score then ranks the row. The rank query drops function words, which otherwise score
         // like content words against the weight-A search_phrases.
-        var filterQuery = string.Join(" | ", tokens);
+        var tokens = Tokenize(query);
         var contentTokens = tokens.Where(t => !RankStopWords.Contains(t)).ToList();
-        var rankQuery = contentTokens.Count > 0 ? string.Join(" | ", contentTokens) : filterQuery;
-        var guild = (long)guildId;
-        var indexed = (int)MemeIndexStatus.Indexed;
+        var rankTokens = contentTokens.Count > 0 ? contentTokens : tokens;
 
-        // Stays raw: the custom public.f_unaccent function and the setweight ts_rank
-        // + word_similarity blend have no EF LINQ translation.
-        // Column names are snake_case: the EFCore.NamingConventions plugin
-        // applies to SqlQuery DTOs too, so MemeSearchRow.Score binds to
-        // "score", MessageCreatedAtUtc to "message_created_at_utc", etc.
-        //
-        // An attachment has one annotation per model + prompt version (#367). DISTINCT ON keeps
-        // its best-scoring one, so the score is max(score) and the description/tags shown come
-        // from the row that earned it — a weak or wrong annotation can add a hit, never hide one.
-        // LIMIT applies after that, to attachments.
-        var rows = await db.Database.SqlQuery<MemeSearchRow>($"""
-            SELECT channel_discord_id,
-                   message_discord_id,
-                   attachment_discord_id,
-                   file_name,
-                   description_pl,
-                   description_en,
-                   tags,
-                   message_created_at_utc,
-                   score
-            FROM (
-                SELECT DISTINCT ON (m.attachment_discord_id)
-                       m.channel_discord_id,
-                       m.message_discord_id,
-                       m.attachment_discord_id,
-                       m.file_name,
-                       a.description_pl,
-                       a.description_en,
-                       a.tags,
-                       msg.created_at_utc AS message_created_at_utc,
-                       (ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({rankQuery})))
-                        + {TrigramWeight} * word_similarity(public.f_unaccent({query}), a.search_text))::float8 AS score
-                FROM meme_annotations AS a
-                JOIN meme_index AS m ON m.id = a.meme_index_id
-                JOIN messages AS msg ON msg.id = m.message_id
-                WHERE m.guild_discord_id = {guild}
-                  AND m.status = {indexed}
-                  AND NOT msg.is_deleted
-                  AND (a.search_vector @@ to_tsquery('simple', public.f_unaccent({filterQuery}))
-                       OR word_similarity(public.f_unaccent({query}), a.search_text) >= {TrigramThreshold})
-                ORDER BY m.attachment_discord_id, score DESC, a.indexed_at_utc DESC, a.model_id, a.prompt_version
-            ) AS best
-            ORDER BY score DESC, message_created_at_utc DESC
-            LIMIT {limit}
-            """).ToListAsync(cancellationToken);
+        // A query with no word characters runs no SQL. It is still a search, and is logged as one.
+        var rows = tokens.Count == 0
+            ? []
+            : await QueryAsync(guildId, query, tokens, rankTokens, limit, cancellationToken);
+
+        searchLog.Write(NewLogRow(searchedAtUtc, guildId, query, limit, caller, tokens, rankTokens, rows, stopwatch.Elapsed));
 
         return rows
             .Select(r => new MemeSearchHit(
@@ -119,6 +90,115 @@ public sealed class MemeSearchService(DiscordDbContext db)
                 r.Score))
             .ToList();
     }
+
+    private Task<List<MemeSearchRow>> QueryAsync(
+        ulong guildId, string query, List<string> tokens, List<string> rankTokens, int limit, CancellationToken cancellationToken)
+    {
+        // OR not AND: the 'simple' config keeps stopwords, so AND-semantics would
+        // zero out natural-language queries. Tokens are alphanumeric-only, so the
+        // OR operator cannot inject other tsquery syntax (&, !, parens, prefix stars).
+        var filterQuery = string.Join(" | ", tokens);
+        var rankQuery = string.Join(" | ", rankTokens);
+        var guild = (long)guildId;
+        var indexed = (int)MemeIndexStatus.Indexed;
+
+        // Stays raw: the custom public.f_unaccent function and the setweight ts_rank
+        // + word_similarity blend have no EF LINQ translation.
+        // Column names are snake_case: the EFCore.NamingConventions plugin
+        // applies to SqlQuery DTOs too, so MemeSearchRow.Score binds to
+        // "score", MessageCreatedAtUtc to "message_created_at_utc", etc.
+        //
+        // An attachment has one annotation per model + prompt version (#367). DISTINCT ON keeps
+        // its best-scoring one, so the score is max(score) and the description/tags shown come
+        // from the row that earned it — a weak or wrong annotation can add a hit, never hide one.
+        // LIMIT applies after that, to attachments.
+        //
+        // model_id, prompt_version, ts_rank and trigram_similarity are for the search log (#384):
+        // the winning annotation and the two parts of its score. Nothing in the ranking reads them.
+        return db.Database.SqlQuery<MemeSearchRow>($"""
+            SELECT channel_discord_id,
+                   message_discord_id,
+                   attachment_discord_id,
+                   file_name,
+                   description_pl,
+                   description_en,
+                   tags,
+                   message_created_at_utc,
+                   score,
+                   model_id,
+                   prompt_version,
+                   ts_rank,
+                   trigram_similarity
+            FROM (
+                SELECT DISTINCT ON (m.attachment_discord_id)
+                       m.channel_discord_id,
+                       m.message_discord_id,
+                       m.attachment_discord_id,
+                       m.file_name,
+                       a.description_pl,
+                       a.description_en,
+                       a.tags,
+                       msg.created_at_utc AS message_created_at_utc,
+                       (ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({rankQuery})))
+                        + {TrigramWeight} * word_similarity(public.f_unaccent({query}), a.search_text))::float8 AS score,
+                       a.model_id,
+                       a.prompt_version,
+                       ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({rankQuery})))::float8 AS ts_rank,
+                       word_similarity(public.f_unaccent({query}), a.search_text)::float8 AS trigram_similarity
+                FROM meme_annotations AS a
+                JOIN meme_index AS m ON m.id = a.meme_index_id
+                JOIN messages AS msg ON msg.id = m.message_id
+                WHERE m.guild_discord_id = {guild}
+                  AND m.status = {indexed}
+                  AND NOT msg.is_deleted
+                  AND (a.search_vector @@ to_tsquery('simple', public.f_unaccent({filterQuery}))
+                       OR word_similarity(public.f_unaccent({query}), a.search_text) >= {TrigramThreshold})
+                ORDER BY m.attachment_discord_id, score DESC, a.indexed_at_utc DESC, a.model_id, a.prompt_version
+            ) AS best
+            ORDER BY score DESC, message_created_at_utc DESC
+            LIMIT {limit}
+            """).ToListAsync(cancellationToken);
+    }
+
+    private static MemeSearchLogEntity NewLogRow(
+        DateTime searchedAtUtc,
+        ulong guildId,
+        string query,
+        int limit,
+        MemeSearchCaller caller,
+        List<string> tokens,
+        List<string> rankTokens,
+        List<MemeSearchRow> rows,
+        TimeSpan duration) =>
+        new MemeSearchLogEntity
+        {
+            SearchedAtUtc = searchedAtUtc,
+            GuildDiscordId = guildId,
+            ChannelDiscordId = caller.ChannelDiscordId,
+            UserDiscordId = caller.UserDiscordId,
+            Source = caller.Source,
+            Query = query,
+            Tokens = [.. tokens],
+            RankTokens = [.. rankTokens],
+            ResultLimit = limit,
+            ResultCount = rows.Count,
+            DurationMs = duration.TotalMilliseconds,
+            TrigramWeight = TrigramWeight,
+            TrigramThreshold = TrigramThreshold,
+            StopListVersion = RankStopListVersion,
+            Results = rows
+                .Select((row, index) => new MemeSearchLogResultEntity
+                {
+                    Rank = index + 1,
+                    AttachmentDiscordId = (ulong)row.AttachmentDiscordId,
+                    ModelId = row.ModelId,
+                    PromptVersion = row.PromptVersion,
+                    TsRank = row.TsRank,
+                    TrigramSimilarity = row.TrigramSimilarity,
+                    Score = row.Score
+                })
+                .ToList()
+        };
 
     // Word characters only (letters incl. Polish, digits); everything else is
     // a separator. Lowercasing is cosmetic — tsquery and pg_trgm both fold
@@ -144,5 +224,9 @@ public sealed class MemeSearchService(DiscordDbContext db)
         string? DescriptionEn,
         string[]? Tags,
         DateTime MessageCreatedAtUtc,
-        double Score);
+        double Score,
+        string ModelId,
+        string PromptVersion,
+        double TsRank,
+        double TrigramSimilarity);
 }

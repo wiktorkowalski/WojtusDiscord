@@ -64,3 +64,44 @@ Search builds two OR-joined `to_tsquery` values from the same tokens.
 - **The rank** (`ts_rank`) drops a short Polish and English stop list (`MemeSearchService.RankStopWords`). `search_phrases` are natural language at weight A, so "w" and "na" scored like content words. A query of function words only keeps them in the rank query.
 - The raw query for `word_similarity` is unchanged. The list is compared with the tokens before `unaccent`.
 - **Measured** on #370 (249 queries, 100 memes): top-1 77.9 → 81.5 % for one writer, 80.3 → 83.1 % for both. The same list in the filter loses 6–9 rows, so it is not there.
+
+## Addendum 2026-10-04 (#384): every search is logged
+
+Each call of `MemeSearchService.SearchAsync` leaves one row in `meme_search_log`: the `/meme` command and the assistant's `meme_search` tool alike. The owner reviews real queries there. The #370 eval had 249 queries and a model wrote 240 of them.
+
+- **Two tables.** `meme_search_log` holds the search: time, guild, channel and user (Discord ids, no FKs), `source` (0 = slash command, 1 = assistant tool, 2 = other), the raw query, `tokens` (what the filter got), `rank_tokens` (what `ts_rank` got), `result_limit`, `result_count`, `zero_results` (generated from `result_count`), `duration_ms` (the search SQL only) and the settings in force. `meme_search_log_results` holds one row per returned hit: `rank`, the attachment, the winning annotation (`model_id` + `prompt_version`), `ts_rank`, `trigram_similarity`, `score`.
+- **Why child rows and not a jsonb column.** The review questions filter on the hits: "searches where this meme came first", "hits that only the trigram side found", "which model wins". Child rows answer these with a plain `WHERE` and `JOIN`. A jsonb column needs `jsonb_to_recordset` in each such query.
+- **The score parts.** `score = ts_rank + trigram_weight * trigram_similarity`. The search SQL projects the two parts and the annotation key next to the score. The score expression, the filter and the order did not change.
+- **Settings.** `trigram_weight`, `trigram_threshold` and `stop_list_version` are stored per search. The stop-list marker is the first 12 hex characters of a SHA-256 of the sorted list (`MemeSearchService.RankStopListVersion`), so it changes when the list changes and nobody has to bump a number.
+- **Off the answer path.** The search builds the row in memory and hands it to `MemeSearchLogWriter`, which inserts it on the thread pool with its own scope and DbContext. The search returns before the insert starts. One attempt: a failed insert is caught, logs one Warning (source and hit count only: no query text, no user id), and the search answer is not affected. Warning and not Error: the person got the answer, and only the review row is gone. A row in flight at shutdown can be lost.
+- **What is not logged.** A search that throws leaves no row (the caller logs the error). A query with no word characters runs no SQL and still leaves a row, with empty `tokens`.
+- **No FK to the annotation.** An import can replace an annotation in place, and the hit row must keep what the search saw. Deleting a search deletes its hits (cascade, unlike the Restrict of the other meme tables): a hit has no meaning without its search.
+- **The assistant cannot read it.** The log holds what each person typed, and any member can run the assistant's `query_database` tool. `wojtus_query` gets SELECT on every new table through the default privileges of #238 §4, so the migration revokes it on both tables. `SchemaCatalog` hides both tables as well: the schema hint does not name them and the dashboard explorer does not list them. The owner reads the log with direct SQL. A new table with per-person data needs the same two steps.
+- **Not in the application log.** No log line carries the query text of a logged search. The `/meme` Information line holds the user id and the hit count. Two older lines still hold a query: the `/meme` Error line of a search that failed (it has no row), and the generic tool-call line of the assistant, which logs the arguments of every tool.
+- **Not decided here:** a retention limit, a "searched again soon" miss signal, a dashboard page, access for the assistant, and feeding the logged queries into `tools/meme-eval/retrieval_eval.py`.
+
+The latest searches with their hits:
+
+```sql
+SELECT s.searched_at_utc,
+       u.username,
+       CASE s.source WHEN 0 THEN 'slash' WHEN 1 THEN 'assistant' ELSE 'other' END AS source,
+       s.query,
+       s.rank_tokens,
+       s.result_count,
+       round(s.duration_ms::numeric, 1) AS ms,
+       r.rank,
+       r.model_id,
+       r.prompt_version,
+       round(r.ts_rank::numeric, 3) AS ts_rank,
+       round(r.trigram_similarity::numeric, 3) AS trigram,
+       round(r.score::numeric, 3) AS score,
+       'https://discord.com/channels/' || m.guild_discord_id || '/' || m.channel_discord_id || '/' || m.message_discord_id AS link
+FROM (SELECT * FROM meme_search_log ORDER BY searched_at_utc DESC LIMIT 20) AS s
+LEFT JOIN users AS u ON u.discord_id = s.user_discord_id
+LEFT JOIN meme_search_log_results AS r ON r.search_id = s.id
+LEFT JOIN meme_index AS m ON m.attachment_discord_id = r.attachment_discord_id
+ORDER BY s.searched_at_utc DESC, s.id, r.rank;
+```
+
+A search with no hits gives one line with empty hit columns. Add `WHERE zero_results` inside the subquery to list only the misses.

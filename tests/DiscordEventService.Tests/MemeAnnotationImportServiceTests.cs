@@ -786,12 +786,12 @@ public sealed class MemeAnnotationImportServiceTests(PostgresFixture fixture) : 
         AddMessage(1001UL, _channel, Attachment(11UL, "a.png"));
         await _db.SaveChangesAsync();
         await using (var before = NewContext())
-            Assert.Empty(await new MemeSearchService(before).SearchAsync(GuildDiscordId, "drake", 10, CancellationToken.None));
+            Assert.Empty(await SearchDrakeAsync(before));
 
         await ImportAsync(Item(11UL, Metadata(1)));
 
         await using var db = NewContext();
-        var hit = Assert.Single(await new MemeSearchService(db).SearchAsync(GuildDiscordId, "drake", 10, CancellationToken.None));
+        var hit = Assert.Single(await SearchDrakeAsync(db));
         Assert.Equal((ChannelDiscordId, 1001UL, 11UL), (hit.ChannelDiscordId, hit.MessageDiscordId, hit.AttachmentDiscordId));
         Assert.Equal("Opis obrazka 1", hit.DescriptionPl);
     }
@@ -808,7 +808,7 @@ public sealed class MemeAnnotationImportServiceTests(PostgresFixture fixture) : 
         await ImportAsync(Item(11UL, Metadata(1)));
 
         await using var db = NewContext();
-        var hit = Assert.Single(await new MemeSearchService(db).SearchAsync(GuildDiscordId, "drake", 10, CancellationToken.None));
+        var hit = Assert.Single(await SearchDrakeAsync(db));
         Assert.Equal(11UL, hit.AttachmentDiscordId);
     }
 
@@ -837,7 +837,7 @@ public sealed class MemeAnnotationImportServiceTests(PostgresFixture fixture) : 
         // The marker stays: the manual backfill must not offer the image to the refusing model again.
         Assert.Equal(ConfiguredModel, indexed.RefusedByModelId);
         Assert.Equal(ImportModel, (await db.MemeAnnotations.SingleAsync()).ModelId);
-        var hit = Assert.Single(await new MemeSearchService(db).SearchAsync(GuildDiscordId, "drake", 10, CancellationToken.None));
+        var hit = Assert.Single(await SearchDrakeAsync(db));
         Assert.Equal(11UL, hit.AttachmentDiscordId);
 
         await RunJobAsync(sweep: false);
@@ -1276,6 +1276,11 @@ public sealed class MemeAnnotationImportServiceTests(PostgresFixture fixture) : 
     // Distinct valid-PNG-magic payloads (≥12 bytes for the sniffer).
     private static byte[] Png(byte seed) =>
         [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, seed, seed, seed];
+
+    // Metadata(n) carries the "drake" template: the query every findability test uses.
+    private Task<List<MemeSearchHit>> SearchDrakeAsync(DiscordDbContext db) =>
+        MemeSearchTestServices.NewSearch(db, fixture.ConnectionString)
+            .SearchAsync(GuildDiscordId, "drake", 10, MemeSearchTestServices.AnyCaller, CancellationToken.None);
 
     private DiscordDbContext NewContext()
     {

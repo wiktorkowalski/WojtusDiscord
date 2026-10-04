@@ -2,7 +2,8 @@
 """Retrieval eval for meme search (#370): owner-style queries against the real search SQL.
 
 The SQL in rank_sql is MemeSearchService.SearchAsync, copied verbatim apart from inlined
-parameters. Keep the two in step: a change to the ranking there must be repeated here.
+parameters and the four columns the service projects for its search log (#384), which take no
+part in the ranking. Keep the two in step: a change to the ranking there must be repeated here.
 STOP_WORDS is MemeSearchService.RankStopWords.
 
 A writer set is scored through a temporary view named meme_annotations that holds only that set's

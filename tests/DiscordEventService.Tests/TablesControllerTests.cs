@@ -122,6 +122,21 @@ public sealed class TablesControllerTests(PostgresFixture fixture) : IClassFixtu
             (await controller.GetRows("raw_event_logs", filterColumn: "nope", filter: "x", ct: default)).Result);
     }
 
+    // #384: the meme search log holds what each person typed. No HTTP endpoint serves it.
+    [Theory]
+    [InlineData("meme_search_log")]
+    [InlineData("meme_search_log_results")]
+    public async Task MemeSearchLogTable_IsNotListedAndNotReadable(string table)
+    {
+        var controller = NewController();
+
+        var tables = Ok<IReadOnlyList<TableInfoDto>>(await controller.GetTables(default));
+
+        Assert.DoesNotContain(tables, t => t.Name == table);
+        Assert.IsType<BadRequestObjectResult>(controller.GetColumns(table).Result);
+        Assert.IsType<BadRequestObjectResult>((await controller.GetRows(table, ct: default)).Result);
+    }
+
     private async Task SeedRawEventsAsync(params (string EventType, ulong GuildId)[] events)
     {
         foreach (var (eventType, guildId) in events)

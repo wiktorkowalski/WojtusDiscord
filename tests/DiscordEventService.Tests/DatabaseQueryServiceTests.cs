@@ -195,6 +195,50 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
         Assert.Contains(":id", hint.Text); // bigint snowflakes are tagged
     }
 
+    // #384: the meme search log holds what each person typed, and any member can run query_database.
+    // The role gets SELECT on a new table by default, so the migration has to take it back.
+    [Theory]
+    [InlineData("meme_search_log")]
+    [InlineData("meme_search_log_results")]
+    public async Task ExecuteAsync_MemeSearchLogTable_IsDeniedToTheQueryRole(string table)
+    {
+        var result = await NewService().ExecuteAsync($"SELECT count(*) FROM {table}", CancellationToken.None);
+
+        Assert.DoesNotContain("row_count", result);
+        Assert.Contains("permission denied", result);
+    }
+
+    // The same gate read from the catalog: no privilege of any kind, for the query role and for
+    // PUBLIC (every role inherits from it). A control table shows the check can say "true".
+    [Theory]
+    [InlineData("meme_search_log")]
+    [InlineData("meme_search_log_results")]
+    public async Task MemeSearchLogTable_GrantsNothingToTheQueryRoleOrToPublic(string table)
+    {
+        var privileges = await _db.Database.SqlQuery<bool>($"""
+            SELECT has_table_privilege(r.role, {table}, p.privilege) AS "Value"
+            FROM (VALUES ({QueryRole}), ('public')) AS r(role)
+            CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(privilege)
+            """).ToListAsync();
+        var control = await _db.Database.SqlQuery<bool>(
+            $"""SELECT has_table_privilege({QueryRole}, 'meme_index', 'SELECT') AS "Value" """).SingleAsync();
+
+        Assert.Equal(14, privileges.Count);
+        Assert.DoesNotContain(true, privileges);
+        Assert.True(control);
+    }
+
+    [Fact]
+    public async Task SchemaHint_DoesNotNameTheMemeSearchLog()
+    {
+        await using var context = NewContext();
+        var catalog = SchemaCatalog.Build(context.Model);
+
+        Assert.DoesNotContain("meme_search_log", DatabaseSchemaHint.Build(catalog).Text);
+        Assert.False(catalog.TryGetTable("meme_search_log", out _));
+        Assert.False(catalog.TryGetTable("meme_search_log_results", out _));
+    }
+
     [Fact]
     public async Task ExecuteAsync_InvalidRoleNameConfigured_ReportsMisconfigured()
     {

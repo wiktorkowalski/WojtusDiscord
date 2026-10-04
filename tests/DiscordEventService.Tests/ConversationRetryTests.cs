@@ -238,7 +238,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
     }
 
     private ConversationToolRegistry BuildRegistry(IOptions<ConversationOptions> conversationOptions) =>
-        new(new MemeSearchService(NewContext()),
+        new(MemeSearchTestServices.NewSearch(NewContext(), fixture.ConnectionString),
             new GuildStatsService(NewContext()),
             new DatabaseQueryService(NewContext(), conversationOptions, NullLogger<DatabaseQueryService>.Instance),
             new FakeGuildLiveStateService(),

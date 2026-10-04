@@ -6,6 +6,8 @@ using DiscordEventService.Jobs;
 using DiscordEventService.Services.MemeIndexing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Npgsql;
 using Xunit;
 
 namespace DiscordEventService.Tests;
@@ -28,6 +30,7 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         _db = NewContext();
         await _db.Database.MigrateAsync();
 
+        await _db.MemeSearchLog.ExecuteDeleteAsync();
         await _db.MemeAnnotations.ExecuteDeleteAsync();
         await _db.MemeIndex.ExecuteDeleteAsync();
         await _db.Messages.ExecuteDeleteAsync();
@@ -416,11 +419,129 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         Assert.Empty(hits);
     }
 
-    private async Task<List<MemeSearchHit>> RunSearchAsync(string query, int limit = MemeSearchService.DefaultLimit)
+    // ───────────────────────────── Search log (#384) ─────────────────────────────
+
+    [Fact]
+    public async Task SearchAsync_WithHits_LogsOneRowWithTheRankedHitsAndTheirScoreParts()
+    {
+        // 211 has two annotations: the log must name the one that won. 212 is an OCR hit (weight B).
+        var meme = await SeedMemeAsync(211UL, 2901UL);
+        await AddAnnotationAsync(meme, "Start rakieta kończy się klapą", "", ["porażka"], modelId: "model/weak");
+        await AddAnnotationAsync(meme, "Mem o czymś zupełnie innym", "", ["rakieta"], modelId: "model/best");
+        await SeedIndexedMemeAsync(212UL, 2902UL, "Statek kosmiczny na wyrzutni", ocrText: "rakieta", ["kosmos"]);
+        var caller = new MemeSearchCaller(MemeSearchSource.SlashCommand, ChannelDiscordId: 77UL, UserDiscordId: 42UL);
+
+        var hits = await RunSearchAsync("Rakieta W Kosmosie!", limit: 3, caller);
+
+        Assert.Equal([211UL, 212UL], hits.Select(h => h.AttachmentDiscordId));
+
+        var row = Assert.Single(await ReadSearchLogAsync());
+        Assert.Equal(GuildDiscordId, row.GuildDiscordId);
+        Assert.Equal(77UL, row.ChannelDiscordId);
+        Assert.Equal(42UL, row.UserDiscordId);
+        Assert.Equal(MemeSearchSource.SlashCommand, row.Source);
+        Assert.Equal("Rakieta W Kosmosie!", row.Query);
+        Assert.Equal(["rakieta", "w", "kosmosie"], row.Tokens);
+        Assert.Equal(["rakieta", "kosmosie"], row.RankTokens);
+        Assert.Equal(3, row.ResultLimit);
+        Assert.Equal(2, row.ResultCount);
+        Assert.False(row.ZeroResults);
+        Assert.True(row.DurationMs > 0, $"duration {row.DurationMs} ms");
+        Assert.InRange(row.SearchedAtUtc, DateTime.UtcNow.AddMinutes(-1), DateTime.UtcNow);
+        Assert.Equal(0.5, row.TrigramWeight);
+        Assert.Equal(0.4, row.TrigramThreshold);
+        Assert.Equal(MemeSearchService.RankStopListVersion, row.StopListVersion);
+
+        Assert.Equal([1, 2], row.Results.Select(r => r.Rank));
+        Assert.Equal(hits.Select(h => h.AttachmentDiscordId), row.Results.Select(r => r.AttachmentDiscordId));
+        Assert.Equal(hits.Select(h => h.Score), row.Results.Select(r => r.Score));
+        Assert.Equal("model/best", row.Results[0].ModelId);
+        Assert.Equal(DefaultModel, row.Results[1].ModelId);
+        Assert.All(row.Results, r =>
+        {
+            Assert.Equal(OpenRouterClient.PromptVersion, r.PromptVersion);
+            Assert.True(r.TsRank > 0, $"ts_rank {r.TsRank}");
+            Assert.True(r.TrigramSimilarity > 0, $"trigram {r.TrigramSimilarity}");
+            // The two parts are the score: nothing else is in it.
+            Assert.Equal(r.TsRank + row.TrigramWeight * r.TrigramSimilarity, r.Score, precision: 6);
+        });
+        // Weight A (tag) against weight B (OCR), same trigram match.
+        Assert.True(row.Results[0].TsRank > row.Results[1].TsRank);
+    }
+
+    [Fact]
+    public async Task SearchAsync_NoMatch_LogsAZeroResultRow()
+    {
+        await SeedIndexedMemeAsync(221UL, 3001UL, "Pies siedzi przy komputerze", "", ["pies"]);
+
+        var hits = await RunSearchAsync("kwantowa termodynamika frytek");
+
+        Assert.Empty(hits);
+        var row = Assert.Single(await ReadSearchLogAsync());
+        Assert.Equal("kwantowa termodynamika frytek", row.Query);
+        Assert.Equal(["kwantowa", "termodynamika", "frytek"], row.Tokens);
+        Assert.Equal(0, row.ResultCount);
+        Assert.True(row.ZeroResults);
+        Assert.Empty(row.Results);
+    }
+
+    // No SQL runs for such a query, and the person still gets "nothing found": it is a search.
+    [Fact]
+    public async Task SearchAsync_QueryWithoutWordCharacters_LogsAZeroResultRowWithNoTokens()
+    {
+        var hits = await RunSearchAsync("!!! ???");
+
+        Assert.Empty(hits);
+        var row = Assert.Single(await ReadSearchLogAsync());
+        Assert.Equal("!!! ???", row.Query);
+        Assert.Empty(row.Tokens);
+        Assert.Empty(row.RankTokens);
+        Assert.True(row.ZeroResults);
+    }
+
+    [Fact]
+    public async Task SearchAsync_LogWriteFails_StillReturnsTheHitsAndWarnsOnce()
+    {
+        await SeedIndexedMemeAsync(231UL, 3101UL, "Mem o bazie danych", "", ["postgres"]);
+        // Nothing listens on port 1: the log write cannot connect. The search has its own connection.
+        var deadDatabase = new NpgsqlConnectionStringBuilder(fixture.ConnectionString) { Port = 1, Timeout = 2 }.ConnectionString;
+        var logger = new RecordingLogger();
+        var log = MemeSearchTestServices.NewLogWriter(deadDatabase, logger.For<MemeSearchLogWriter>());
+
+        await using var db = NewContext();
+        var caller = new MemeSearchCaller(MemeSearchSource.SlashCommand, ChannelDiscordId: 77UL, UserDiscordId: 424242UL);
+        var hits = await new MemeSearchService(db, log)
+            .SearchAsync(GuildDiscordId, "postgres", MemeSearchService.DefaultLimit, caller, CancellationToken.None);
+        await log.LastWrite;
+
+        Assert.Equal(231UL, Assert.Single(hits).AttachmentDiscordId);
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Warning, entry.Level);
+        Assert.Equal("Meme search log row lost: source SlashCommand, 1 hits", entry.Message);
+        // What a person typed, and who, stay out of the application log.
+        Assert.DoesNotContain("postgres", entry.Message);
+        Assert.DoesNotContain("424242", entry.Message);
+        Assert.Empty(await ReadSearchLogAsync());
+    }
+
+    private async Task<List<MemeSearchLogEntity>> ReadSearchLogAsync()
     {
         await using var db = NewContext();
-        return await new MemeSearchService(db)
-            .SearchAsync(GuildDiscordId, query, limit, CancellationToken.None);
+        return await db.MemeSearchLog
+            .Include(s => s.Results.OrderBy(r => r.Rank))
+            .AsNoTracking()
+            .ToListAsync();
+    }
+
+    private async Task<List<MemeSearchHit>> RunSearchAsync(
+        string query, int limit = MemeSearchService.DefaultLimit, MemeSearchCaller? caller = null)
+    {
+        await using var db = NewContext();
+        var log = MemeSearchTestServices.NewLogWriter(fixture.ConnectionString);
+        var hits = await new MemeSearchService(db, log)
+            .SearchAsync(GuildDiscordId, query, limit, caller ?? MemeSearchTestServices.AnyCaller, CancellationToken.None);
+        await log.LastWrite;
+        return hits;
     }
 
     // One meme with one annotation — the shape every single-writer test needs.
