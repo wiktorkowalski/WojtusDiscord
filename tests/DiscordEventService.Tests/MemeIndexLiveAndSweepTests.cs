@@ -263,6 +263,95 @@ public sealed class MemeIndexLiveAndSweepTests(PostgresFixture fixture) : IClass
         Assert.Equal(0, await verify.MemeIndex.CountAsync());
     }
 
+    // #374: a save that Postgres rejects (NUL byte) must not leave the job. An exception here makes
+    // Hangfire retry the whole job, and every retry pays for the model call again.
+    [Fact]
+    public async Task IndexMessageAsync_PoisonAttachment_LandsFailedOnce_AndTheOtherAttachmentsAreIndexed()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "fine.png"), Attachment(12UL, "nul-byte.png"), Attachment(13UL, "also-fine.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.SetImage(12UL, Png(2));
+        _http.SetImage(13UL, Png(3));
+        _http.NulOcrFor.Add(Png(2));
+
+        await RunLiveAsync(1001UL);
+
+        // One model call per attachment in this job, the poisoned one included.
+        Assert.Equal(3, _http.ModelCalls);
+        await using var verify = NewContext();
+        var rows = await verify.MemeIndex.OrderBy(m => m.AttachmentDiscordId).ToListAsync();
+        Assert.Equal([11UL, 12UL, 13UL], rows.Select(r => r.AttachmentDiscordId));
+        Assert.Equal(MemeIndexStatus.Indexed, rows[0].Status);
+        Assert.Equal(MemeIndexStatus.Failed, rows[1].Status);
+        Assert.StartsWith("poisoned: ", rows[1].Error);
+        Assert.Equal(1, rows[1].AttemptCount);
+        Assert.Equal(MemeIndexStatus.Indexed, rows[2].Status);
+        // The rejected annotation went down with its save; the neighbours kept theirs.
+        await AssertConfiguredWriterAnnotationsAsync(verify, 11UL, 13UL);
+    }
+
+    // #374: a concurrent run (sweep, manual backfill) lands the attachment while this job waits for
+    // the model. This job's insert then hits the unique index; the winner's row must stand.
+    [Fact]
+    public async Task IndexMessageAsync_ConcurrentRunIndexesSameAttachment_RecoveryKeepsItsIndexedRow()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "raced.png"), Attachment(12UL, "fine.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.SetImage(12UL, Png(2));
+        var messageId = _db.Messages.Local.Single(m => m.DiscordId == 1001UL).Id;
+
+        var raced = false;
+        _http.DuringModelCall = async () =>
+        {
+            if (raced)
+                return;
+            raced = true;
+            await using var other = NewContext();
+            other.MemeIndex.Add(new MemeIndexEntity
+            {
+                MessageId = messageId,
+                GuildDiscordId = GuildDiscordId,
+                ChannelDiscordId = ChannelDiscordId,
+                MessageDiscordId = 1001UL,
+                AttachmentDiscordId = 11UL,
+                FileName = "raced.png",
+                FileSizeBytes = 123,
+                Status = MemeIndexStatus.Indexed,
+                AttemptCount = 1,
+                Annotations =
+                [
+                    new MemeAnnotationEntity
+                    {
+                        AttachmentDiscordId = 11UL,
+                        ModelId = "other/run",
+                        PromptVersion = OpenRouterClient.PromptVersion,
+                        IndexedAtUtc = DateTime.UtcNow,
+                        DescriptionPl = "wygrany",
+                        DescriptionEn = "winner",
+                        OcrText = "",
+                        RawResponseJson = "{}",
+                    },
+                ],
+            });
+            await other.SaveChangesAsync();
+        };
+
+        await RunLiveAsync(1001UL);
+
+        Assert.Equal(2, _http.ModelCalls);
+        await using var verify = NewContext();
+        var byId = await verify.MemeIndex.ToDictionaryAsync(m => m.AttachmentDiscordId);
+        Assert.Equal(MemeIndexStatus.Indexed, byId[11UL].Status);
+        Assert.Null(byId[11UL].Error);
+        Assert.Equal(1, byId[11UL].AttemptCount);
+        // This run's own annotation was in the rejected save; the winner's row and annotation stand.
+        Assert.Equal("other/run", (await verify.MemeAnnotations.SingleAsync(a => a.AttachmentDiscordId == 11UL)).ModelId);
+        Assert.Equal(MemeIndexStatus.Indexed, byId[12UL].Status);
+        Assert.Equal(ConfiguredModel, (await verify.MemeAnnotations.SingleAsync(a => a.AttachmentDiscordId == 12UL)).ModelId);
+    }
+
     [Fact]
     public async Task ExecuteSweepAsync_IndexesAttachmentsMissedDuringDowntime()
     {

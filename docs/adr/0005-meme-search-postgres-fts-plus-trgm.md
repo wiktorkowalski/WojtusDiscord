@@ -55,3 +55,12 @@ A model refusal is the outcome of one model and one prompt version. Before this 
 - **The sweep and the live hook** still look at the status only. A refusal row is terminal for them, whichever model refused.
 - **The import** makes a refusal row Indexed, as it does for every Skipped row. The marker stays, so the manual backfill does not offer the image to the refusing model again.
 - **Known limits.** The marker holds one writer. When two models both refuse an image, each change of the configured model asks once more. `attempt_count` and the sweep cap of 3 are still per attachment, not per model. A deterministic failure of an extra annotation on an Indexed row (schema violation, a rejected save, a dead attachment) still leaves no trace and is retried on each manual run. The same holds for a save that Postgres rejects while another model revisits a Skipped refusal row: the recovery path leaves a Skipped row untouched. A refusal row from before this change has no marker and stays terminal.
+
+## Addendum 2026-10-04 (#380): function words stay out of the rank query
+
+Search builds two OR-joined `to_tsquery` values from the same tokens.
+
+- **The filter** (`@@`) keeps every token. A function word is often what lets an inflected query through: "steamie" is not "steam" in the `simple` config, and the trigram score then ranks the row.
+- **The rank** (`ts_rank`) drops a short Polish and English stop list (`MemeSearchService.RankStopWords`). `search_phrases` are natural language at weight A, so "w" and "na" scored like content words. A query of function words only keeps them in the rank query.
+- The raw query for `word_similarity` is unchanged. The list is compared with the tokens before `unaccent`.
+- **Measured** on #370 (249 queries, 100 memes): top-1 77.9 → 81.5 % for one writer, 80.3 → 83.1 % for both. The same list in the filter loses 6–9 rows, so it is not there.
