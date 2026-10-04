@@ -10,7 +10,8 @@ public enum MemeSearchSource
 
 // One row per meme search (#384): what was typed, by whom, and the settings in force. The ranked
 // hits are in meme_search_log_results. Snowflakes only, no FKs: a log row must not depend on
-// the guild, channel or user rows being there.
+// the guild, channel or user rows being there. Per-person data: the assistant's query role
+// has no SELECT here (AddMemeSearchLog) and SchemaCatalog hides both tables.
 public class MemeSearchLogEntity
 {
     public Guid Id { get; set; }

@@ -509,14 +509,18 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         var log = MemeSearchTestServices.NewLogWriter(deadDatabase, logger.For<MemeSearchLogWriter>());
 
         await using var db = NewContext();
+        var caller = new MemeSearchCaller(MemeSearchSource.SlashCommand, ChannelDiscordId: 77UL, UserDiscordId: 424242UL);
         var hits = await new MemeSearchService(db, log)
-            .SearchAsync(GuildDiscordId, "postgres", MemeSearchService.DefaultLimit, MemeSearchTestServices.AnyCaller, CancellationToken.None);
+            .SearchAsync(GuildDiscordId, "postgres", MemeSearchService.DefaultLimit, caller, CancellationToken.None);
         await log.LastWrite;
 
         Assert.Equal(231UL, Assert.Single(hits).AttachmentDiscordId);
         var entry = Assert.Single(logger.Entries);
         Assert.Equal(LogLevel.Warning, entry.Level);
-        Assert.Contains("Meme search log row lost", entry.Message);
+        Assert.Equal("Meme search log row lost: source SlashCommand, 1 hits", entry.Message);
+        // What a person typed, and who, stay out of the application log.
+        Assert.DoesNotContain("postgres", entry.Message);
+        Assert.DoesNotContain("424242", entry.Message);
         Assert.Empty(await ReadSearchLogAsync());
     }
 

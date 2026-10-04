@@ -77,6 +77,20 @@ namespace DiscordEventService.Data.Migrations
                 table: "meme_search_log_results",
                 columns: new[] { "search_id", "rank" },
                 unique: true);
+
+            // The log holds what each person typed. The assistant's query_database role gets SELECT on
+            // every new table through the default privileges of AddConversationQueryRole, and any member
+            // can run that tool. Take the grant back: the owner reads this log with direct SQL only.
+            // Guarded like that migration: a database without the role has no grant to remove.
+            migrationBuilder.Sql("""
+                DO $do$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wojtus_query') THEN
+                        REVOKE ALL ON TABLE meme_search_log, meme_search_log_results FROM wojtus_query;
+                    END IF;
+                END
+                $do$;
+                """);
         }
 
         /// <inheritdoc />

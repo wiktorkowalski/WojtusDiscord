@@ -28,12 +28,12 @@ public sealed class MemeSearchLogWriter(IServiceScopeFactory scopeFactory, ILogg
         }
         catch (Exception ex)
         {
-            // Warning, not Error: the search itself answered. The query is here because the
-            // row that would hold it is lost.
+            // Warning, not Error: the search itself answered. No query text and no user id: what
+            // a person typed stays out of the application log, also when its row is lost.
             logger.LogWarning(
                 ex,
-                "Meme search log row lost: query {Query} by {UserId} in guild {GuildId}",
-                search.Query, search.UserDiscordId, search.GuildDiscordId);
+                "Meme search log row lost: source {Source}, {ResultCount} hits",
+                search.Source, search.ResultCount);
         }
     }
 }

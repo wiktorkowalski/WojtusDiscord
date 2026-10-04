@@ -195,6 +195,30 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
         Assert.Contains(":id", hint.Text); // bigint snowflakes are tagged
     }
 
+    // #384: the meme search log holds what each person typed, and any member can run query_database.
+    // The role gets SELECT on a new table by default, so the migration has to take it back.
+    [Theory]
+    [InlineData("meme_search_log")]
+    [InlineData("meme_search_log_results")]
+    public async Task ExecuteAsync_MemeSearchLogTable_IsDeniedToTheQueryRole(string table)
+    {
+        var result = await NewService().ExecuteAsync($"SELECT count(*) FROM {table}", CancellationToken.None);
+
+        Assert.DoesNotContain("row_count", result);
+        Assert.Contains("permission denied", result);
+    }
+
+    [Fact]
+    public async Task SchemaHint_DoesNotNameTheMemeSearchLog()
+    {
+        await using var context = NewContext();
+        var catalog = SchemaCatalog.Build(context.Model);
+
+        Assert.DoesNotContain("meme_search_log", DatabaseSchemaHint.Build(catalog).Text);
+        Assert.False(catalog.TryGetTable("meme_search_log", out _));
+        Assert.False(catalog.TryGetTable("meme_search_log_results", out _));
+    }
+
     [Fact]
     public async Task ExecuteAsync_InvalidRoleNameConfigured_ReportsMisconfigured()
     {
