@@ -176,7 +176,7 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             .AsIChatClient();
 
         var registry = new ConversationToolRegistry(
-            new MemeSearchService(NewContext()),
+            MemeSearchTestServices.NewSearch(NewContext(), fixture.ConnectionString),
             new GuildStatsService(NewContext()),
             new DatabaseQueryService(NewContext(), conversationOptions, NullLogger<DatabaseQueryService>.Instance),
             new FakeGuildLiveStateService(),

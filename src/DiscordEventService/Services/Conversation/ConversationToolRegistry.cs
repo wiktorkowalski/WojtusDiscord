@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using DiscordEventService.Configuration;
+using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services.MemeIndexing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
@@ -192,7 +193,10 @@ internal sealed class ConversationToolRegistry(
             return "Provide a non-empty search query (keywords, text from the image, or a tag).";
 
         var boundedLimit = Math.Clamp(limit, 1, MaxMemeResults);
-        var hits = await memeSearch.SearchAsync(guildId.Value, query, boundedLimit, cancellationToken);
+        // The caller comes from the out-of-band context, like the admin gate: the search log
+        // (#384) names the person who asked, not what the model claims.
+        var caller = new MemeSearchCaller(MemeSearchSource.AssistantTool, context.ChannelId, context.InvokerId);
+        var hits = await memeSearch.SearchAsync(guildId.Value, query, boundedLimit, caller, cancellationToken);
         if (hits.Count == 0)
             return $"No memes matched \"{query}\".";
 

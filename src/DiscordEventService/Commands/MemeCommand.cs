@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services.MemeIndexing;
 using DSharpPlus.Commands;
 using DSharpPlus.Commands.Processors.SlashCommands;
@@ -36,12 +37,14 @@ public sealed class MemeCommand(MemeSearchService searchService, ILogger<MemeCom
             return;
         }
 
+        var caller = new MemeSearchCaller(MemeSearchSource.SlashCommand, ctx.Channel.Id, ctx.User.Id);
         var hits = await searchService.SearchAsync(
-            ctx.Guild.Id, query, MemeSearchService.DefaultLimit, CancellationToken.None);
+            ctx.Guild.Id, query, MemeSearchService.DefaultLimit, caller, CancellationToken.None);
 
+        // No query text here: meme_search_log holds it, with the ranked hits (#384).
         logger.LogInformation(
-            "/meme by {UserId} in guild {GuildId}: query {Query}, {HitCount} hits",
-            ctx.User.Id, ctx.Guild.Id, query, hits.Count);
+            "/meme by {UserId} in guild {GuildId}: {HitCount} hits",
+            ctx.User.Id, ctx.Guild.Id, hits.Count);
 
         if (hits.Count == 0)
         {

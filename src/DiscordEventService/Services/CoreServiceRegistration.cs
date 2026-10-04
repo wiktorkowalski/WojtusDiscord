@@ -23,6 +23,7 @@ internal static class CoreServiceRegistration
         typeof(DowntimeTrackerService),
         typeof(GuildBackfillOrchestrator),
         typeof(BootQuickSyncService),
+        typeof(MemeSearchLogWriter),
         typeof(MemeSearchService),
         typeof(GuildStatsService),
         typeof(DatabaseQueryService),

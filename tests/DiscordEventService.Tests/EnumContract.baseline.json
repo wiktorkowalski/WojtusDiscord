@@ -80,6 +80,11 @@
     "None": 3,
     "Pl": 0
   },
+  "DiscordEventService.Data.Entities.Core.MemeSearchSource": {
+    "AssistantTool": 1,
+    "Other": 2,
+    "SlashCommand": 0
+  },
   "DiscordEventService.Data.Entities.Core.MessageMentionType": {
     "Channel": 4,
     "Everyone": 2,

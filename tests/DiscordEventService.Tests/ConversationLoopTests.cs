@@ -30,12 +30,14 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
     private GuildEntity _guild = null!;
     private ChannelEntity _channel = null!;
     private UserEntity _author = null!;
+    private MemeSearchLogWriter _searchLog = null!;
 
     public async Task InitializeAsync()
     {
         _db = NewContext();
         await _db.Database.MigrateAsync();
 
+        await _db.MemeSearchLog.ExecuteDeleteAsync();
         await _db.MemeAnnotations.ExecuteDeleteAsync();
         await _db.MemeIndex.ExecuteDeleteAsync();
         await _db.Messages.ExecuteDeleteAsync();
@@ -117,6 +119,16 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         // The result the model sees came from the real search — the seeded meme's jump link.
         Assert.Contains($"discord.com/channels/{GuildDiscordId}/{ChannelDiscordId}/{MemeMessageId}",
             toolResult!.Result?.ToString());
+
+        // #384: the tool's search is logged under the person who asked and the conversation's
+        // channel — both from the out-of-band context, not from the model's arguments.
+        await _searchLog.LastWrite;
+        await using var db = NewContext();
+        var logged = await db.MemeSearchLog.Include(s => s.Results).SingleAsync();
+        Assert.Equal(
+            (MemeSearchSource.AssistantTool, GuildDiscordId, 7UL, 42UL, "zolw", 1),
+            (logged.Source, logged.GuildDiscordId, logged.ChannelDiscordId, logged.UserDiscordId, logged.Query, logged.ResultCount));
+        Assert.Single(logged.Results);
     }
 
     [Fact]
@@ -180,8 +192,9 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         });
         var openRouterOptions = Options.Create(new OpenRouterOptions { ApiKey = "test-key" });
 
+        _searchLog = MemeSearchTestServices.NewLogWriter(fixture.ConnectionString);
         var registry = new ConversationToolRegistry(
-            new MemeSearchService(NewContext()),
+            new MemeSearchService(NewContext(), _searchLog),
             new GuildStatsService(NewContext()),
             new DatabaseQueryService(NewContext(), conversationOptions, NullLogger<DatabaseQueryService>.Instance),
             new FakeGuildLiveStateService(),
