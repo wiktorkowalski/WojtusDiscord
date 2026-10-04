@@ -239,7 +239,11 @@ def fetch_chunk(chunk, images, token):
                 yield candidate, "transient", f"download failed: {error}"
             else:
                 path = images / f"{candidate['id']}.{extension}"
-                path.write_bytes(data)
+                # Atomic, like save_state: a killed export leaves no truncated image for the
+                # resume to adopt. The leading dot keeps the temporary file out of the <id>.* glob.
+                temporary = images / f".{candidate['id']}.part"
+                temporary.write_bytes(data)
+                temporary.replace(path)
                 yield candidate, "path", path
 
 
