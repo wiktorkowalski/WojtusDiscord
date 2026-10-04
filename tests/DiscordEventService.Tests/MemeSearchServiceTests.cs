@@ -350,6 +350,52 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         Assert.Equal(FakeMemeHttpHandler.NameFreeTags, cutout.Tags);
     }
 
+    // #380: search_phrases are natural language at weight A, so "w" and "na" used to score like
+    // content words. The function-word row sits on the newest message: a tie goes to it.
+    [Fact]
+    public async Task SearchAsync_FunctionWordOnlyMatch_DoesNotOutrankContentMatch()
+    {
+        await SeedIndexedMemeAsync(171UL, 2601UL, "Zwierzak pozuje do zdjęcia", "", ["pies"],
+            messageCreatedAtUtc: DateTime.UtcNow.AddDays(-30));
+        await SeedIndexedMemeAsync(172UL, 2602UL, "Zwierzak pozuje do zdjęcia", "", ["kot"],
+            messageCreatedAtUtc: DateTime.UtcNow.AddDays(-1),
+            configure: a => a.SearchPhrases = ["kot w butach na plaży", "w domu na kanapie"]);
+
+        var hits = await RunSearchAsync("pies w kapeluszu na rowerze");
+
+        Assert.Equal([171UL, 172UL], hits.Select(h => h.AttachmentDiscordId));
+        Assert.True(hits[0].Score > hits[1].Score, $"content hit {hits[0].Score} must beat the function-word hit {hits[1].Score}");
+    }
+
+    // #380: the stop list must stay out of the filter. In the 'simple' config an inflected query
+    // ("steamie" for "steam") has no lexeme match, and the function word is what lets the row through.
+    [Fact]
+    public async Task SearchAsync_RowReachableOnlyThroughAFunctionWord_IsStillReturned()
+    {
+        await SeedIndexedMemeAsync(181UL, 2701UL, "Kot siedzi na parapecie", "", ["kot"]);
+
+        var hits = await RunSearchAsync("psy na rowerach");
+
+        Assert.Equal(181UL, Assert.Single(hits).AttachmentDiscordId);
+    }
+
+    // #380: a query of function words only keeps them in the rank query, so field weights still
+    // order the hits. The weight-A hit sits on the older message: with no rank the tie goes to 192.
+    [Fact]
+    public async Task SearchAsync_QueryOfFunctionWordsOnly_StillRanksByFieldWeight()
+    {
+        await SeedIndexedMemeAsync(191UL, 2801UL, "Mem o czymś zupełnie innym", "", ["inne"],
+            messageCreatedAtUtc: DateTime.UtcNow.AddDays(-30),
+            configure: a => a.SearchPhrases = ["w lesie"]);
+        await SeedIndexedMemeAsync(192UL, 2802UL, "Spacer w lesie", "", ["inne"],
+            messageCreatedAtUtc: DateTime.UtcNow.AddDays(-1));
+
+        var hits = await RunSearchAsync("w");
+
+        Assert.Equal([191UL, 192UL], hits.Select(h => h.AttachmentDiscordId));
+        Assert.True(hits[0].Score > hits[1].Score, $"weight-A hit {hits[0].Score} must beat the description hit {hits[1].Score}");
+    }
+
     [Fact]
     public async Task SearchAsync_NoMatch_ReturnsEmpty()
     {

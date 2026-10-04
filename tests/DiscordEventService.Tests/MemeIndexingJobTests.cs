@@ -23,6 +23,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     private const string ConfiguredModel = "test/model";
     // Mirrors the MemeIndexOptions.MaxImageBytes default.
     private const int DefaultMaxImageBytes = 25 * 1024 * 1024;
+    private static readonly (string? ModelId, string? PromptVersion) NoRefusalMarker = (null, null);
 
     private DiscordDbContext _db = null!;
     private GuildEntity _guild = null!;
@@ -393,9 +394,185 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal(MemeIndexStatus.Indexed, row.Status);
         Assert.Null(row.Error);
         Assert.Equal(1, row.AttemptCount);
+        // Only a refusal leaves the marker (#373): a transient failure must stay retryable.
+        Assert.Equal(
+            refusal ? (ConfiguredModel, OpenRouterClient.PromptVersion) : NoRefusalMarker,
+            (row.RefusedByModelId, row.RefusedByPromptVersion));
         Assert.Equal("other/model", (await verify.MemeAnnotations.SingleAsync()).ModelId);
         var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
         Assert.Equal(BackfillStatus.Completed, checkpoint.Status);
+    }
+
+    // The hybrid revisit (#367) must not pay for the same refusal on every manual trigger (#373).
+    [Fact]
+    public async Task ExecuteAsync_IndexedRowTheConfiguredWriterRefused_IsNotAskedAgain()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        Annotate(SeedRow(1001UL, 11UL, MemeIndexStatus.Indexed, attemptCount: 1), "other/model");
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.RefusalFor.Add(Png(1));
+        await RunJobAsync();
+        var cdnRequestsAfterTheRefusal = _http.CdnRequests;
+
+        await RunJobAsync();
+
+        Assert.Equal(1, _http.ModelCalls);
+        Assert.Equal(cdnRequestsAfterTheRefusal, _http.CdnRequests);
+        await using var verify = NewContext();
+        Assert.Equal(MemeIndexStatus.Indexed, (await verify.MemeIndex.SingleAsync()).Status);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RefusedImage_IsSkippedWithTheRefusingWriterAndNotAskedAgain()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.RefusalFor.Add(Png(1));
+        await RunJobAsync();
+        var cdnRequestsAfterTheRefusal = _http.CdnRequests;
+
+        await RunJobAsync();
+
+        Assert.Equal(1, _http.ModelCalls);
+        Assert.Equal(cdnRequestsAfterTheRefusal, _http.CdnRequests);
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync();
+        Assert.Equal(MemeIndexStatus.Skipped, row.Status);
+        Assert.StartsWith($"model refusal by {ConfiguredModel} {OpenRouterClient.PromptVersion}", row.Error);
+        Assert.Equal((ConfiguredModel, OpenRouterClient.PromptVersion), (row.RefusedByModelId, row.RefusedByPromptVersion));
+        Assert.Equal(1, row.AttemptCount);
+    }
+
+    // A refusal is the model's outcome, not the attachment's (#373). The marker of the first
+    // model stays: it is what keeps that model from being asked again after the second one wrote.
+    [Fact]
+    public async Task ExecuteAsync_ImageRefusedByOneModel_IsAnnotatedByTheNextModelAndNeverOfferedToTheFirstAgain()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.RefusalFor.Add(Png(1));
+        await RunJobAsync();
+        _http.RefusalFor.Clear();
+
+        await RunJobAsync(model: "second/model");
+        await RunJobAsync();
+
+        Assert.Equal([ConfiguredModel, "second/model"], _http.ModelRequests.Select(r => r.Model));
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync();
+        Assert.Equal(MemeIndexStatus.Indexed, row.Status);
+        Assert.Null(row.Error);
+        Assert.Equal((ConfiguredModel, OpenRouterClient.PromptVersion), (row.RefusedByModelId, row.RefusedByPromptVersion));
+        var annotation = await verify.MemeAnnotations.SingleAsync();
+        Assert.Equal(("second/model", OpenRouterClient.PromptVersion, "Opis obrazka 1"),
+            (annotation.ModelId, annotation.PromptVersion, annotation.DescriptionPl));
+    }
+
+    // Both halves of the key count: a new prompt version may change what the same model accepts.
+    [Fact]
+    public async Task ExecuteAsync_ImageRefusedUnderAnOlderPromptVersion_IsOfferedToTheSameModelAgain()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        SeedRow(1001UL, 11UL, MemeIndexStatus.Skipped, attemptCount: 1,
+            refusedByModelId: ConfiguredModel, refusedByPromptVersion: "legacy");
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunJobAsync();
+
+        Assert.Equal(1, _http.ModelCalls);
+        await using var verify = NewContext();
+        Assert.Equal(MemeIndexStatus.Indexed, (await verify.MemeIndex.SingleAsync()).Status);
+        Assert.Equal(ConfiguredModel, (await verify.MemeAnnotations.SingleAsync()).ModelId);
+    }
+
+    // The second model refuses too: the marker names the last writer that refused.
+    [Fact]
+    public async Task ExecuteAsync_ImageRefusedByAnotherModelAndRefusedAgain_StaysSkippedUnderTheNewWriter()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        SeedRow(1001UL, 11UL, MemeIndexStatus.Skipped, attemptCount: 1, refusedByModelId: "other/model");
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.RefusalFor.Add(Png(1));
+
+        await RunJobAsync();
+        await RunJobAsync();
+
+        Assert.Equal(1, _http.ModelCalls);
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync();
+        Assert.Equal(MemeIndexStatus.Skipped, row.Status);
+        Assert.Equal((ConfiguredModel, OpenRouterClient.PromptVersion), (row.RefusedByModelId, row.RefusedByPromptVersion));
+    }
+
+    // Dead, too large, not an image: true for every model, so no other model is sent there.
+    [Fact]
+    public async Task ExecuteAsync_AttachmentLevelSkip_IsNotOfferedToAnotherModel()
+    {
+        AddMessage(1001UL, Attachment(11UL, "not-an-image.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Encoding.ASCII.GetBytes("definitely not image bytes"));
+        await RunJobAsync();
+        var cdnRequestsAfterTheSkip = _http.CdnRequests;
+
+        await RunJobAsync(model: "second/model");
+
+        Assert.Equal(0, _http.ModelCalls);
+        Assert.Equal(cdnRequestsAfterTheSkip, _http.CdnRequests);
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync();
+        Assert.Equal(MemeIndexStatus.Skipped, row.Status);
+        Assert.Equal(NoRefusalMarker, (row.RefusedByModelId, row.RefusedByPromptVersion));
+    }
+
+    // A refusal row whose attachment died since: the attachment-level skip takes the marker away,
+    // or every later run would come back to a dead link.
+    [Fact]
+    public async Task ExecuteAsync_RefusalRowWhoseAttachmentIsDeadNow_LosesTheMarkerAndIsNotRevisited()
+    {
+        AddMessage(1001UL, Attachment(11UL, "gone.png"));
+        await _db.SaveChangesAsync();
+        SeedRow(1001UL, 11UL, MemeIndexStatus.Skipped, attemptCount: 1, refusedByModelId: "other/model");
+        await _db.SaveChangesAsync();
+        _http.DeadAttachments.Add(11UL);
+
+        await RunJobAsync();
+        await RunJobAsync();
+
+        Assert.Equal(0, _http.ModelCalls);
+        await using var verify = NewContext();
+        var row = await verify.MemeIndex.SingleAsync();
+        Assert.Equal(MemeIndexStatus.Skipped, row.Status);
+        Assert.StartsWith("dead attachment", row.Error);
+        Assert.Equal(NoRefusalMarker, (row.RefusedByModelId, row.RefusedByPromptVersion));
+        // The second run found nothing to do.
+        var checkpoint = await verify.BackfillCheckpoints.SingleAsync(c => c.Type == BackfillType.MemeIndex);
+        Assert.Equal(0, checkpoint.TotalCount);
+    }
+
+    // The sweep is status only: a model change must not make it pay for every old refusal.
+    [Fact]
+    public async Task ExecuteSweepAsync_ImageRefusedByAnotherModel_IsNotRevisited()
+    {
+        AddMessage(1001UL, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        SeedRow(1001UL, 11UL, MemeIndexStatus.Skipped, attemptCount: 1, refusedByModelId: "other/model");
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+
+        await RunSweepAsync();
+
+        Assert.Equal(0, _http.ModelCalls);
+        Assert.Equal(0, _http.CdnRequests);
+        await using var verify = NewContext();
+        Assert.Equal(MemeIndexStatus.Skipped, (await verify.MemeIndex.SingleAsync()).Status);
     }
 
     [Fact]
@@ -1132,12 +1309,14 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     }
 
     private Task RunJobAsync(
-        int maxImagesPerRun = 500, int maxImageBytes = DefaultMaxImageBytes, string? reasoningEffort = null)
-        => RunAsync(maxImagesPerRun, maxImageBytes, sweep: false, reasoningEffort);
+        int maxImagesPerRun = 500, int maxImageBytes = DefaultMaxImageBytes, string? reasoningEffort = null,
+        string model = ConfiguredModel)
+        => RunAsync(maxImagesPerRun, maxImageBytes, sweep: false, reasoningEffort, model);
 
     private Task RunSweepAsync() => RunAsync(maxImagesPerRun: 500, DefaultMaxImageBytes, sweep: true);
 
-    private async Task RunAsync(int maxImagesPerRun, int maxImageBytes, bool sweep, string? reasoningEffort = null)
+    private async Task RunAsync(
+        int maxImagesPerRun, int maxImageBytes, bool sweep, string? reasoningEffort = null, string model = ConfiguredModel)
     {
         var services = new ServiceCollection();
         services.AddLogging();
@@ -1157,7 +1336,7 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
         services.Configure<OpenRouterOptions>(o =>
         {
             o.ApiKey = "test-key";
-            o.Model = ConfiguredModel;
+            o.Model = model;
             o.ReasoningEffort = reasoningEffort;
             o.RequestDelayMs = 0;
         });
@@ -1194,8 +1373,10 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
     }
 
     // Call after the message is saved: the status row needs the message's database id.
+    // refusedByModelId makes the row a refusal row (#373), under the current prompt version by default.
     private MemeIndexEntity SeedRow(
-        ulong messageDiscordId, ulong attachmentId, MemeIndexStatus status, string? contentHash = null, int attemptCount = 0)
+        ulong messageDiscordId, ulong attachmentId, MemeIndexStatus status, string? contentHash = null, int attemptCount = 0,
+        string? refusedByModelId = null, string refusedByPromptVersion = OpenRouterClient.PromptVersion)
     {
         var row = new MemeIndexEntity
         {
@@ -1209,7 +1390,9 @@ public sealed class MemeIndexingJobTests(PostgresFixture fixture) : IClassFixtur
             ContentHash = contentHash,
             Status = status,
             Error = status is MemeIndexStatus.Failed or MemeIndexStatus.Skipped ? "seeded by test" : null,
-            AttemptCount = attemptCount
+            AttemptCount = attemptCount,
+            RefusedByModelId = refusedByModelId,
+            RefusedByPromptVersion = refusedByModelId is null ? null : refusedByPromptVersion
         };
         _db.MemeIndex.Add(row);
         return row;

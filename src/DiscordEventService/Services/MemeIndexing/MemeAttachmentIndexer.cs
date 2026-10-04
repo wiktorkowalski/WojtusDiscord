@@ -444,8 +444,12 @@ internal sealed class MemeAttachmentIndexer(
                 counters.Indexed++;
                 break;
 
+            // A refusal is this writer's outcome, not the attachment's (#373): the marker is what
+            // lets the manual backfill offer the image to another model, and not to this one again.
+            // The reason names the writer too: it is the text of both Warning lines in Skip.
             case MemeAnalysisOutcome.Refusal:
-                Skip(row, counters, $"model refusal: {result.Error}");
+                Skip(row, counters, $"model refusal by {openRouter.Model} {OpenRouterClient.PromptVersion}: {result.Error}",
+                    refusedBy: new AnnotationKey(openRouter.Model, OpenRouterClient.PromptVersion));
                 break;
 
             default:
@@ -468,9 +472,17 @@ internal sealed class MemeAttachmentIndexer(
 
     private static bool HasNull(string[]? values) => values is null || values.Any(v => v is null);
 
-    private void Skip(MemeIndexEntity row, MemeIndexRunCounters counters, string reason)
+    // refusedBy = the writer that refused the image; null = an attachment-level skip.
+    private void Skip(MemeIndexEntity row, MemeIndexRunCounters counters, string reason, AnnotationKey? refusedBy = null)
     {
         counters.Skipped++;
+
+        // A refusal marks the row whatever its status. An attachment-level skip is terminal for
+        // every writer, so it takes an earlier marker away: with it the manual backfill would
+        // keep coming back (#373). An Indexed row is not downgraded and keeps its marker.
+        if (refusedBy is not null || row.Status != MemeIndexStatus.Indexed)
+            (row.RefusedByModelId, row.RefusedByPromptVersion) = (refusedBy?.ModelId, refusedBy?.PromptVersion);
+
         if (StaysIndexed(row, reason))
             return;
 

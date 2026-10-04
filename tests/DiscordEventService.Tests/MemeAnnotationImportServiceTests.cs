@@ -812,6 +812,38 @@ public sealed class MemeAnnotationImportServiceTests(PostgresFixture fixture) : 
         Assert.Equal(11UL, hit.AttachmentDiscordId);
     }
 
+    // #373: an image the API model refused is not lost. The import adds an annotation, and search finds it.
+    [Fact]
+    public async Task ImportAsync_ImportOverARowTheApiModelRefused_MakesTheMemeFindable()
+    {
+        AddMessage(1001UL, _channel, Attachment(11UL, "a.png"));
+        await _db.SaveChangesAsync();
+        _http.SetImage(11UL, Png(1));
+        _http.RefusalFor.Add(Png(1));
+        await RunJobAsync(sweep: false);
+        await using (var refused = NewContext())
+        {
+            var row = await refused.MemeIndex.SingleAsync();
+            Assert.Equal((MemeIndexStatus.Skipped, ConfiguredModel), (row.Status, row.RefusedByModelId));
+        }
+
+        var response = await ImportAsync(Item(11UL, Metadata(1)));
+
+        Assert.Equal(MemeAnnotationImportOutcome.Imported, Assert.Single(response.Items).Outcome);
+        await using var db = NewContext();
+        var indexed = await db.MemeIndex.SingleAsync();
+        Assert.Equal(MemeIndexStatus.Indexed, indexed.Status);
+        Assert.Null(indexed.Error);
+        // The marker stays: the manual backfill must not offer the image to the refusing model again.
+        Assert.Equal(ConfiguredModel, indexed.RefusedByModelId);
+        Assert.Equal(ImportModel, (await db.MemeAnnotations.SingleAsync()).ModelId);
+        var hit = Assert.Single(await new MemeSearchService(db).SearchAsync(GuildDiscordId, "drake", 10, CancellationToken.None));
+        Assert.Equal(11UL, hit.AttachmentDiscordId);
+
+        await RunJobAsync(sweep: false);
+        Assert.Equal(1, _http.ModelCalls);
+    }
+
     // The sweep looks at the status only: it never pays for an imported attachment.
     [Fact]
     public async Task ExecuteSweepAsync_AfterImport_MakesNoDownloadAndNoModelCall()

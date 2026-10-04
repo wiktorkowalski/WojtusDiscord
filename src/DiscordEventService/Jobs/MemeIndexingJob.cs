@@ -73,9 +73,18 @@ internal sealed class MemeIndexingJob(
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var row = await indexer.GetOrCreateRowAsync(db, item, cancellationToken);
-            await indexer.ProcessOneAsync(db, row, item, freshUrls, counters, cancellationToken);
-            await db.SaveChangesAsync(cancellationToken);
+            try
+            {
+                var row = await indexer.GetOrCreateRowAsync(db, item, cancellationToken);
+                await indexer.ProcessOneAsync(db, row, item, freshUrls, counters, cancellationToken);
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Without this the exception leaves the job, and every Hangfire retry pays for the
+                // download and the model call again for a row that never lands (#374).
+                await RecoverPoisonedItemAsync(db, checkpoint: null, indexer, item, lastOfMessage: false, ex, counters, cancellationToken);
+            }
         }
 
         logger.LogInformation(
@@ -164,7 +173,9 @@ internal sealed class MemeIndexingJob(
     // no row yet, or a Failed row (retried, optionally attempt-capped for the
     // sweep). Terminal rows (Indexed/Skipped) are skipped — this is what makes
     // re-runs idempotent. With revisitIndexedForModel set, an Indexed row is terminal
-    // only once it has that model's annotation for the current prompt version (#367).
+    // only once it has that model's annotation for the current prompt version (#367),
+    // or that same writer refused the image; and a row Skipped by a refusal is pending
+    // again for any other writer (#373). An attachment-level skip stays terminal.
     // Deterministic order is what makes the message-id resume cursor valid across runs.
     private static async Task<List<MemeSampleItem>> CollectPendingAsync(
         DiscordDbContext db,
@@ -183,8 +194,11 @@ internal sealed class MemeIndexingJob(
 
         var statusByAttachment = await db.MemeIndex
             .Where(m => m.GuildDiscordId == guildId)
-            .Select(m => new { m.AttachmentDiscordId, m.Status, m.AttemptCount })
-            .ToDictionaryAsync(m => m.AttachmentDiscordId, m => (m.Status, m.AttemptCount), cancellationToken);
+            .Select(m => new { m.AttachmentDiscordId, m.Status, m.AttemptCount, m.RefusedByModelId, m.RefusedByPromptVersion })
+            .ToDictionaryAsync(
+                m => m.AttachmentDiscordId,
+                m => (m.Status, m.AttemptCount, m.RefusedByModelId, m.RefusedByPromptVersion),
+                cancellationToken);
 
         HashSet<ulong> annotatedByConfiguredWriter = revisitIndexedForModel is null
             ? []
@@ -204,13 +218,22 @@ internal sealed class MemeIndexingJob(
             {
                 if (!statusByAttachment.TryGetValue(c.AttachmentDiscordId, out var row))
                     return true;
+
+                // The sweep passes no model: for it every Indexed or Skipped row is terminal.
+                // For the manual backfill the configured writer is done with a row once it
+                // wrote its annotation or refused the image.
+                var configuredWriterMayTry = revisitIndexedForModel is not null
+                    && !annotatedByConfiguredWriter.Contains(c.AttachmentDiscordId)
+                    && !(row.RefusedByModelId == revisitIndexedForModel
+                         && row.RefusedByPromptVersion == OpenRouterClient.PromptVersion);
                 return row.Status switch
                 {
                     MemeIndexStatus.Pending => true,
                     MemeIndexStatus.Failed => maxFailedAttempts is not { } capAttempts
                         || row.AttemptCount < capAttempts,
-                    MemeIndexStatus.Indexed => revisitIndexedForModel is not null
-                        && !annotatedByConfiguredWriter.Contains(c.AttachmentDiscordId),
+                    MemeIndexStatus.Indexed => configuredWriterMayTry,
+                    // No marker = an attachment-level skip (dead, too large, not an image).
+                    MemeIndexStatus.Skipped => configuredWriterMayTry && row.RefusedByModelId is not null,
                     _ => false
                 };
             })
@@ -275,7 +298,7 @@ internal sealed class MemeIndexingJob(
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    await RecoverPoisonedItemAsync(ctx, indexer, item, lastOfMessage, ex, counters, cancellationToken);
+                    await RecoverPoisonedItemAsync(ctx.Db, ctx.Checkpoint, indexer, item, lastOfMessage, ex, counters, cancellationToken);
                 }
             }
         }
@@ -293,8 +316,10 @@ internal sealed class MemeIndexingJob(
     // same row every time (#311). The failed save leaves the rejected row and this item's progress in
     // the tracker, where EF would re-issue them on the next save — so drop the tracker, reload the
     // checkpoint to its last persisted state, and record this item as a plain Failed row.
+    // The live hook has no checkpoint (#374).
     private async Task RecoverPoisonedItemAsync(
-        BackfillContext ctx,
+        DiscordDbContext db,
+        BackfillCheckpointEntity? checkpoint,
         MemeAttachmentIndexer indexer,
         MemeSampleItem item,
         bool lastOfMessage,
@@ -304,13 +329,16 @@ internal sealed class MemeIndexingJob(
     {
         logger.LogWarning(ex,
             "Saving meme attachment {AttachmentId} (message {MessageId}) failed for guild {GuildId}; recovering and continuing the run",
-            item.AttachmentDiscordId, item.MessageDiscordId, ctx.Checkpoint.GuildDiscordId);
+            item.AttachmentDiscordId, item.MessageDiscordId, item.GuildDiscordId);
 
-        ctx.Db.ChangeTracker.Clear();
-        ctx.Db.BackfillCheckpoints.Attach(ctx.Checkpoint);
-        await ctx.Db.Entry(ctx.Checkpoint).ReloadAsync(cancellationToken);
+        db.ChangeTracker.Clear();
+        if (checkpoint is not null)
+        {
+            db.BackfillCheckpoints.Attach(checkpoint);
+            await db.Entry(checkpoint).ReloadAsync(cancellationToken);
+        }
 
-        var row = await indexer.GetOrCreateRowAsync(ctx.Db, item, cancellationToken);
+        var row = await indexer.GetOrCreateRowAsync(db, item, cancellationToken);
         // The reload returns whatever is persisted now. A terminal row here is a concurrent run's
         // result (a unique violation on attachment_discord_id or on the annotation key), or an
         // Indexed row whose extra annotation was rejected (#367). Never downgrade it.
@@ -320,8 +348,10 @@ internal sealed class MemeIndexingJob(
                 item.AttachmentDiscordId, row.Status);
         else
             indexer.FailRejectedSave(row, counters, ex);
-        AdvanceCheckpoint(ctx.Checkpoint, item, lastOfMessage);
-        // A second rejection here propagates to the executor, which now lands the checkpoint on Failed.
-        await SaveProgressAsync(ctx.Db, ctx.Checkpoint, cancellationToken);
+        if (checkpoint is not null)
+            AdvanceCheckpoint(checkpoint, item, lastOfMessage);
+        // A second rejection here propagates: to the executor, which lands the checkpoint on Failed,
+        // or out of the live job to Hangfire.
+        await db.SaveChangesAsync(cancellationToken);
     }
 }
