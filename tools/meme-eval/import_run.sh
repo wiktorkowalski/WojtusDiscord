@@ -3,6 +3,7 @@
 # The owner runs this. A re-run is safe: an 'imported' batch is not sent again.
 #
 #   export MEME_IMPORT_SECRET=<import secret>
+#   export MEME_IMPORT_URL=https://<prod host>
 #   tools/meme-eval/import_run.sh <run dir> [batch name ...]
 #
 # No batch name = every batch with status 'validated'. Stops at the first failure
@@ -12,7 +13,7 @@ set -euo pipefail
 run_dir=${1:?usage: import_run.sh <run dir> [batch name ...]}
 shift
 : "${MEME_IMPORT_SECRET:?set MEME_IMPORT_SECRET in the shell}"
-base_url=${MEME_IMPORT_URL:-https://wojtusdiscord.home.vicio.ovh}
+base_url=${MEME_IMPORT_URL:?set MEME_IMPORT_URL (the prod host, or http://127.0.0.1:5099 locally)}
 tools_dir=$(cd "$(dirname "$0")" && pwd)
 
 # One line per batch to send: <name><TAB><annotations file>

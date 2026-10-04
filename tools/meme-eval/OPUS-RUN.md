@@ -93,11 +93,12 @@ Before the first import, prod needs `MemeIndex__ImportSecret`, `MemeIndex__Chann
 
 ```
 export MEME_IMPORT_SECRET=<import secret>
+export MEME_IMPORT_URL=https://<prod host>
 tools/meme-eval/import_run.sh <run dir> batch-0001      # the first batch alone, then the check below
 tools/meme-eval/import_run.sh <run dir>                 # every other 'validated' batch
 ```
 
-`import_run.sh` sends each batch with status `validated` to the endpoint (`MEME_IMPORT_URL`, default: the prod host), stores the response as `import-result.json` next to the annotations file and calls `opus_run.py imported` with it. A batch with status `imported` is not sent again. The script stops at the first failure: a response that is not 2xx, or an attachment of the batch that is not stored.
+`import_run.sh` sends each batch with status `validated` to the endpoint at `MEME_IMPORT_URL` (required; no default, so a forgotten variable never sends to prod), stores the response as `import-result.json` next to the annotations file and calls `opus_run.py imported` with it. A batch with status `imported` is not sent again. The script stops at the first failure: a response that is not 2xx, or an attachment of the batch that is not stored.
 
 `imported` stores the counts and the rejects in the state file. The status becomes `imported` only when every attachment of the batch is stored. Otherwise the command lists what is missing and exits 1: correct the items, validate, import again.
 
