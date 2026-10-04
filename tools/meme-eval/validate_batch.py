@@ -7,7 +7,9 @@ HasNullRequiredField) and add the contract of the prompt file: no extra members,
 model_id, no names on a cut-out, every attachment id in the manifest.
 
     python3 validate_batch.py <batch.json> --manifest <batch dir>/manifest.json
-                              [--model-id claude-code/claude-opus-5.5]
+                              [--model-id claude-code/claude-opus-5.5] [--require-all]
+
+--require-all: every attachment of the manifest must have an item (one file for the whole batch).
 
 Exit code 0 = the batch is valid. 1 = at least one error; errors are listed per item.
 Warnings (a count outside the range the prompt asks for) do not change the exit code.
@@ -21,6 +23,7 @@ import json
 import pathlib
 import sys
 
+DEFAULT_MODEL_ID = "claude-code/claude-opus-5.5"  # opus-annotation-prompt.md
 PROMPT_VERSIONS = {"v4"}  # OpenRouterClient.KnownPromptVersions
 MAX_BATCH = 500  # MemeAnnotationImportEndpoints.MaxBatchSize
 
@@ -39,10 +42,10 @@ ARRAY_FIELDS = ("tags", "templates", "search_phrases")
 METADATA_FIELDS = {*STRING_FIELDS, *ARRAY_FIELDS, "image_kind", "people", "franchise", "source", "language"}
 
 
-def check_closed(errors, metadata, field, allowed):
-    value = metadata.get(field)
+def check_closed(errors, owner, field, allowed, where="metadata"):
+    value = owner.get(field)
     if not isinstance(value, str) or value not in allowed:
-        errors.append(f"metadata.{field}: {value!r} is not in the closed set")
+        errors.append(f"{where}.{field}: {value!r} is not in the closed set")
 
 
 def check_metadata(metadata, errors, warnings):
@@ -63,10 +66,8 @@ def check_metadata(metadata, errors, warnings):
             errors.append(f"metadata.{field}: empty")
 
     for field in ARRAY_FIELDS:
-        if field not in metadata:
-            continue
-        values = metadata[field]
-        if not isinstance(values, list) or any(not isinstance(v, str) for v in values):
+        values = metadata.get(field)
+        if field in metadata and (not isinstance(values, list) or any(not isinstance(v, str) for v in values)):
             errors.append(f"metadata.{field}: must be an array of strings")
 
     for field, allowed in (("image_kind", IMAGE_KINDS), ("language", LANGUAGES), ("source", SOURCES)):
@@ -90,8 +91,7 @@ def check_metadata(metadata, errors, warnings):
                     errors.append(f"{where}: must have exactly name and evidence")
                 if not isinstance(person.get("name"), str) or not person["name"].strip():
                     errors.append(f"{where}.name: must be a non-empty string")
-                if not isinstance(person.get("evidence"), str) or person.get("evidence") not in EVIDENCE:
-                    errors.append(f"{where}.evidence: {person.get('evidence')!r} is not in the closed set")
+                check_closed(errors, person, "evidence", EVIDENCE, where)
             # D3: the server would drop these names; a batch that has them broke the prompt.
             if people and metadata.get("image_kind") == CUTOUT:
                 errors.append(f"metadata.people: must be empty for image_kind {CUTOUT}")
@@ -136,34 +136,34 @@ def check_item(item, manifest_ids, model_id, seen, errors, warnings):
     return attachment_id
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("batch", type=pathlib.Path)
-    parser.add_argument("--manifest", required=True, type=pathlib.Path)
-    parser.add_argument("--model-id", default="claude-code/claude-opus-5.5")
-    args = parser.parse_args()
+def load_manifest_ids(manifest_path):
+    return {str(entry["attachment_discord_id"]) for entry in json.loads(manifest_path.read_text())["items"]}
 
-    manifest_ids = {str(entry["attachment_discord_id"]) for entry in json.loads(args.manifest.read_text())["items"]}
 
+def validate(batch_path, manifest_path, model_id=DEFAULT_MODEL_ID, require_all=False):
+    """Prints the errors per item and returns how many there are. opus_run.py calls this too."""
+    known_ids = load_manifest_ids(manifest_path)
     try:
-        # A snowflake is above 2^53: a float here means the id was written as a rounded number.
-        batch = json.loads(args.batch.read_text(encoding="utf-8"))
+        batch = json.loads(batch_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        sys.exit(f"ERROR {args.batch}: not readable as JSON: {error}")
+        print(f"ERROR {batch_path}: not readable as JSON: {error}")
+        return 1
 
-    if not isinstance(batch, list):
-        sys.exit("ERROR the file must be a JSON array of items")
-    if not batch:
-        sys.exit("ERROR the batch is empty")
-    if len(batch) > MAX_BATCH:
-        sys.exit(f"ERROR the batch has {len(batch)} items; the import limit is {MAX_BATCH}")
+    shape_error = ("the file must be a JSON array of items" if not isinstance(batch, list)
+                   else "the batch is empty" if not batch
+                   else f"the batch has {len(batch)} items; the import limit is {MAX_BATCH}" if len(batch) > MAX_BATCH
+                   else None)
+    if shape_error:
+        print(f"ERROR {shape_error}")
+        return 1
 
-    seen = set()
+    seen, covered = set(), set()
     kinds = collections.Counter()
     bad_items = error_count = warning_count = 0
     for index, item in enumerate(batch):
         errors, warnings = [], []
-        attachment_id = check_item(item, manifest_ids, args.model_id, seen, errors, warnings)
+        attachment_id = check_item(item, known_ids, model_id, seen, errors, warnings)
+        covered.add(attachment_id)
         if isinstance(item, dict) and isinstance(item.get("metadata"), dict):
             kinds[str(item["metadata"].get("image_kind"))] += 1
         if errors or warnings:
@@ -176,9 +176,26 @@ def main():
         error_count += len(errors)
         warning_count += len(warnings)
 
+    if require_all:
+        missing = sorted(known_ids - covered)
+        error_count += len(missing)
+        for attachment_id in missing:
+            print(f"ERROR   manifest attachment {attachment_id} has no item")
+
     print(f"{len(batch)} items, {bad_items} with errors ({error_count} errors), {warning_count} warnings; "
           f"image_kind: {dict(kinds.most_common())}")
-    sys.exit(1 if error_count else 0)
+    return error_count
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("batch", type=pathlib.Path)
+    parser.add_argument("--manifest", required=True, type=pathlib.Path)
+    parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
+    parser.add_argument("--require-all", action="store_true",
+                        help="error when a manifest attachment has no item (one file covers the whole manifest)")
+    args = parser.parse_args()
+    sys.exit(1 if validate(args.batch, args.manifest, args.model_id, args.require_all) else 0)
 
 
 if __name__ == "__main__":

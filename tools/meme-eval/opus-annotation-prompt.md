@@ -20,13 +20,16 @@ When `PromptVersion` changes, replace both blocks and the pin. Do not edit them 
 
 ## How the orchestrator uses this file
 
-Give the subagent three things:
+Give the subagent four things (the exact wrapper is in `OPUS-RUN.md`):
 
 1. Everything from "BEGIN AGENT PROMPT" to "END AGENT PROMPT".
 2. The list of absolute image paths of the batch (from `manifest.json`, member `local_path`).
-3. The absolute path of the output file, for example `<batch dir>/annotations/batch-001.json`.
+3. The absolute path of the output file, for example `<batch dir>/annotations.json`.
+4. The validator command: `python3 tools/meme-eval/validate_batch.py <output file> --manifest <batch dir>/manifest.json --require-all`.
 
-Then run `python3 tools/meme-eval/validate_batch.py <output file> --manifest <batch dir>/manifest.json` before the import.
+Two rules of the agent part are stricter than the v4 system prompt, on purpose (D3, and one answer where v4 leaves two):
+`people` takes public figures only, also for a visible name. `source` has a fixed order: platform UI, then site watermark, then `"other"`, then `"none"`.
+The API writer follows v4 alone, so it can store a visible private name in `people` where this writer does not.
 
 ---
 
@@ -36,10 +39,13 @@ You annotate meme images. You get a list of absolute image paths and one output 
 
 ### Steps
 
-1. Open every image with the Read tool. Look at the image itself. Do not run scripts or OCR tools. Do not read any other file.
-2. For every image, write the metadata that the system prompt below asks for.
+1. Open every image with the Read tool. Look at the image itself. Do not run OCR tools or scripts on the images.
+2. For every image, write the metadata that the system prompt below asks for. Where the rules after the system prompt are stricter than the system prompt, the stricter rule holds.
 3. Write ONE JSON file to the output path with the Write tool. Write it once, after you have seen every image.
-4. End with a short message: the output path, the number of items, and every image you left out with the reason.
+4. Run the validator command that the orchestrator gave you. Correct the file and run it again until the exit code is 0. This is the only command you run.
+5. End with a short message: the output path, the number of items, and every image you left out with the reason.
+
+The only other file you may read is the `manifest.json` of the batch. Use it for the list of paths only. A `file_name` in the manifest and the name of an image file are not evidence of who or what is in the image.
 
 ### System prompt (v4, verbatim)
 
@@ -68,11 +74,24 @@ Rules:
 
 ### People rule (D3: famous people only)
 
-- Add a person to `people` only in two cases: the name is visible in the image (`"evidence": "name_visible"`), or the person is a widely recognized public figure and you are sure who it is (`"evidence": "widely_recognized"`).
+- `people` holds public figures only: politicians, celebrities, athletes, well-known creators. There are two cases. The name of the public figure is written in the image (`"evidence": "name_visible"`). Or you are sure who the public figure is without a written name (`"evidence": "widely_recognized"`).
+- A name written in the image that belongs to a private person is NOT a `people` entry. This covers the author of a tweet, post, comment or review, a nick in a chat, and a name in the meme text. Keep such a name in `ocr_text` only. Do not put it in `people`, `tags`, `templates` or `search_phrases`.
+- The author of a post is a `people` entry only when the author is a public figure. Then the evidence is `name_visible`.
 - Never name a private person. Never guess a name from a face. Describe the person instead ("mężczyzna w okularach").
 - When `image_kind` is `cutout_face_or_emote`: `people` MUST be `[]`. No other field may contain the name: not `tags`, not `templates`, not `search_phrases`, not `franchise`, not the descriptions. This holds even when you think you recognize the face.
 - A cut-out face, a sticker or an emote with little or no context is `cutout_face_or_emote`. Do not label it `edited_photo` to keep a name.
 - A fictional character is not a person. Put the character in `tags`, and the show or game in `franchise`.
+
+### Source rule (one value per image)
+
+Use the first case that fits:
+
+1. The UI of a platform is visible (the layout of a tweet, an Instagram post, a Reddit thread, a Discord chat): `source` is that platform. A watermark of a repost site in the same image does not change it. Put the repost site in `tags`.
+2. No platform UI, but the watermark or logo of a site is visible (jbzd, kwejk, imgflip, 9gag): `source` is that site.
+3. The visible platform is not in the enum (a chat app such as iMessage, WhatsApp or Messenger, the ChatGPT UI, a web-comic site, a news site): `source` is `"other"`. Do not pick the nearest enum value. Put the name of the platform in `tags`.
+4. Nothing of the above: `source` is `"none"`. An account handle (`@name`), an artist signature or a channel name without a platform logo or UI is not a platform: `"none"`.
+
+Twitter and X are both `"twitter"`.
 
 ### Output contract (strict)
 
@@ -108,7 +127,7 @@ The file is a JSON array. One element per image. Each element has exactly these 
 - Only `franchise` may be `null`. Every other member is a string or an array, never `null`. No `null` inside an array.
 - `ocr_text` is `""` when the image has no text.
 - `image_kind`, `language`, `evidence` and `source` take one value from the enum, in the exact spelling. Lowercase. No list, no second value.
-- `source` is `"none"` when no platform is visible, and `"other"` for a visible platform that is not in the enum. Twitter and X are both `"twitter"`.
+- `source` follows the source rule above. It is never `null`: write `"none"`.
 - `people` elements have exactly `name` and `evidence`.
 - One element per image. The same `attachment_discord_id` must not occur twice.
 - The file is plain JSON in UTF-8. No markdown fence, no comment, no trailing comma. Write Polish letters as they are.
