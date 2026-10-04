@@ -302,7 +302,7 @@ internal sealed class MemeIndexingJob(
     // same row every time (#311). The failed save leaves the rejected row and this item's progress in
     // the tracker, where EF would re-issue them on the next save — so drop the tracker, reload the
     // checkpoint to its last persisted state, and record this item as a plain Failed row.
-    // The live hook has no checkpoint (#374): it passes null and gets the same row handling.
+    // The live hook has no checkpoint (#374).
     private async Task RecoverPoisonedItemAsync(
         DiscordDbContext db,
         BackfillCheckpointEntity? checkpoint,
