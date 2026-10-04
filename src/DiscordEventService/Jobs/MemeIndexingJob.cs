@@ -164,7 +164,9 @@ internal sealed class MemeIndexingJob(
     // no row yet, or a Failed row (retried, optionally attempt-capped for the
     // sweep). Terminal rows (Indexed/Skipped) are skipped — this is what makes
     // re-runs idempotent. With revisitIndexedForModel set, an Indexed row is terminal
-    // only once it has that model's annotation for the current prompt version (#367).
+    // only once it has that model's annotation for the current prompt version (#367),
+    // or that same writer refused the image; and a row Skipped by a refusal is pending
+    // again for any other writer (#373). An attachment-level skip stays terminal.
     // Deterministic order is what makes the message-id resume cursor valid across runs.
     private static async Task<List<MemeSampleItem>> CollectPendingAsync(
         DiscordDbContext db,
@@ -183,8 +185,11 @@ internal sealed class MemeIndexingJob(
 
         var statusByAttachment = await db.MemeIndex
             .Where(m => m.GuildDiscordId == guildId)
-            .Select(m => new { m.AttachmentDiscordId, m.Status, m.AttemptCount })
-            .ToDictionaryAsync(m => m.AttachmentDiscordId, m => (m.Status, m.AttemptCount), cancellationToken);
+            .Select(m => new { m.AttachmentDiscordId, m.Status, m.AttemptCount, m.RefusedByModelId, m.RefusedByPromptVersion })
+            .ToDictionaryAsync(
+                m => m.AttachmentDiscordId,
+                m => (m.Status, m.AttemptCount, m.RefusedByModelId, m.RefusedByPromptVersion),
+                cancellationToken);
 
         HashSet<ulong> annotatedByConfiguredWriter = revisitIndexedForModel is null
             ? []
@@ -204,13 +209,22 @@ internal sealed class MemeIndexingJob(
             {
                 if (!statusByAttachment.TryGetValue(c.AttachmentDiscordId, out var row))
                     return true;
+
+                // The sweep passes no model: for it every Indexed or Skipped row is terminal.
+                // For the manual backfill the configured writer is done with a row once it
+                // wrote its annotation or refused the image.
+                var configuredWriterMayTry = revisitIndexedForModel is not null
+                    && !annotatedByConfiguredWriter.Contains(c.AttachmentDiscordId)
+                    && !(row.RefusedByModelId == revisitIndexedForModel
+                         && row.RefusedByPromptVersion == OpenRouterClient.PromptVersion);
                 return row.Status switch
                 {
                     MemeIndexStatus.Pending => true,
                     MemeIndexStatus.Failed => maxFailedAttempts is not { } capAttempts
                         || row.AttemptCount < capAttempts,
-                    MemeIndexStatus.Indexed => revisitIndexedForModel is not null
-                        && !annotatedByConfiguredWriter.Contains(c.AttachmentDiscordId),
+                    MemeIndexStatus.Indexed => configuredWriterMayTry,
+                    // No marker = an attachment-level skip (dead, too large, not an image).
+                    MemeIndexStatus.Skipped => configuredWriterMayTry && row.RefusedByModelId is not null,
                     _ => false
                 };
             })

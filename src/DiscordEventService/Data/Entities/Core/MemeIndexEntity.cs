@@ -39,6 +39,12 @@ public class MemeIndexEntity : ITimestamped
     public string? Error { get; set; }
     public int AttemptCount { get; set; }
 
+    // The last writer that refused this image (#373): a refusal is the model's outcome, not the
+    // attachment's. Both set or both null; independent of Status, so an Indexed row can carry it.
+    // The manual backfill does not ask this (model, prompt version) again; any other one may try.
+    public string? RefusedByModelId { get; set; }
+    public string? RefusedByPromptVersion { get; set; }
+
     public DateTime FirstSeenUtc { get; set; }
     public DateTime LastUpdatedUtc { get; set; }
 

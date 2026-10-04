@@ -71,8 +71,9 @@ internal enum MemeAnalysisOutcome
 {
     Success,
 
-    // The model declined to describe the image (safety filter). Terminal —
-    // retrying the same image is pointless; §3 maps this to status Skipped.
+    // The model declined to describe the image (safety filter). Terminal for this model and
+    // prompt version — retrying the same image is pointless; §3 maps this to status Skipped,
+    // and #373 records the refusing writer so another one may still try.
     Refusal,
 
     // Transport/API/parse failure. Transient flavours are retryable.
