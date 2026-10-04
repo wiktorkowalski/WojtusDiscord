@@ -125,7 +125,17 @@ python3 tools/meme-eval/retrieval_eval.py --inputs src/DiscordEventService/Data/
   --guild 341531063920754700 --db meme_eval --out <results file>
 ```
 
-The script finds every `model_id` and prints one block per writer and one for all writers together. Compare the `tok=rank` rows (the baseline after #380) of `claude-opus-5.5` and `gemini-3.8-flash`. Reference from #370: 3.8-flash@low top-1 77.9 %, MRR 0.824.
+The script finds every `model_id` and prints one block per writer and one for all writers together. Compare the `tok=prod` rows marked `(baseline)`: production search since #380 (stop list in the rank query only).
+
+Measured on 2026-10-04, 249 queries, top-1 / recall@5 / MRR:
+
+| Writer | top-1 | recall@5 | MRR |
+|---|---|---|---|
+| `claude-code/claude-opus-5.5` | 81.1 % | 85.9 % | 0.836 |
+| `google/gemini-3.8-flash` @low | 81.5 % | 87.1 % | 0.845 |
+| all three writers together | 85.5 % | 90.8 % | 0.879 |
+
+Queries of type "who": recall@5 0.771 for Opus, 0.914 for 3.8-flash@low.
 
 ### Every ~500 memes (about 13 batches)
 
