@@ -208,6 +208,26 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
         Assert.Contains("permission denied", result);
     }
 
+    // The same gate read from the catalog: no privilege of any kind, for the query role and for
+    // PUBLIC (every role inherits from it). A control table shows the check can say "true".
+    [Theory]
+    [InlineData("meme_search_log")]
+    [InlineData("meme_search_log_results")]
+    public async Task MemeSearchLogTable_GrantsNothingToTheQueryRoleOrToPublic(string table)
+    {
+        var privileges = await _db.Database.SqlQuery<bool>($"""
+            SELECT has_table_privilege(r.role, {table}, p.privilege) AS "Value"
+            FROM (VALUES ({QueryRole}), ('public')) AS r(role)
+            CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('DELETE'), ('TRUNCATE'), ('REFERENCES'), ('TRIGGER')) AS p(privilege)
+            """).ToListAsync();
+        var control = await _db.Database.SqlQuery<bool>(
+            $"""SELECT has_table_privilege({QueryRole}, 'meme_index', 'SELECT') AS "Value" """).SingleAsync();
+
+        Assert.Equal(14, privileges.Count);
+        Assert.DoesNotContain(true, privileges);
+        Assert.True(control);
+    }
+
     [Fact]
     public async Task SchemaHint_DoesNotNameTheMemeSearchLog()
     {
