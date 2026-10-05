@@ -146,6 +146,7 @@ python3 tools/meme-eval/retrieval_eval.py --inputs <eval inputs> --guild 3415310
   --trigram-weights 0.5,1.0 --glued-probes --out <results file>
 ```
 
+- `corpus_copy.sh` stops when the local database exists already. Drop it first (`DROP DATABASE meme_corpus;` in the local container) or pass another name.
 - `corpus_copy.sh` reads prod in read-only sessions: the schema, `meme_annotations`, `meme_index`, and from `messages` only `id`, `created_at_utc`, `is_deleted` of the rows that hold a meme. No message content leaves prod.
 - One variant (249 queries, one tokenizer, one weight) takes about 2 minutes on the local database. The script runs four tokenizers per weight. Run the weights as parallel processes.
 - The script prints gained / lost against production search, with no p-value. Use a two-sided sign test on the two counts.

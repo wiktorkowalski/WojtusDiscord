@@ -7,8 +7,10 @@
 #   export PGHOST=<prod db host> PGPORT=<prod db port> PGPASSWORD=<prod db password>
 #   tools/meme-eval/corpus_copy.sh [local database, default meme_corpus]
 #
+# The local database must not exist yet: the script creates it before it reads prod.
 # CORPUS_DUMP_DIR=<dir> keeps the three dump files there. A dir that already holds them is
 # loaded as it is, with no prod read.
+# Other defaults: CORPUS_CONTAINER=wojtus-postgres, PGUSER=postgres, PGDATABASE=discord_event_service.
 set -euo pipefail
 
 database=${1:-meme_corpus}
@@ -26,6 +28,8 @@ local_psql() {
     docker exec -i "$container" psql -U postgres -q -v ON_ERROR_STOP=1 "$@"
 }
 
+local_psql -d postgres -c "CREATE DATABASE $database;"
+
 if [[ ! -s $dump_dir/schema.sql || ! -s $dump_dir/data.sql || ! -s $dump_dir/messages_min.csv ]]; then
     : "${PGHOST:?set PGHOST, PGPORT and PGPASSWORD in the shell}" "${PGPORT:?}" "${PGPASSWORD:?}"
     prod pg_dump --schema-only --no-owner --no-privileges > "$dump_dir/schema.sql"
@@ -34,7 +38,6 @@ if [[ ! -s $dump_dir/schema.sql || ! -s $dump_dir/data.sql || ! -s $dump_dir/mes
         WHERE id IN (SELECT message_id FROM meme_index)) TO STDOUT CSV" > "$dump_dir/messages_min.csv"
 fi
 
-local_psql -d postgres -c "CREATE DATABASE $database;"
 local_psql -d "$database" < "$dump_dir/schema.sql"
 # The full table stays on prod. CASCADE drops the foreign keys that point at it.
 local_psql -d "$database" -c "DROP TABLE public.messages CASCADE;
