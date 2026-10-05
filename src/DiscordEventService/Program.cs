@@ -160,12 +160,17 @@ builder.Services.AddHttpClient(AttachmentUrlRefreshService.HttpClientName)
     {
         client.BaseAddress = new Uri("https://discord.com/api/v10/");
         client.Timeout = urlRefreshTimeout;
+        // An answer holds at most 50 signed URLs: no reason to buffer more (#395).
+        client.MaxResponseContentBufferSize = 1024 * 1024;
     });
 
 builder.Services.AddScoped<OpenRouterClient>();
 builder.Services.AddScoped<MemeSampleService>();
 builder.Services.AddScoped<IMemeIndexSummaryReader, MemeIndexSummaryReader>();
 builder.Services.AddScoped<AttachmentUrlRefreshService>();
+builder.Services.AddSingleton<MemeDashboardLimits>();
+builder.Services.AddScoped<IMemeStatsReader, MemeStatsReader>();
+builder.Services.AddScoped<IMemeThumbnailResolver, MemeThumbnailResolver>();
 builder.Services.AddScoped<MemeAttachmentIndexer>();
 builder.Services.AddScoped<MemeAnnotationImportService>();
 builder.Services.AddScoped<MemeBenchmarkJob>();

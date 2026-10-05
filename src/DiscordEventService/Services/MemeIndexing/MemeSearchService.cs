@@ -19,7 +19,15 @@ public sealed record MemeSearchHit(
     string? DescriptionEn,
     string[] Tags,
     DateTime MessageCreatedAtUtc,
-    double Score);
+    double Score,
+    // The annotation that won for this attachment, and the two parts of its score (#395):
+    // Score = TsRank + MemeSearchService.TrigramWeight * TrigramSimilarity.
+    MemeImageKind? ImageKind,
+    string[] Templates,
+    string ModelId,
+    string PromptVersion,
+    double TsRank,
+    double TrigramSimilarity);
 
 // One page of a search (#391). Total is the number of matching memes on every page, not the
 // number shown. A page past the end has no hits and Total 0: the count comes with the rows.
@@ -33,7 +41,7 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
     // lands roughly in 0.1–0.9, word_similarity in 0–1; 0.5 lets a strong
     // trigram match compete with an OCR hit without drowning out tag hits.
     // Tuned against the seeded rows in MemeSearchServiceTests.
-    private const double TrigramWeight = 0.5;
+    internal const double TrigramWeight = 0.5;
 
     // Pinned by MemeIndexSchemaTests: the threshold at which Polish
     // inflections (postgres ~ postgresie) still match without false positives.
@@ -57,6 +65,11 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
     internal static readonly string RankStopListVersion = Convert.ToHexStringLower(
         SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', RankStopWords.Order(StringComparer.Ordinal)))))[..StopListVersionLength];
 
+    // What search can return, in LINQ: the gate of the search SQL below (Indexed, message not
+    // deleted), for a reader that must not show more than search does (#395).
+    internal static IQueryable<MemeIndexEntity> Searchable(IQueryable<MemeIndexEntity> memes) =>
+        memes.Where(m => m.Status == MemeIndexStatus.Indexed && !m.Message.IsDeleted);
+
     // Every call leaves one row in meme_search_log (#384), also a search with no hits. The row
     // is written after this method returns (MemeSearchLogWriter), so it adds no wait and its
     // failure cannot reach the caller. A search that throws leaves no row.
@@ -65,8 +78,10 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         (await SearchPageAsync(guildId, query, offset: 0, limit, caller, cancellationToken)).Hits;
 
     // The same search from a given offset, with the total (#391). Each page is its own row in the log.
+    // caller null = not a person's search and nothing is written (#395): the dashboard's tester
+    // is a read-only endpoint with no auth, so it must not be a way to insert rows.
     public async Task<MemeSearchPage> SearchPageAsync(
-        ulong guildId, string query, int offset, int limit, MemeSearchCaller caller, CancellationToken cancellationToken)
+        ulong guildId, string query, int offset, int limit, MemeSearchCaller? caller, CancellationToken cancellationToken)
     {
         var searchedAtUtc = DateTime.UtcNow;
         var stopwatch = Stopwatch.StartNew();
@@ -84,7 +99,8 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
             ? []
             : await QueryAsync(guildId, query, tokens, rankTokens, offset, limit, cancellationToken);
 
-        searchLog.Write(NewLogRow(searchedAtUtc, guildId, query, offset, limit, caller, tokens, rankTokens, rows, stopwatch.Elapsed));
+        if (caller is not null)
+            searchLog.Write(NewLogRow(searchedAtUtc, guildId, query, offset, limit, caller, tokens, rankTokens, rows, stopwatch.Elapsed));
 
         var hits = rows
             .Select(r => new MemeSearchHit(
@@ -96,7 +112,13 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
                 r.DescriptionEn,
                 r.Tags ?? [],
                 r.MessageCreatedAtUtc,
-                r.Score))
+                r.Score,
+                (MemeImageKind?)r.ImageKind,
+                r.Templates ?? [],
+                r.ModelId,
+                r.PromptVersion,
+                r.TsRank,
+                r.TrigramSimilarity))
             .ToList();
 
         return new MemeSearchPage(hits, rows.Count > 0 ? (int)rows[0].TotalCount : 0);
@@ -129,8 +151,9 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         // needs a total order: two attachments of one message can tie on score and time, and a
         // tie may come back in a different order on the next page.
         //
-        // model_id, prompt_version, ts_rank and trigram_similarity are for the search log (#384):
-        // the winning annotation and the two parts of its score. Nothing in the ranking reads them.
+        // model_id, prompt_version, ts_rank and trigram_similarity are for the search log (#384)
+        // and the dashboard tester (#395): the winning annotation and the two parts of its score.
+        // image_kind and templates are for the tester only. Nothing in the ranking reads them.
         return db.Database.SqlQuery<MemeSearchRow>($"""
             SELECT channel_discord_id,
                    message_discord_id,
@@ -139,6 +162,8 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
                    description_pl,
                    description_en,
                    tags,
+                   image_kind,
+                   templates,
                    message_created_at_utc,
                    score,
                    model_id,
@@ -155,6 +180,8 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
                        a.description_pl,
                        a.description_en,
                        a.tags,
+                       a.image_kind,
+                       a.templates,
                        msg.created_at_utc AS message_created_at_utc,
                        (ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({rankQuery})))
                         + {TrigramWeight} * word_similarity(public.f_unaccent({query}), a.search_text))::float8 AS score,
@@ -242,6 +269,8 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         string? DescriptionPl,
         string? DescriptionEn,
         string[]? Tags,
+        int? ImageKind,
+        string[]? Templates,
         DateTime MessageCreatedAtUtc,
         double Score,
         string ModelId,
