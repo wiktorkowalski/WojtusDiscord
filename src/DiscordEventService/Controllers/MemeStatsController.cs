@@ -7,16 +7,17 @@ namespace DiscordEventService.Controllers;
 // The dashboard's "Meme index" page (#395). Every action is a read. The queries are in
 // MemeStatsReader; this class checks the input.
 [ApiController]
-[Route("api/stats/memes")]
+[Route(RoutePrefix)]
 public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
 {
+    // MemeStatsReader builds the thumbnail links of its answers from these two.
+    public const string RoutePrefix = "api/stats/memes";
+    public const string ThumbnailSegment = "thumbnails";
+
     public const int DefaultUsageDays = 30;
     public const int MaxUsageDays = 365;
     public const int MaxSearchLimit = 20;
     public const int MaxQueryLength = 200;
-
-    // How long a browser may reuse a thumbnail redirect. See MemeThumbnailResolver.CacheDuration.
-    private const int ThumbnailMaxAgeSeconds = 3600;
 
     [HttpGet]
     [ProducesResponseType<MemeIndexDto>(StatusCodes.Status200OK)]
@@ -49,11 +50,16 @@ public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
         if (limit is < 1 or > MaxSearchLimit)
             return BadRequest(new { error = $"limit must be between 1 and {MaxSearchLimit}." });
 
-        return await stats.SearchAsync(query, limit, ct);
+        var result = await stats.SearchAsync(query, limit, ct);
+        if (result is null)
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "Too many searches run right now. Try again." });
+
+        return result;
     }
 
-    // 302 to a freshly signed Discord CDN URL. Only for an attachment that has a meme_index row.
-    [HttpGet("thumbnails/{attachmentDiscordId}")]
+    // 302 to a freshly signed Discord CDN URL, for an indexed meme of a current meme channel
+    // only. The rules and the caps are in MemeThumbnailResolver. 404 does not say why.
+    [HttpGet(ThumbnailSegment + "/{attachmentDiscordId}")]
     [ProducesResponseType(StatusCodes.Status302Found)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
@@ -64,7 +70,7 @@ public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
         if (thumbnail.Url is null)
             return thumbnail.IsRetryable ? StatusCode(StatusCodes.Status503ServiceUnavailable) : NotFound();
 
-        Response.Headers.CacheControl = $"private, max-age={ThumbnailMaxAgeSeconds}";
+        Response.Headers.CacheControl = $"private, max-age={(int)MemeThumbnailResolver.BrowserMaxAge.TotalSeconds}";
         return Redirect(thumbnail.Url);
     }
 }

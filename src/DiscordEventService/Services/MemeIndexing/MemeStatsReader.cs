@@ -1,5 +1,6 @@
 using System.Globalization;
 using DiscordEventService.Configuration;
+using DiscordEventService.Controllers;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Dtos;
@@ -15,7 +16,8 @@ public interface IMemeStatsReader
 
     Task<MemeSearchUsageDto> GetSearchUsageAsync(int days, CancellationToken cancellationToken);
 
-    Task<MemeSearchResultDto> SearchAsync(string query, int limit, CancellationToken cancellationToken);
+    // Null = too many tester searches run right now (MemeDashboardLimits); nothing was searched.
+    Task<MemeSearchResultDto?> SearchAsync(string query, int limit, CancellationToken cancellationToken);
 }
 
 // The read side of the dashboard's "Meme index" page (#395). Read-only, with one exception that
@@ -24,15 +26,19 @@ internal sealed class MemeStatsReader(
     DiscordDbContext db,
     IMemeIndexSummaryReader summaryReader,
     MemeSearchService searchService,
+    MemeDashboardLimits limits,
     IOptions<MemeIndexOptions> options) : IMemeStatsReader
 {
-    public const string ThumbnailRoutePrefix = "/api/stats/memes/thumbnails/";
-
     internal const int TopListSize = 8;
     internal const int LatestSearchCount = 20;
 
     private const string Tz = "Europe/Warsaw";
     private const int Indexed = (int)MemeIndexStatus.Indexed;
+
+    // A search a person started. Not in the list: a page turn (a later page of a search that
+    // is already counted) and the dashboard's tester. A new source is left out until it is added here.
+    private static readonly MemeSearchSource[] StartedSearchSources =
+        [MemeSearchSource.SlashCommand, MemeSearchSource.AssistantTool, MemeSearchSource.Other];
 
     // The tester's caller: no channel and no person.
     private static readonly MemeSearchCaller TesterCaller = new(MemeSearchSource.Dashboard, ChannelDiscordId: 0UL, UserDiscordId: 0UL);
@@ -40,7 +46,8 @@ internal sealed class MemeStatsReader(
     // What search can return, one annotation per meme. Search keeps the annotation with the best
     // score for the query and breaks a tie by indexed_at_utc DESC, model_id, prompt_version
     // (MemeSearchService). With no query there is no score, so the tiebreak alone picks: the
-    // latest annotation. The page and search read the same memes; a second writer adds no count.
+    // latest annotation. The same gate as search (Indexed, message not deleted), over every
+    // guild; a second writer adds no count.
     private const string ChosenAnnotationsCte =
         """
         WITH chosen AS MATERIALIZED (
@@ -59,7 +66,34 @@ internal sealed class MemeStatsReader(
     // status, {1} the size of a top list.
     private const string LimitParameter = "{1}";
 
+    // The limit of a distribution that is not a top list.
+    private const int EveryValue = int.MaxValue;
+
+    // The page asks on every load and the endpoint has no auth: the answer is computed at
+    // most once per MemeDashboardLimits.IndexCacheDuration, by one request at a time.
     public async Task<MemeIndexDto> GetIndexAsync(CancellationToken cancellationToken)
+    {
+        if (limits.FreshIndex() is { } cached)
+            return cached;
+
+        await limits.IndexGate.WaitAsync(cancellationToken);
+        try
+        {
+            // Another request may have computed it while this one waited.
+            if (limits.FreshIndex() is { } computedMeanwhile)
+                return computedMeanwhile;
+
+            var index = await ComputeIndexAsync(cancellationToken);
+            limits.KeepIndex(index);
+            return index;
+        }
+        finally
+        {
+            limits.IndexGate.Release();
+        }
+    }
+
+    private async Task<MemeIndexDto> ComputeIndexAsync(CancellationToken cancellationToken)
     {
         var countsByStatus = await MemeIndexStatusQueries.CountByStatusAsync(db, cancellationToken);
         var status = new MemeStatusCountsDto(
@@ -106,25 +140,25 @@ internal sealed class MemeStatsReader(
     public async Task<MemeSearchUsageDto> GetSearchUsageAsync(int days, CancellationToken cancellationToken)
     {
         var since = DateTime.UtcNow.AddDays(-days);
+        var started = StartedSearchSources.Select(s => (int)s).ToArray();
         var slashCommand = (int)MemeSearchSource.SlashCommand;
         var assistantTool = (int)MemeSearchSource.AssistantTool;
+        var other = (int)MemeSearchSource.Other;
         var pageButton = (int)MemeSearchSource.PageButton;
-        var dashboard = (int)MemeSearchSource.Dashboard;
 
         // Stays raw: percentile_cont has no EF LINQ translation. A page turn is counted on its
-        // own and is not a search; the dashboard's tester rows are not read at all.
+        // own and is not a search. Every other source, the dashboard's tester included, is not read.
         var totals = await db.Database.SqlQuery<SearchUsageRow>($"""
-            SELECT count(*) FILTER (WHERE source <> {pageButton})::bigint AS search_count,
-                   count(*) FILTER (WHERE source <> {pageButton} AND zero_results)::bigint AS zero_result_count,
+            SELECT count(*) FILTER (WHERE source = ANY({started}))::bigint AS search_count,
+                   count(*) FILTER (WHERE source = ANY({started}) AND zero_results)::bigint AS zero_result_count,
                    (percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)
-                       FILTER (WHERE source <> {pageButton}))::float8 AS duration_p95_ms,
+                       FILTER (WHERE source = ANY({started})))::float8 AS duration_p95ms,
                    count(*) FILTER (WHERE source = {slashCommand})::bigint AS slash_command_count,
                    count(*) FILTER (WHERE source = {assistantTool})::bigint AS assistant_tool_count,
                    count(*) FILTER (WHERE source = {pageButton})::bigint AS page_button_count,
-                   count(*) FILTER (WHERE source NOT IN ({slashCommand}, {assistantTool}, {pageButton}))::bigint AS other_count
+                   count(*) FILTER (WHERE source = {other})::bigint AS other_count
             FROM meme_search_log
-            WHERE source <> {dashboard}
-              AND searched_at_utc >= {since}
+            WHERE searched_at_utc >= {since}
             """).SingleAsync(cancellationToken);
 
         return new MemeSearchUsageDto(
@@ -138,7 +172,24 @@ internal sealed class MemeStatsReader(
             await GetLatestSearchesAsync(since, cancellationToken));
     }
 
-    public async Task<MemeSearchResultDto> SearchAsync(string query, int limit, CancellationToken cancellationToken)
+    // The search scans every annotation and the endpoint has no auth: a fixed number may run
+    // at one time, and one more is turned away at once instead of queued.
+    public async Task<MemeSearchResultDto?> SearchAsync(string query, int limit, CancellationToken cancellationToken)
+    {
+        if (!await limits.SearchGate.WaitAsync(TimeSpan.Zero, cancellationToken))
+            return null;
+
+        try
+        {
+            return await SearchCoreAsync(query, limit, cancellationToken);
+        }
+        finally
+        {
+            limits.SearchGate.Release();
+        }
+    }
+
+    private async Task<MemeSearchResultDto> SearchCoreAsync(string query, int limit, CancellationToken cancellationToken)
     {
         // The dashboard has no guild in its URL: the guild that holds the index (single-guild
         // deployment; with two, the one with more indexed memes, then the lower id).
@@ -182,7 +233,8 @@ internal sealed class MemeStatsReader(
         return new MemeSearchResultDto(query, page.Total, MemeSearchService.TrigramWeight, hits);
     }
 
-    private static string ThumbnailUrl(ulong attachmentDiscordId) => $"{ThumbnailRoutePrefix}{attachmentDiscordId}";
+    private static string ThumbnailUrl(ulong attachmentDiscordId) =>
+        $"/{MemeStatsController.RoutePrefix}/{MemeStatsController.ThumbnailSegment}/{attachmentDiscordId}";
 
     private async Task<List<MemeChannelDto>> GetChannelsAsync(CancellationToken cancellationToken)
     {
@@ -222,42 +274,52 @@ internal sealed class MemeStatsReader(
             .ToList();
     }
 
+    // A closed set (image kind, language, source): every value, and the null bucket in the
+    // list. A top list: the first TopListSize values, and the memes with no value in MissingCount.
     private async Task<MemeDistributionsDto> GetDistributionsAsync(CancellationToken cancellationToken) =>
         new MemeDistributionsDto(
-            await GetColumnDistributionAsync(
-                "image_kind", limit: null, value => MemeJsonNames.Of((MemeImageKind)ParseInt(value)), cancellationToken),
-            await GetColumnDistributionAsync(
-                "language", limit: null, value => MemeJsonNames.Of((MemeLanguage)ParseInt(value)), cancellationToken),
-            await GetColumnDistributionAsync("source", limit: null, value => value, cancellationToken),
-            await GetListDistributionAsync("templates", cancellationToken),
-            await GetColumnDistributionAsync("franchise", TopListSize, value => value, cancellationToken),
-            await GetListDistributionAsync("tags", cancellationToken));
+            await GetDistributionAsync(
+                ColumnDistributionSql("image_kind"), EveryValue, withNullBucket: true,
+                value => MemeJsonNames.Of((MemeImageKind)ParseInt(value)), cancellationToken),
+            await GetDistributionAsync(
+                ColumnDistributionSql("language"), EveryValue, withNullBucket: true,
+                value => MemeJsonNames.Of((MemeLanguage)ParseInt(value)), cancellationToken),
+            await GetDistributionAsync(
+                ColumnDistributionSql("source"), EveryValue, withNullBucket: true, value => value, cancellationToken),
+            await GetDistributionAsync(
+                ListDistributionSql("templates"), TopListSize, withNullBucket: false, value => value, cancellationToken),
+            await GetDistributionAsync(
+                ColumnDistributionSql("franchise"), TopListSize, withNullBucket: false, value => value, cancellationToken),
+            await GetDistributionAsync(
+                ListDistributionSql("tags"), TopListSize, withNullBucket: false, value => value, cancellationToken));
 
-    // One value per meme. limit null = a closed set: every value, and the null bucket in the
-    // list. With a limit: the top values only, and the memes with no value in MissingCount.
-    private async Task<MemeDistributionDto> GetColumnDistributionAsync(
-        string column, int? limit, Func<string, string> nameOf, CancellationToken cancellationToken)
+    // The order is made here, after the names are final: image_kind and language arrive as
+    // numbers. SQL already cut a top list with the same rule (count, then the raw value).
+    private async Task<MemeDistributionDto> GetDistributionAsync(
+        string sql, int limit, bool withNullBucket, Func<string, string> nameOf, CancellationToken cancellationToken)
     {
-        var sql = ColumnDistributionSql(column);
-        var rows = await db.Database.SqlQueryRaw<DistributionRow>(sql, Indexed, limit ?? int.MaxValue)
-            .ToListAsync(cancellationToken);
+        var rows = await db.Database.SqlQueryRaw<DistributionRow>(sql, Indexed, limit).ToListAsync(cancellationToken);
 
-        return ToDistribution(rows, nameOf, withNullBucket: limit is null);
+        // The row with no name counts the memes with no value.
+        var named = rows.Where(r => r.Name is not null).ToList();
+        var missingCount = rows.Sum(r => r.Count) - named.Sum(r => r.Count);
+
+        var buckets = named
+            .Select(r => new MemeBucketDto(nameOf(r.Name!), r.Count))
+            .OrderByDescending(b => b.Count)
+            .ThenBy(b => b.Name, StringComparer.Ordinal)
+            .ToList();
+
+        if (withNullBucket && missingCount > 0)
+            buckets.Add(new MemeBucketDto(null, missingCount));
+
+        return new MemeDistributionDto(buckets, named.Count == 0 ? 0 : (int)named[0].DistinctCount, missingCount);
     }
 
-    // A list column (templates, tags): a meme counts once for each of its distinct values.
-    private async Task<MemeDistributionDto> GetListDistributionAsync(string column, CancellationToken cancellationToken)
-    {
-        var sql = ListDistributionSql(column);
-        var rows = await db.Database.SqlQueryRaw<DistributionRow>(sql, Indexed, TopListSize)
-            .ToListAsync(cancellationToken);
-
-        return ToDistribution(rows, name => name, withNullBucket: false);
-    }
-
-    // The column name is a literal of this class, never a value from a request: it is SQL
-    // text, not a parameter. A value with no bucket (NULL) is always in the result; the top
-    // list is cut among the others. COLLATE "C" makes the tiebreak the same on every database.
+    // One value per meme. The column name is a literal of this class, never a value from a
+    // request: it is SQL text, not a parameter. A value with no bucket (NULL) is always in the
+    // result; the top list is cut among the others. COLLATE "C" makes the tiebreak the same on
+    // every database.
     private static string ColumnDistributionSql(string column) =>
         $"""
         {ChosenAnnotationsCte}
@@ -275,6 +337,7 @@ internal sealed class MemeStatsReader(
         WHERE name IS NULL OR position <= {LimitParameter}
         """;
 
+    // A list column (templates, tags): a meme counts once for each of its distinct values.
     // The last SELECT is the row of the memes with an empty list (name NULL).
     private static string ListDistributionSql(string column) =>
         $"""
@@ -297,34 +360,11 @@ internal sealed class MemeStatsReader(
         HAVING count(*) > 0
         """;
 
-    // The order is made here, after the names are final: image_kind and language arrive as
-    // numbers. SQL already cut a top list with the same rule (count, then the raw value).
-    private static MemeDistributionDto ToDistribution(
-        List<DistributionRow> rows, Func<string, string> nameOf, bool withNullBucket)
-    {
-        var missingCount = rows.Where(r => r.Name is null).Sum(r => r.Count);
-
-        var buckets = rows
-            .Where(r => r.Name is not null)
-            .Select(r => new MemeBucketDto(nameOf(r.Name!), r.Count))
-            .OrderByDescending(b => b.Count)
-            .ThenBy(b => b.Name, StringComparer.Ordinal)
-            .ToList();
-
-        if (withNullBucket && missingCount > 0)
-            buckets.Add(new MemeBucketDto(null, missingCount));
-
-        var distinctCount = rows.Where(r => r.Name is not null).Select(r => (int)r.DistinctCount).FirstOrDefault();
-        return new MemeDistributionDto(buckets, distinctCount, missingCount);
-    }
-
     // The person and the channel of a search are not read here at all (#395).
     private async Task<List<MemeLoggedSearchDto>> GetLatestSearchesAsync(DateTime since, CancellationToken cancellationToken)
     {
         var searches = await db.MemeSearchLog.AsNoTracking()
-            .Where(s => s.Source != MemeSearchSource.Dashboard
-                && s.Source != MemeSearchSource.PageButton
-                && s.SearchedAtUtc >= since)
+            .Where(s => StartedSearchSources.Contains(s.Source) && s.SearchedAtUtc >= since)
             .OrderByDescending(s => s.SearchedAtUtc)
             .ThenBy(s => s.Id)
             .Take(LatestSearchCount)
@@ -390,7 +430,7 @@ internal sealed class MemeStatsReader(
         _ => "other",
     };
 
-    // SqlQuery binds result columns to these by snake_case name.
+    // SqlQuery binds result columns to these by snake_case name (DurationP95Ms is duration_p95ms).
     private sealed record YearRow(int Year, long Count);
 
     private sealed record DistributionRow(string? Name, long Count, long DistinctCount);

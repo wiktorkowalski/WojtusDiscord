@@ -18,22 +18,16 @@ internal static class MemeIndexStatusQueries
             .Select(g => new { g.Key, Count = g.Count() })
             .ToDictionaryAsync(g => g.Key, g => g.Count, cancellationToken);
 
-    public static async Task<List<MemeWriterCount>> CountByWriterAsync(
-        DiscordDbContext db, CancellationToken cancellationToken)
-    {
-        var rows = await db.MemeAnnotations.AsNoTracking()
+    public static Task<List<MemeWriterCount>> CountByWriterAsync(
+        DiscordDbContext db, CancellationToken cancellationToken) =>
+        db.MemeAnnotations.AsNoTracking()
             .GroupBy(a => new { a.ModelId, a.PromptVersion })
-            .Select(g => new
-            {
+            .OrderBy(g => g.Key.ModelId)
+            .ThenBy(g => g.Key.PromptVersion)
+            .Select(g => new MemeWriterCount(
                 g.Key.ModelId,
                 g.Key.PromptVersion,
-                Count = g.Count(),
-                LastIndexedAtUtc = g.Max(a => a.IndexedAtUtc),
-            })
-            .OrderBy(w => w.ModelId)
-            .ThenBy(w => w.PromptVersion)
+                g.Count(),
+                g.Max(a => a.IndexedAtUtc)))
             .ToListAsync(cancellationToken);
-
-        return [.. rows.Select(w => new MemeWriterCount(w.ModelId, w.PromptVersion, w.Count, w.LastIndexedAtUtc))];
-    }
 }
