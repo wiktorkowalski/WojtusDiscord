@@ -17,14 +17,14 @@ The owner's request is the go for the whole run, the prod import included. Targe
 
 ## Steps
 
-1. **Count.** `opus_run.py export … --batches 0`. Done when you have the `pending` number. `0 pending` → report "nothing waits" and stop.
+1. **Count.** `opus_run.py export … --batches 0`. `0 pending` → report "nothing waits" and stop. Otherwise run the first SELECT of runbook section 4 and note the prod row count of `claude-code/claude-opus-5.5`: step 6 compares against it. Done when you have the `pending` number and that row count.
 2. **Export.** `--batches N` with N = pending / 40, rounded up. Done when `opus_run.py status` lists every new batch as `exported` and a second `--batches 0` prints `0 pending`. A transient failure (exit 1) → run the same export again.
 3. **Annotate.** One Opus subagent per batch, with the spawn line of runbook section 2 and the absolute `REPO` and `BATCH_DIR`. At most 4 annotators at a time: start the next one when one reports, and shut down the one that reported. Done when every new batch has a one-line report with `validator exit 0`, or names the items it left out.
    - An annotator that stops without a file → start the batch again.
    - An item left out on purpose → `opus_run.py skip` with the annotator's reason, then tell the owner which Discord message it is. Skipped items are never queued again.
 4. **Validate.** `opus_run.py validate` for each new batch, after the last export has ended. Done when `status` shows every new batch as `validated`.
 5. **Import.** Check that no deploy runs (`gh run list --limit 3`), then `import_run.sh <run dir>`. Done when it exits 0 and `status` shows 0 exported, 0 annotated, 0 validated. A 409 → an indexing job runs: wait and run it again. A rejected item → stop and report it with its reason.
-6. **Verify on prod, read-only.** The two SELECTs of runbook section 4. Done when the `claude-code/claude-opus-5.5` row count grew by exactly the number imported in step 5, and a final `--batches 0` prints `0 pending`.
+6. **Verify on prod, read-only.** The two SELECTs of runbook section 4. Done when the `claude-code/claude-opus-5.5` row count equals the count of step 1 plus the `imported` numbers that `import_run.sh` printed in step 5, and a final `--batches 0` prints `0 pending`.
 
 ## Report
 
