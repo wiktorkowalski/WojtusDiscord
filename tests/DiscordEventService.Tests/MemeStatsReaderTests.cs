@@ -380,9 +380,9 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddSearchAsync(MemeSearchSource.SlashCommand, now.AddHours(-2), "b", durationMs: 20, hits: 1UL);
         await _data.AddSearchAsync(MemeSearchSource.AssistantTool, now.AddHours(-3), "c", durationMs: 30);
         await _data.AddSearchAsync(MemeSearchSource.Other, now.AddHours(-4), "d", durationMs: 40, hits: 1UL);
-        // In none of the search numbers: a page turn, the dashboard's tester, a row before the window.
+        // In none of the search numbers: a page turn, a source this page does not know, a row before the window.
         await _data.AddSearchAsync(MemeSearchSource.PageButton, now.AddHours(-5), "a", durationMs: 1000);
-        await _data.AddSearchAsync(MemeSearchSource.Dashboard, now.AddHours(-6), "tester", durationMs: 5000);
+        await _data.AddSearchAsync((MemeSearchSource)99, now.AddHours(-6), "later source", durationMs: 5000);
         await _data.AddSearchAsync(MemeSearchSource.SlashCommand, now.AddDays(-8), "old", durationMs: 9000);
 
         var usage = await NewReader().GetSearchUsageAsync(7, CancellationToken.None);
@@ -431,6 +431,61 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         var search = Assert.Single((await NewReader().GetSearchUsageAsync(30, CancellationToken.None)).Latest);
 
         Assert.Equal(new MemeLoggedTopHitDto(99UL, 1.0, null, null, null, null), search.TopHit);
+    }
+
+    // Search no longer returns these memes, so the usage list must not show them either:
+    // no file name, no description, no link, no thumbnail.
+    [Theory]
+    [InlineData(true, MemeIndexStatus.Indexed)]
+    [InlineData(false, MemeIndexStatus.Skipped)]
+    [InlineData(false, MemeIndexStatus.Pending)]
+    public async Task GetSearchUsageAsync_TopHitThatSearchNoLongerReturns_KeepsItsIdAndScoreOnly(
+        bool messageDeleted, MemeIndexStatus status)
+    {
+        var meme = await _data.AddMemeAsync(1UL, status, messageDeleted: messageDeleted);
+        await _data.AddAnnotationAsync(meme);
+        await _data.AddSearchAsync(MemeSearchSource.SlashCommand, DateTime.UtcNow.AddMinutes(-5), "rakieta", durationMs: 5, hits: 1UL);
+
+        var search = Assert.Single((await NewReader().GetSearchUsageAsync(30, CancellationToken.None)).Latest);
+
+        Assert.Equal(new MemeLoggedTopHitDto(1UL, 1.0, null, null, null, null), search.TopHit);
+    }
+
+    // The endpoint has no auth: inside the window an answer for the same days is not computed again.
+    [Fact]
+    public async Task GetSearchUsageAsync_SecondCallWithTheSameDays_ReturnsTheKeptAnswer()
+    {
+        await _data.AddSearchAsync(MemeSearchSource.SlashCommand, DateTime.UtcNow.AddMinutes(-5), "a", durationMs: 5);
+        var first = await NewReader().GetSearchUsageAsync(30, CancellationToken.None);
+        await _data.AddSearchAsync(MemeSearchSource.SlashCommand, DateTime.UtcNow.AddMinutes(-4), "b", durationMs: 5);
+
+        var second = await NewReader().GetSearchUsageAsync(30, CancellationToken.None);
+        var otherDays = await NewReader().GetSearchUsageAsync(31, CancellationToken.None);
+
+        Assert.Same(first, second);
+        Assert.Equal(1, second.SearchCount);
+        // Each value of days has its own answer.
+        Assert.Equal(2, otherDays.SearchCount);
+    }
+
+    // Many requests at once for one value of days compute one answer.
+    [Fact]
+    public async Task GetSearchUsageAsync_ConcurrentCallsWithTheSameDays_ComputeOnce()
+    {
+        await _data.AddSearchAsync(MemeSearchSource.SlashCommand, DateTime.UtcNow.AddMinutes(-5), "a", durationMs: 5);
+        var contexts = Enumerable.Range(0, 6).Select(_ => NewContext()).ToList();
+        try
+        {
+            var answers = await Task.WhenAll(contexts.Select(db =>
+                Task.Run(() => NewReader(db: db).GetSearchUsageAsync(30, CancellationToken.None))));
+
+            Assert.All(answers, a => Assert.Same(answers[0], a));
+        }
+        finally
+        {
+            foreach (var db in contexts)
+                await db.DisposeAsync();
+        }
     }
 
     [Fact]
@@ -501,26 +556,21 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         Assert.Empty(hit.Templates);
     }
 
-    // MemeSearchService logs every search itself, so the tester's row has its own source and
-    // the usage numbers leave it out.
-    [Fact]
-    public async Task SearchAsync_TesterSearch_LogsARowWithTheDashboardSourceThatUsageDoesNotCount()
+    // The API is read-only and has no auth: a tester search must not be a way to insert rows.
+    [Theory]
+    [InlineData("rakieta")]
+    [InlineData("kwantowa termodynamika frytek")]
+    [InlineData("!!! ???")]
+    public async Task SearchAsync_TesterSearch_WritesNothingToTheSearchLog(string query)
     {
         await _data.AddIndexedAsync(1UL, a => a.Tags = ["rakieta"]);
 
-        await SearchAsync("rakieta", 5, CancellationToken.None);
+        await SearchAsync(query, 5, CancellationToken.None);
         await _searchLog.LastWrite;
 
-        var row = Assert.Single(await _db.MemeSearchLog.AsNoTracking().ToListAsync());
-        Assert.Equal(MemeSearchSource.Dashboard, row.Source);
-        Assert.Equal(0UL, row.UserDiscordId);
-        Assert.Equal(0UL, row.ChannelDiscordId);
-        Assert.Equal(1, row.ResultCount);
-
-        var usage = await NewReader().GetSearchUsageAsync(30, CancellationToken.None);
-        Assert.Equal(0, usage.SearchCount);
-        Assert.Equal(new MemeSearchSourceCountsDto(0, 0, 0, 0), usage.BySource);
-        Assert.Empty(usage.Latest);
+        Assert.Equal(0, await _db.MemeSearchLog.CountAsync());
+        Assert.Equal(0, await _db.MemeSearchLogResults.CountAsync());
+        Assert.Equal(0, (await NewReader().GetSearchUsageAsync(30, CancellationToken.None)).SearchCount);
     }
 
     [Fact]
@@ -535,21 +585,19 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
     }
 
     [Fact]
-    public async Task SearchAsync_NothingIndexed_ReturnsNoHitsAndLogsNothing()
+    public async Task SearchAsync_NothingIndexed_ReturnsNoHits()
     {
         await _data.AddMemeAsync(1UL, MemeIndexStatus.Pending);
 
         var result = await SearchAsync("rakieta", 5, CancellationToken.None);
-        await _searchLog.LastWrite;
 
         Assert.Empty(result.Hits);
         Assert.Equal(0, result.Total);
-        Assert.Empty(await _db.MemeSearchLog.AsNoTracking().ToListAsync());
     }
 
     // The endpoint has no auth and the search scans the corpus: past the cap a search is not run.
     [Fact]
-    public async Task SearchAsync_EverySearchSlotTaken_ReturnsNullAndSearchesNothing()
+    public async Task SearchAsync_EverySearchSlotTaken_ReturnsNullUntilASlotIsFree()
     {
         await _data.AddIndexedAsync(1UL, a => a.Tags = ["rakieta"]);
         for (var i = 0; i < MemeDashboardLimits.MaxConcurrentSearches; i++)
@@ -558,27 +606,27 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         var busy = await NewReader().SearchAsync("rakieta", 5, CancellationToken.None);
         _limits.SearchGate.Release(MemeDashboardLimits.MaxConcurrentSearches);
         var free = await NewReader().SearchAsync("rakieta", 5, CancellationToken.None);
-        await _searchLog.LastWrite;
 
         Assert.Null(busy);
         Assert.Single(free!.Hits);
-        // One row: the search that was turned away did not run.
-        Assert.Single(await _db.MemeSearchLog.AsNoTracking().ToListAsync());
     }
 
     private async Task<MemeSearchResultDto> SearchAsync(string query, int limit, CancellationToken cancellationToken) =>
         (await NewReader().SearchAsync(query, limit, cancellationToken))!;
 
-    private MemeStatsReader NewReader(bool automaticIndexing = false)
+    // db: a context of its own for a reader that runs next to others, as every request has.
+    private MemeStatsReader NewReader(bool automaticIndexing = false, DiscordDbContext? db = null)
     {
+        var context = db ?? _db;
         var options = NewOptions(automaticIndexing);
         // A cache of its own: every reader computes the waiting count from the database.
         var cache = new MemoryCache(new MemoryCacheOptions());
-        return new MemeStatsReader(_db, NewSummaryReader(cache), new MemeSearchService(_db, _searchLog), _limits, options);
+        return new MemeStatsReader(
+            context, NewSummaryReader(cache, context), new MemeSearchService(context, _searchLog), _limits, options);
     }
 
-    private MemeIndexSummaryReader NewSummaryReader(IMemoryCache cache) =>
-        new(_db, new MemeSampleService(_db, NewOptions(), NullLogger<MemeSampleService>.Instance), cache);
+    private MemeIndexSummaryReader NewSummaryReader(IMemoryCache cache, DiscordDbContext? db = null) =>
+        new(db ?? _db, new MemeSampleService(db ?? _db, NewOptions(), NullLogger<MemeSampleService>.Instance), cache);
 
     private static IOptions<MemeIndexOptions> NewOptions(bool automaticIndexing = false) =>
         Options.Create(new MemeIndexOptions

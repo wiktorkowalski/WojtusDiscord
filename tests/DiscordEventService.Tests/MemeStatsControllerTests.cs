@@ -79,6 +79,10 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         // The image is one more request: a search calls Discord for nothing and returns no CDN URL.
         Assert.DoesNotContain("discordapp", body);
         Assert.Equal(0, host.Discord.Calls);
+        // And it writes nothing: a GET of a read-only API with no auth inserts no log row.
+        await host.SearchLogWrites;
+        Assert.Equal(0, await _db.MemeSearchLog.CountAsync());
+        Assert.Equal(0, await _db.MemeSearchLogResults.CountAsync());
     }
 
     // meme_search_log is per-person data: the page gets the query and never who typed it or where.
@@ -457,10 +461,12 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         public StubDiscordApi Discord => discord;
         public MemeDashboardLimits Limits => app.Services.GetRequiredService<MemeDashboardLimits>();
 
+        // Whatever the log writer started last; a tester search must start nothing.
+        public Task SearchLogWrites => app.Services.GetRequiredService<MemeSearchLogWriter>().LastWrite;
+
         public async ValueTask DisposeAsync()
         {
-            // A tester search writes its log row after the answer: let it finish before the database goes.
-            await app.Services.GetRequiredService<MemeSearchLogWriter>().LastWrite;
+            await SearchLogWrites;
             client.Dispose();
             await app.StopAsync();
             await app.DisposeAsync();

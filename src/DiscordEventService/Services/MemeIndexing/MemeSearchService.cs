@@ -68,13 +68,20 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
     // Every call leaves one row in meme_search_log (#384), also a search with no hits. The row
     // is written after this method returns (MemeSearchLogWriter), so it adds no wait and its
     // failure cannot reach the caller. A search that throws leaves no row.
+    // What search can return, in LINQ: the gate of the search SQL below (Indexed, message not
+    // deleted), for a reader that must not show more than search does (#395).
+    internal static IQueryable<MemeIndexEntity> Searchable(IQueryable<MemeIndexEntity> memes) =>
+        memes.Where(m => m.Status == MemeIndexStatus.Indexed && !m.Message.IsDeleted);
+
     public async Task<List<MemeSearchHit>> SearchAsync(
         ulong guildId, string query, int limit, MemeSearchCaller caller, CancellationToken cancellationToken) =>
         (await SearchPageAsync(guildId, query, offset: 0, limit, caller, cancellationToken)).Hits;
 
     // The same search from a given offset, with the total (#391). Each page is its own row in the log.
+    // caller null = not a person's search and nothing is written (#395): the dashboard's tester
+    // is a read-only endpoint with no auth, so it must not be a way to insert rows.
     public async Task<MemeSearchPage> SearchPageAsync(
-        ulong guildId, string query, int offset, int limit, MemeSearchCaller caller, CancellationToken cancellationToken)
+        ulong guildId, string query, int offset, int limit, MemeSearchCaller? caller, CancellationToken cancellationToken)
     {
         var searchedAtUtc = DateTime.UtcNow;
         var stopwatch = Stopwatch.StartNew();
@@ -92,7 +99,8 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
             ? []
             : await QueryAsync(guildId, query, tokens, rankTokens, offset, limit, cancellationToken);
 
-        searchLog.Write(NewLogRow(searchedAtUtc, guildId, query, offset, limit, caller, tokens, rankTokens, rows, stopwatch.Elapsed));
+        if (caller is not null)
+            searchLog.Write(NewLogRow(searchedAtUtc, guildId, query, offset, limit, caller, tokens, rankTokens, rows, stopwatch.Elapsed));
 
         var hits = rows
             .Select(r => new MemeSearchHit(

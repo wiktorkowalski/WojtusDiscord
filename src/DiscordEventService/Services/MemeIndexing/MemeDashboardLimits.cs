@@ -33,7 +33,17 @@ internal sealed class MemeDashboardLimits : IDisposable
     // is up to a minute old already (MemeIndexSummaryReader).
     public static readonly TimeSpan IndexCacheDuration = TimeSpan.FromSeconds(30);
 
+    // Answers of GET api/stats/memes/search-usage kept at one time: one per value of days.
+    // Above the 365 values a caller can ask for, so the limit is a bound, not a policy.
+    public const int MaxCachedSearchUsages = 512;
+
     private IndexSnapshot? _index;
+
+    // One request computes a search-usage answer; the others wait and read what it kept.
+    public SemaphoreSlim SearchUsageGate { get; } = new(1, 1);
+
+    // Keyed by days, each entry kept for IndexCacheDuration.
+    public MemoryCache SearchUsage { get; } = new(new MemoryCacheOptions { SizeLimit = MaxCachedSearchUsages });
 
     // One request computes the index answer; the others wait and read what it kept.
     public SemaphoreSlim IndexGate { get; } = new(1, 1);
@@ -70,6 +80,8 @@ internal sealed class MemeDashboardLimits : IDisposable
     public void Dispose()
     {
         IndexGate.Dispose();
+        SearchUsageGate.Dispose();
+        SearchUsage.Dispose();
         SearchGate.Dispose();
         RefreshSlots.Dispose();
         RefreshBudget.Dispose();

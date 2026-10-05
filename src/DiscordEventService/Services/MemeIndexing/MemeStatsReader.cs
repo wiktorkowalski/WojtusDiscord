@@ -5,6 +5,7 @@ using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Dtos;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.MemeIndexing;
@@ -20,8 +21,8 @@ public interface IMemeStatsReader
     Task<MemeSearchResultDto?> SearchAsync(string query, int limit, CancellationToken cancellationToken);
 }
 
-// The read side of the dashboard's "Meme index" page (#395). Read-only, with one exception that
-// is not a write of this class: a tester search leaves its meme_search_log row, like every search.
+// The read side of the dashboard's "Meme index" page (#395). Read-only: a tester search writes
+// no meme_search_log row.
 internal sealed class MemeStatsReader(
     DiscordDbContext db,
     IMemeIndexSummaryReader summaryReader,
@@ -36,12 +37,10 @@ internal sealed class MemeStatsReader(
     private const int Indexed = (int)MemeIndexStatus.Indexed;
 
     // A search a person started. Not in the list: a page turn (a later page of a search that
-    // is already counted) and the dashboard's tester. A new source is left out until it is added here.
+    // is already counted). A new source is left out until it is added here. The dashboard's
+    // tester is in no number: it writes no log row.
     private static readonly MemeSearchSource[] StartedSearchSources =
         [MemeSearchSource.SlashCommand, MemeSearchSource.AssistantTool, MemeSearchSource.Other];
-
-    // The tester's caller: no channel and no person.
-    private static readonly MemeSearchCaller TesterCaller = new(MemeSearchSource.Dashboard, ChannelDiscordId: 0UL, UserDiscordId: 0UL);
 
     // What search can return, one annotation per meme. Search keeps the annotation with the best
     // score for the query and breaks a tie by indexed_at_utc DESC, model_id, prompt_version
@@ -137,7 +136,34 @@ internal sealed class MemeStatsReader(
             await GetDistributionsAsync(cancellationToken));
     }
 
+    // No auth here either, and days makes 365 different answers: each is computed at most once
+    // per MemeDashboardLimits.IndexCacheDuration, by one request at a time.
     public async Task<MemeSearchUsageDto> GetSearchUsageAsync(int days, CancellationToken cancellationToken)
+    {
+        if (limits.SearchUsage.Get<MemeSearchUsageDto>(days) is { } cached)
+            return cached;
+
+        await limits.SearchUsageGate.WaitAsync(cancellationToken);
+        try
+        {
+            // Another request may have computed it while this one waited.
+            if (limits.SearchUsage.Get<MemeSearchUsageDto>(days) is { } computedMeanwhile)
+                return computedMeanwhile;
+
+            var usage = await ComputeSearchUsageAsync(days, cancellationToken);
+            limits.SearchUsage.Set(
+                days,
+                usage,
+                new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = MemeDashboardLimits.IndexCacheDuration, Size = 1 });
+            return usage;
+        }
+        finally
+        {
+            limits.SearchUsageGate.Release();
+        }
+    }
+
+    private async Task<MemeSearchUsageDto> ComputeSearchUsageAsync(int days, CancellationToken cancellationToken)
     {
         var since = DateTime.UtcNow.AddDays(-days);
         var started = StartedSearchSources.Select(s => (int)s).ToArray();
@@ -147,7 +173,7 @@ internal sealed class MemeStatsReader(
         var pageButton = (int)MemeSearchSource.PageButton;
 
         // Stays raw: percentile_cont has no EF LINQ translation. A page turn is counted on its
-        // own and is not a search. Every other source, the dashboard's tester included, is not read.
+        // own and is not a search. A source outside the list is not counted.
         var totals = await db.Database.SqlQuery<SearchUsageRow>($"""
             SELECT count(*) FILTER (WHERE source = ANY({started}))::bigint AS search_count,
                    count(*) FILTER (WHERE source = ANY({started}) AND zero_results)::bigint AS zero_result_count,
@@ -193,8 +219,7 @@ internal sealed class MemeStatsReader(
     {
         // The dashboard has no guild in its URL: the guild that holds the index (single-guild
         // deployment; with two, the one with more indexed memes, then the lower id).
-        var guildId = await db.MemeIndex.AsNoTracking()
-            .Where(m => m.Status == MemeIndexStatus.Indexed)
+        var guildId = await MemeSearchService.Searchable(db.MemeIndex.AsNoTracking())
             .GroupBy(m => m.GuildDiscordId)
             .Select(g => new { GuildDiscordId = g.Key, Count = g.Count() })
             .OrderByDescending(g => g.Count)
@@ -202,11 +227,12 @@ internal sealed class MemeStatsReader(
             .Select(g => (ulong?)g.GuildDiscordId)
             .FirstOrDefaultAsync(cancellationToken);
 
-        // Nothing is indexed: there is nothing to search, and no search to log.
+        // Nothing is indexed: there is nothing to search.
         if (guildId is not { } guild)
             return new MemeSearchResultDto(query, 0, MemeSearchService.TrigramWeight, []);
 
-        var page = await searchService.SearchPageAsync(guild, query, offset: 0, limit, TesterCaller, cancellationToken);
+        // No caller: the tester is not a person's search and leaves no meme_search_log row.
+        var page = await searchService.SearchPageAsync(guild, query, offset: 0, limit, caller: null, cancellationToken);
 
         var hits = page.Hits
             .Select((h, index) => new MemeSearchHitDto(
@@ -388,14 +414,17 @@ internal sealed class MemeStatsReader(
             .Distinct()
             .ToList();
 
-        var memes = await db.MemeIndex.AsNoTracking()
+        // Only what search would return today: a top hit that was deleted since, or whose row
+        // is no longer Indexed, keeps its id and score and shows nothing else.
+        var memes = await MemeSearchService.Searchable(db.MemeIndex.AsNoTracking())
             .Where(m => attachmentIds.Contains(m.AttachmentDiscordId))
             .Select(m => new { m.AttachmentDiscordId, m.GuildDiscordId, m.ChannelDiscordId, m.MessageDiscordId, m.FileName })
             .ToDictionaryAsync(m => m.AttachmentDiscordId, cancellationToken);
 
         // The description of the annotation that won at search time, when it is still there.
+        var searchableIds = memes.Keys.ToList();
         var descriptions = (await db.MemeAnnotations.AsNoTracking()
-                .Where(a => attachmentIds.Contains(a.AttachmentDiscordId))
+                .Where(a => searchableIds.Contains(a.AttachmentDiscordId))
                 .Select(a => new { a.AttachmentDiscordId, a.ModelId, a.PromptVersion, a.DescriptionPl })
                 .ToListAsync(cancellationToken))
             .ToDictionary(a => (a.AttachmentDiscordId, a.ModelId, a.PromptVersion), a => a.DescriptionPl);
