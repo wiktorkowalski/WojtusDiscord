@@ -1,7 +1,9 @@
+using System.Text.Json;
 using DiscordEventService.Controllers;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
 
@@ -19,6 +21,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     {
         _db = NewContext();
         await _db.Database.MigrateAsync();
+        await _db.PresenceEvents.ExecuteDeleteAsync();
         await _db.ReactionEvents.ExecuteDeleteAsync();
         await _db.VoiceStateEvents.ExecuteDeleteAsync();
         await _db.RawEventLogs.ExecuteDeleteAsync();
@@ -145,6 +148,45 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
         Assert.Equal(2, volume[0].Count);
     }
 
+    // #393: the dashboard reads snowflakes as strings (a JS number loses precision past 2^53),
+    // so the new Community fields go through the real JSON pipeline here.
+    [Fact]
+    public async Task Community_NewWindowFields_SerializeSnowflakesAsStrings()
+    {
+        var controller = new StatsController(_db);
+
+        var dto = (await controller.Community("all", default)).Value!;
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(dto, DashboardJson.CreateOptions()));
+        var root = json.RootElement;
+
+        var channel = root.GetProperty("channels")[0];
+        Assert.Equal(JsonValueKind.String, channel.GetProperty("channelDiscordId").ValueKind);
+        Assert.Equal("555", channel.GetProperty("channelDiscordId").GetString());
+        Assert.Equal(3, channel.GetProperty("messageCount").GetInt64());
+        Assert.Equal(3, channel.GetProperty("reactionCount").GetInt64());
+
+        var emotes = root.GetProperty("topEmotes").EnumerateArray().ToList();
+        var custom = emotes.Single(e => e.GetProperty("emoteName").GetString() == "megalul");
+        Assert.Equal(JsonValueKind.String, custom.GetProperty("emoteDiscordId").ValueKind);
+        Assert.Equal("999", custom.GetProperty("emoteDiscordId").GetString());
+        Assert.True(custom.GetProperty("isCustom").GetBoolean());
+        var unicode = emotes.Single(e => e.GetProperty("emoteName").GetString() == "👍");
+        Assert.Equal(JsonValueKind.Null, unicode.GetProperty("emoteDiscordId").ValueKind);
+
+        var given = root.GetProperty("leaderboards").GetProperty("reactionsGiven")[0];
+        Assert.Equal(JsonValueKind.String, given.GetProperty("userDiscordId").ValueKind);
+        Assert.Equal("100", given.GetProperty("userDiscordId").GetString());
+        Assert.Equal(3, given.GetProperty("value").GetInt64());
+
+        var game = Assert.Single(root.GetProperty("topActivities").EnumerateArray());
+        Assert.Equal("Visual Studio Code", game.GetProperty("name").GetString());
+        Assert.Equal(30, game.GetProperty("minutes").GetInt64());
+        Assert.Equal(1, game.GetProperty("players").GetInt64());
+
+        Assert.Equal(JsonValueKind.Array, root.GetProperty("heatmap").ValueKind);
+        Assert.Equal(30, root.GetProperty("heatmapDays").GetInt32());
+    }
+
     private async Task SeedAsync()
     {
         var guild = new GuildEntity { DiscordId = 742554855180206203UL, Name = "G" };
@@ -186,6 +228,24 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
             new ActivityEntity { UserId = alice.Id, Name = "Visual Studio Code", ActivityType = 0 },
             new ActivityEntity { UserId = bob.Id, Name = "Spotify", ActivityType = 2 });
 
+        // Presence: alice plays for 30 minutes (feeds Community.TopActivities).
+        _db.PresenceEvents.AddRange(
+            new PresenceEventEntity
+            {
+                UserDiscordId = Alice,
+                GuildDiscordId = guild.DiscordId,
+                ActivitiesAfterJson = """[{"name":"Visual Studio Code","type":0,"streamUrl":null}]""",
+                EventTimestampUtc = t,
+                ReceivedAtUtc = t,
+            },
+            new PresenceEventEntity
+            {
+                UserDiscordId = Alice,
+                GuildDiscordId = guild.DiscordId,
+                EventTimestampUtc = t.AddMinutes(30),
+                ReceivedAtUtc = t.AddMinutes(30),
+            });
+
         await _db.SaveChangesAsync();
         _db.ChangeTracker.Clear();
     }
@@ -222,8 +282,10 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
             EmoteName = emote,
             EmoteDiscordId = emoteId,
             EventType = ReactionEventType.Added,
-            ReceivedAtUtc = DateTime.UtcNow,
-            EventTimestampUtc = DateTime.UtcNow,
+            // A few minutes back: the Community window ends at the DB now(), and the
+            // container clock can sit slightly behind the host clock.
+            ReceivedAtUtc = DateTime.UtcNow.AddMinutes(-5),
+            EventTimestampUtc = DateTime.UtcNow.AddMinutes(-5),
         };
 
     private static RawEventLogEntity Raw(string type, DateTime at) => new RawEventLogEntity
