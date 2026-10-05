@@ -5,6 +5,7 @@ using DiscordEventService.Data;
 using DiscordEventService.Dtos;
 using DiscordEventService.Infrastructure;
 using DiscordEventService.Services.MemeIndexing;
+using DSharpPlus.Entities;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -18,8 +19,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     private const string Tz = "Europe/Warsaw";
 
     // Calendar "today" boundary in guild-local time, as a UTC instant.
-    private const string TodayStart =
-        $"(date_trunc('day', now() AT TIME ZONE '{Tz}') AT TIME ZONE '{Tz}')";
+    private static readonly string TodayStart = LocalDayStart(0);
 
     // "Present" reactions in raw SQL: Added (0) live + Backfilled (4) historical (Removed/
     // Cleared/EmojiCleared excluded; filtering to 0 alone under-counts ~30x). The raw-SQL
@@ -66,16 +66,11 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // We SUBTRACT the downtime overlap rather than drop the segment, so a legitimate
     // multi-hour call spanning a brief restart is preserved. Every voice query aliases
     // the sessionized rows as `v`. Mirrors the downtime handling in OnlineMinutesMetricAsync.
-    private const string VoiceSegmentMinutes =
-        """
-        GREATEST(0, EXTRACT(EPOCH FROM (v.next_ts - v.received_at_utc)) - COALESCE((
-            SELECT SUM(EXTRACT(EPOCH FROM (
-                LEAST(v.next_ts, COALESCE(d.ended_at_utc, now()))
-              - GREATEST(v.received_at_utc, d.started_at_utc))))
-            FROM bot_downtime_intervals d
-            WHERE v.received_at_utc < COALESCE(d.ended_at_utc, now())
-              AND v.next_ts > d.started_at_utc), 0)) / 60.0
-        """;
+    private static readonly string VoiceSegmentMinutes = SegmentMinutes("v.received_at_utc", "v.next_ts");
+
+    // The last CommunityHeatmapDays guild-local days feed the Community heatmap for every
+    // range: a 7-day heatmap is too sparse on this server to read.
+    private const int CommunityHeatmapDays = 30;
 
     [HttpGet("overview")]
     [ProducesResponseType<OverviewDto>(StatusCodes.Status200OK)]
@@ -98,12 +93,11 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         var topChatter = await TopChatters().FirstOrDefaultAsync(ct);
 
         var topChannel = await QuerySingleAsync(
-            $"{ChannelActivitySql} 1",
-            r => new ChannelActivityDto(r.GetString(0), Snowflake(r, 1), r.GetInt64(2), r.GetInt64(3)), ct);
+            $"{ChannelActivitySql} 1", ReadChannelActivity, ct);
 
         var messagesDaily = await GetMessagesDaily30Async(ct);
 
-        var topEmojis = await TopEmojisAsync(OverviewTopEmojis, ct);
+        var topEmojis = await TopEmojisAsync(OverviewTopEmojis, null, null, ct);
 
         var memeIndex = await memeIndexSummaryReader.GetAsync(ct);
 
@@ -156,24 +150,10 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     public async Task<ActionResult<List<UserStatDto>>> TopMessages(CancellationToken ct) => await
         TopChatters().Take(LeaderboardSize).ToListAsync(ct);
 
-    // Reactions GIVEN per user. LEFT-join semantics (a reactor with no stored user row keeps
-    // a null username) are preserved by resolving the user via a correlated lookup on the
-    // top 20 — bounded, index-backed, no whole-table join.
     [HttpGet("people/top-reactions-given")]
     [ProducesResponseType<List<UserStatDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<List<UserStatDto>>> TopReactionsGiven(CancellationToken ct) => await
-        db.ReactionEvents.AsNoTracking().WherePresent()
-            .GroupBy(r => r.UserDiscordId)
-            .Select(g => new { UserDiscordId = g.Key, Count = g.LongCount() })
-            .OrderByDescending(x => x.Count)
-            .ThenBy(x => x.UserDiscordId)
-            .Take(LeaderboardSize)
-            .Select(x => new UserStatDto(
-                db.Users.Where(u => u.DiscordId == x.UserDiscordId).Select(u => u.Username).FirstOrDefault(),
-                x.UserDiscordId,
-                x.Count,
-                db.Users.Where(u => u.DiscordId == x.UserDiscordId).Select(u => u.AvatarHash).FirstOrDefault()))
-            .ToListAsync(ct);
+        TopReactors(LeaderboardSize, null, null).ToListAsync(ct);
 
     // Reactions RECEIVED per author (reaction -> its message -> the message author). Inner
     // joins: only reactions on stored messages with a known author count.
@@ -212,12 +192,12 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     [HttpGet("places/channel-activity")]
     [ProducesResponseType<List<ChannelActivityDto>>(StatusCodes.Status200OK)]
     public async Task<ActionResult<List<ChannelActivityDto>>> ChannelActivity(CancellationToken ct) => await QueryAsync(
-        $"{ChannelActivitySql} {ChannelActivityLimit}",
-        r => new ChannelActivityDto(r.GetString(0), Snowflake(r, 1), r.GetInt64(2), r.GetInt64(3)), ct);
+        $"{ChannelActivitySql} {ChannelActivityLimit}", ReadChannelActivity, ct);
 
     [HttpGet("behavior/top-emojis")]
     [ProducesResponseType<List<EmojiStatDto>>(StatusCodes.Status200OK)]
-    public async Task<ActionResult<List<EmojiStatDto>>> TopEmojis(CancellationToken ct) => await TopEmojisAsync(BehaviorListSize, ct);
+    public async Task<ActionResult<List<EmojiStatDto>>> TopEmojis(CancellationToken ct) =>
+        await TopEmojisAsync(BehaviorListSize, null, null, ct);
 
     // Includes presence artifacts such as "Custom Status" and "Playing N/10" —
     // surfaced (not hidden) with a UI note.
@@ -238,14 +218,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // the Npgsql EF Core provider does not translate from LINQ.
     [HttpGet("behavior/heatmap")]
     [ProducesResponseType<List<HeatmapCellDto>>(StatusCodes.Status200OK)]
-    public async Task<ActionResult<List<HeatmapCellDto>>> Heatmap(CancellationToken ct) => await QueryAsync(
-        $"""
-        SELECT EXTRACT(DOW FROM created_at_utc AT TIME ZONE '{Tz}')::int AS dow,
-               EXTRACT(HOUR FROM created_at_utc AT TIME ZONE '{Tz}')::int AS hour,
-               count(*)::bigint
-        FROM messages GROUP BY dow, hour
-        """,
-        r => new HeatmapCellDto(r.GetInt32(0), r.GetInt32(1), r.GetInt64(2)), ct);
+    public async Task<ActionResult<List<HeatmapCellDto>>> Heatmap(CancellationToken ct) => await HeatmapAsync(null, ct);
 
     [HttpGet("community")]
     [ProducesResponseType<CommunityDto>(StatusCodes.Status200OK)]
@@ -262,8 +235,14 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
 
         var metrics = await BuildCommunityMetricsAsync(curStart, curEnd, prevStart, prevEnd, sparkDays, ct);
         var leaderboards = await BuildCommunityLeaderboardsAsync(curStart, curEnd, ct);
+        var topEmotes = await TopEmojisAsync(CommunityLeaderboardSize, curStart, curEnd, ct);
+        var channels = await WindowChannelActivityAsync(curStart, curEnd, ct);
+        var topActivities = await WindowTopActivitiesAsync(curStart, curEnd, ct);
+        var heatmap = await HeatmapAsync(CommunityHeatmapDays, ct);
 
-        return new CommunityDto(range, label, prevLabel, metrics, leaderboards);
+        return new CommunityDto(
+            range, label, prevLabel, metrics, leaderboards,
+            topEmotes, channels, topActivities, heatmap, CommunityHeatmapDays);
     }
 
     // Data reality: the bot currently records only the activity name ("Spotify") for
@@ -339,11 +318,14 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             .ThenBy(x => x.DiscordId)
             .Select(x => new UserStatDto(x.Username, x.DiscordId, x.Count, x.AvatarHash));
 
-    // Most-used reaction emotes (Overview top 5 / Behavior top 25). IsCustom (custom emotes
+    // Most-used reaction emotes (Overview top 5 / Behavior top 25 all-time; Community top 6
+    // in the range window). A null bound leaves that side open. IsCustom (custom emotes
     // carry a snowflake id) is computed in memory after the grouped count.
-    private async Task<List<EmojiStatDto>> TopEmojisAsync(int limit, CancellationToken ct)
+    private async Task<List<EmojiStatDto>> TopEmojisAsync(
+        int limit, DateTime? start, DateTime? end, CancellationToken ct)
     {
         var rows = await db.ReactionEvents.AsNoTracking().WherePresent()
+            .Where(r => (start == null || r.ReceivedAtUtc >= start) && (end == null || r.ReceivedAtUtc <= end))
             .GroupBy(r => new { r.EmoteName, r.EmoteDiscordId })
             .Select(g => new { g.Key.EmoteName, g.Key.EmoteDiscordId, Count = g.LongCount() })
             .OrderByDescending(x => x.Count)
@@ -454,7 +436,122 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             GROUP BY u.username, v.user_discord_id, u.avatar_hash ORDER BY 4 DESC, v.user_discord_id LIMIT {CommunityLeaderboardSize}
             """, ct);
 
-        return new CommunityLeaderboardsDto(topChatters, memeLords, reactionsReceived, voice);
+        var reactionsGiven = (await TopReactors(CommunityLeaderboardSize, curStart, curEnd).ToListAsync(ct))
+            .Select(x => new CommunityLeaderEntryDto(x.Username, x.UserDiscordId, x.AvatarHash, x.Count))
+            .ToList();
+
+        return new CommunityLeaderboardsDto(topChatters, memeLords, reactionsReceived, voice, reactionsGiven);
+    }
+
+    // Reactions GIVEN per user (People top 20 all-time; Community top 6 in the range window).
+    // A null bound leaves that side open. LEFT-join semantics (a reactor with no stored user
+    // row keeps a null username) are preserved by resolving the user via a correlated lookup
+    // on the top rows — bounded, index-backed, no whole-table join.
+    private IQueryable<UserStatDto> TopReactors(int limit, DateTime? start, DateTime? end) =>
+        db.ReactionEvents.AsNoTracking().WherePresent()
+            .Where(r => (start == null || r.ReceivedAtUtc >= start) && (end == null || r.ReceivedAtUtc <= end))
+            .GroupBy(r => r.UserDiscordId)
+            .Select(g => new { UserDiscordId = g.Key, Count = g.LongCount() })
+            .OrderByDescending(x => x.Count)
+            .ThenBy(x => x.UserDiscordId)
+            .Take(limit)
+            .Select(x => new UserStatDto(
+                db.Users.Where(u => u.DiscordId == x.UserDiscordId).Select(u => u.Username).FirstOrDefault(),
+                x.UserDiscordId,
+                x.Count,
+                db.Users.Where(u => u.DiscordId == x.UserDiscordId).Select(u => u.AvatarHash).FirstOrDefault()));
+
+    // Per-channel messages + present reactions inside the window. Only channels with at
+    // least one of either. Both sides are pre-aggregated and LEFT JOINed (one row per
+    // channel), as in ChannelActivitySql. Stays raw for the same reason.
+    private Task<List<ChannelActivityDto>> WindowChannelActivityAsync(
+        DateTime start, DateTime end, CancellationToken ct) => QueryAsync(
+        $"""
+        SELECT c.name, c.discord_id, COALESCE(mc.msgs, 0) AS msgs, COALESCE(rc.reactions, 0) AS reactions
+        FROM channels c
+        LEFT JOIN (
+            SELECT channel_id, count(*)::bigint AS msgs
+            FROM messages WHERE created_at_utc BETWEEN {Sql(start)} AND {Sql(end)}
+            GROUP BY channel_id
+        ) mc ON mc.channel_id = c.id
+        LEFT JOIN (
+            SELECT channel_discord_id, count(*)::bigint AS reactions
+            FROM reaction_events
+            WHERE {ReactionPresentSql} AND received_at_utc BETWEEN {Sql(start)} AND {Sql(end)}
+            GROUP BY channel_discord_id
+        ) rc ON rc.channel_discord_id = c.discord_id
+        WHERE mc.msgs > 0 OR rc.reactions > 0
+        ORDER BY msgs DESC, reactions DESC, c.discord_id LIMIT {CommunityLeaderboardSize}
+        """,
+        ReadChannelActivity, ct);
+
+    // Top games in the window, from presence_events and NOT the activities table: a missed
+    // "stop" leaves an active activities row that a later session of the same game keeps
+    // touching, so first_seen..last_seen spans days the user did not play (676 h of one game
+    // for 6 players in 30 days on prod). A presence event carries the user's full activity
+    // set, so the gap to the user's next event (LEAD) is one segment: segments of one user
+    // never overlap and a game counts once per segment, so no minute counts twice.
+    // Segments are clipped to the window and lose their downtime overlap (SegmentMinutes).
+    // Open segments (no following event) are excluded, as in the voice queries.
+    // Stays raw: LEAD() sessionization plus jsonb unnesting has no LINQ translation.
+    private Task<List<CommunityActivityDto>> WindowTopActivitiesAsync(
+        DateTime start, DateTime end, CancellationToken ct) => QueryAsync(
+        $"""
+        WITH seg AS (
+            SELECT s.user_discord_id, s.activities_after_json AS acts,
+                   GREATEST(s.received_at_utc, {Sql(start)}) AS seg_start,
+                   LEAST(s.next_ts, {Sql(end)}) AS seg_end
+            FROM (
+                SELECT user_discord_id, received_at_utc, activities_after_json,
+                       LEAD(received_at_utc) OVER (PARTITION BY user_discord_id ORDER BY received_at_utc) AS next_ts
+                FROM presence_events
+            ) s
+            WHERE s.next_ts IS NOT NULL
+              AND s.received_at_utc < {Sql(end)} AND s.next_ts > {Sql(start)}
+              AND jsonb_typeof(s.activities_after_json) = 'array'
+              AND NOT EXISTS (
+                  SELECT 1 FROM users u WHERE u.discord_id = s.user_discord_id AND u.is_bot)
+        ),
+        played AS (
+            SELECT g.name, seg.user_discord_id,
+                   SUM({SegmentMinutes("seg.seg_start", "seg.seg_end")}) AS minutes
+            FROM seg
+            CROSS JOIN LATERAL (
+                SELECT DISTINCT e->>'name' AS name
+                FROM jsonb_array_elements(seg.acts) e
+                -- Games only. The name filters catch noise that arrives typed Playing
+                -- (server-status "Playing 3/10") and stay as a guard for the other names.
+                WHERE e->>'type' = '{(int)DiscordActivityType.Playing}'
+                  AND e->>'name' NOT IN ('Custom Status', 'Spotify', 'Offline')
+                  AND e->>'name' !~ '^Playing [0-9]+/[0-9]+$'
+            ) g
+            GROUP BY g.name, seg.user_discord_id
+        )
+        SELECT name, round(SUM(minutes))::bigint AS minutes, count(*)::bigint AS players
+        FROM played
+        WHERE minutes > 0
+        GROUP BY name
+        HAVING round(SUM(minutes)) > 0
+        ORDER BY minutes DESC, name LIMIT {CommunityLeaderboardSize}
+        """,
+        r => new CommunityActivityDto(r.GetString(0), r.GetInt64(1), r.GetInt64(2)), ct);
+
+    // Weekday x hour message counts in guild-local time; sparse (empty cells are absent).
+    // lastDays = null is all-time; otherwise today plus the lastDays - 1 guild-local days
+    // before it. Stays raw: buckets by CET day-of-week + hour via `AT TIME ZONE`, which the
+    // Npgsql EF Core provider does not translate from LINQ.
+    private Task<List<HeatmapCellDto>> HeatmapAsync(int? lastDays, CancellationToken ct)
+    {
+        var where = lastDays is null ? string.Empty : $"WHERE created_at_utc >= {LocalDayStart(lastDays.Value - 1)}";
+        return QueryAsync(
+            $"""
+            SELECT EXTRACT(DOW FROM created_at_utc AT TIME ZONE '{Tz}')::int AS dow,
+                   EXTRACT(HOUR FROM created_at_utc AT TIME ZONE '{Tz}')::int AS hour,
+                   count(*)::bigint
+            FROM messages {where}
+            GROUP BY dow, hour ORDER BY dow, hour
+            """,
+            r => new HeatmapCellDto(r.GetInt32(0), r.GetInt32(1), r.GetInt64(2)), ct);
     }
 
     private async Task<WindowCountsDto> GetMessageWindowCountsAsync(CancellationToken ct) =>
@@ -508,7 +605,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             counts AS (
                 SELECT date_trunc('day', created_at_utc AT TIME ZONE '{Tz}')::date AS d, count(*)::bigint AS c
                 FROM messages
-                WHERE created_at_utc >= ((date_trunc('day', now() AT TIME ZONE '{Tz}') - interval '29 days') AT TIME ZONE '{Tz}')
+                WHERE created_at_utc >= {LocalDayStart(29)}
                 GROUP BY 1
             )
             SELECT days.d::text, COALESCE(counts.c, 0)::bigint
@@ -544,6 +641,10 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         return await reader.ReadAsync(ct) ? map(reader) : default;
     }
+
+    // Column order shared by ChannelActivitySql and WindowChannelActivityAsync.
+    private static ChannelActivityDto ReadChannelActivity(NpgsqlDataReader r) =>
+        new ChannelActivityDto(r.GetString(0), Snowflake(r, 1), r.GetInt64(2), r.GetInt64(3));
 
     private static string? NullableString(NpgsqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
 
@@ -586,6 +687,24 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
                 return (start, now, null, null, days, "All time", string.Empty);
         }
     }
+
+    // Minutes in the segment [startExpr, endExpr) MINUS its overlap with every
+    // bot_downtime_intervals window (open intervals coalesced to now()). See the
+    // VoiceSegmentMinutes comment for why the overlap is subtracted, not the segment dropped.
+    private static string SegmentMinutes(string startExpr, string endExpr) =>
+        $"""
+        GREATEST(0, EXTRACT(EPOCH FROM ({endExpr} - {startExpr})) - COALESCE((
+            SELECT SUM(EXTRACT(EPOCH FROM (
+                LEAST({endExpr}, COALESCE(d.ended_at_utc, now()))
+              - GREATEST({startExpr}, d.started_at_utc))))
+            FROM bot_downtime_intervals d
+            WHERE {startExpr} < COALESCE(d.ended_at_utc, now())
+              AND {endExpr} > d.started_at_utc), 0)) / 60.0
+        """;
+
+    // UTC instant of guild-local midnight `daysBack` days before today.
+    private static string LocalDayStart(int daysBack) =>
+        $"((date_trunc('day', now() AT TIME ZONE '{Tz}') - interval '{daysBack} days') AT TIME ZONE '{Tz}')";
 
     // Shared CTE body: one row per day for the last `sparkDays` CET calendar days ending
     // today (oldest -> newest). Compose as `WITH {DaysCte(n)}, <more CTEs> SELECT ...`.
