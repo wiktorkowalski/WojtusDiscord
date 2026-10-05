@@ -74,6 +74,25 @@ internal sealed class MemeSampleService(
         ulong messageDiscordId, CancellationToken cancellationToken)
         => GetCandidatesCoreAsync(messageDiscordId, cancellationToken);
 
+    // Waiting (#397) = a candidate the annotation writer could take and that has no meme_index
+    // row. Any row counts as handled, whatever its status. One number for all guilds.
+    public async Task<int> CountWaitingAsync(CancellationToken cancellationToken)
+    {
+        if (!options.Value.IsConfigured)
+            return 0;
+
+        var takeable = (await GetCandidatesAsync(cancellationToken))
+            .Where(c => !ImageMagic.IsGifFileName(c.FileName) && !options.Value.ExceedsMaxImageBytes(c.FileSizeBytes))
+            .ToList();
+
+        var known = (await db.MemeIndex.AsNoTracking()
+                .Select(m => m.AttachmentDiscordId)
+                .ToListAsync(cancellationToken))
+            .ToHashSet();
+
+        return takeable.Count(c => !known.Contains(c.AttachmentDiscordId));
+    }
+
     private async Task<List<MemeSampleItem>> GetCandidatesCoreAsync(
         ulong? messageDiscordId, CancellationToken cancellationToken)
     {

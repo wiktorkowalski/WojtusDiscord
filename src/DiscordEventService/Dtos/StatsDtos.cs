@@ -32,7 +32,9 @@ public sealed record OverviewDto(
     UserStatDto? TopChatter,
     ChannelActivityDto? TopChannel,
     IReadOnlyList<DailyPointDto> MessagesDaily,
-    IReadOnlyList<EmojiStatDto> TopEmojis);
+    IReadOnlyList<EmojiStatDto> TopEmojis,
+    long MemeIndexedCount,
+    long MemeWaitingCount);
 
 public sealed record GuildOnlineDto(ulong UserDiscordId, string? Username, string? AvatarHash, string Status);
 

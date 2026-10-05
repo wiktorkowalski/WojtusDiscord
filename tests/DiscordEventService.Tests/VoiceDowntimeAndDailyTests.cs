@@ -67,7 +67,7 @@ public sealed class VoiceDowntimeAndDailyTests(PostgresFixture fixture) : IClass
     {
         var controller = new StatsController(_db);
 
-        var overview = (await controller.Overview(default)).Value!;
+        var overview = (await controller.Overview(new FixedMemeIndexSummaryReader(), default)).Value!;
 
         // Always 30 buckets (today + prior 29 CET days), regardless of which days have data.
         Assert.Equal(30, overview.MessagesDaily.Count);

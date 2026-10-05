@@ -122,7 +122,7 @@ public sealed class StatsControllerTests(PostgresFixture fixture) : IClassFixtur
     {
         var controller = new StatsController(_db);
 
-        var o = (await controller.Overview(default)).Value!;
+        var o = (await controller.Overview(new FixedMemeIndexSummaryReader(), default)).Value!;
 
         Assert.Equal(3, o.TotalMessages);
         Assert.Equal(3, o.Messages.Total);

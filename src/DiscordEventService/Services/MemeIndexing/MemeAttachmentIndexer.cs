@@ -96,7 +96,7 @@ internal sealed class MemeAttachmentIndexer(
         // before spending a download. Deterministic, so no attempt is charged.
         // (0 = unknown size from pre-#221 data; those still go through the
         // post-download check below.)
-        if (item.FileSizeBytes > memeOptions.MaxImageBytes)
+        if (memeOptions.ExceedsMaxImageBytes(item.FileSizeBytes))
         {
             Skip(row, counters, $"unsupported: image too large ({item.FileSizeBytes} bytes per metadata)");
             return;
@@ -127,7 +127,7 @@ internal sealed class MemeAttachmentIndexer(
 
         row.FileSizeBytes = imageBytes.Length;
 
-        if (imageBytes.Length > memeOptions.MaxImageBytes)
+        if (memeOptions.ExceedsMaxImageBytes(imageBytes.Length))
         {
             Skip(row, counters, $"unsupported: image too large ({imageBytes.Length} bytes)");
             return;

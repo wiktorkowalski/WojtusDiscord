@@ -58,8 +58,13 @@ internal static class MemeIndexEndpoints
         });
     }
 
-    private static async Task<IResult> GetStatus(DiscordDbContext db)
+    private static async Task<IResult> GetStatus(
+        DiscordDbContext db, IMemeIndexSummaryReader summaryReader, CancellationToken cancellationToken)
     {
+        // Through the cached reader: this endpoint has no auth, and the count scans every
+        // attachment message of the meme channels. The number can be up to one minute old.
+        var waiting = (int)(await summaryReader.GetAsync(cancellationToken)).Waiting;
+
         var checkpoints = await db.BackfillCheckpoints
             .Where(c => c.Type == BackfillType.MemeIndex)
             .OrderBy(c => c.GuildDiscordId)
@@ -104,6 +109,7 @@ internal static class MemeIndexEndpoints
                 Skipped = countsByStatus.GetValueOrDefault(MemeIndexStatus.Skipped),
             },
             Annotations = annotations,
+            Waiting = waiting,
         });
     }
 }
@@ -125,6 +131,9 @@ internal sealed record MemeIndexStatusResponse
     public required MemeIndexRowCounts Rows { get; init; }
     // How far each writer got: one entry per (model, prompt version) that has annotations.
     public required List<MemeAnnotationCountDto> Annotations { get; init; }
+    // Images in the meme channels with no meme_index row that an annotation run would take (#397).
+    // Not a row count, so it is not part of Rows.
+    public required int Waiting { get; init; }
 }
 
 internal sealed record MemeAnnotationCountDto

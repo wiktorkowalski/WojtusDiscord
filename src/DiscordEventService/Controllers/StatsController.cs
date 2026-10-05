@@ -4,6 +4,7 @@ using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Dtos;
 using DiscordEventService.Infrastructure;
+using DiscordEventService.Services.MemeIndexing;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -78,7 +79,8 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
 
     [HttpGet("overview")]
     [ProducesResponseType<OverviewDto>(StatusCodes.Status200OK)]
-    public async Task<ActionResult<OverviewDto>> Overview(CancellationToken ct)
+    public async Task<ActionResult<OverviewDto>> Overview(
+        [FromServices] IMemeIndexSummaryReader memeIndexSummaryReader, CancellationToken ct)
     {
         var messages = await GetMessageWindowCountsAsync(ct);
         var reactions = await GetReactionWindowCountsAsync(ct);
@@ -103,10 +105,13 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
 
         var topEmojis = await TopEmojisAsync(OverviewTopEmojis, ct);
 
+        var memeIndex = await memeIndexSummaryReader.GetAsync(ct);
+
         return new OverviewDto(
             messages.Total, reactions.Total, counts.Events, voiceMinutes,
             counts.Users, counts.Channels, messages, reactions,
-            topChatter, topChannel, messagesDaily, topEmojis);
+            topChatter, topChannel, messagesDaily, topEmojis,
+            memeIndex.Indexed, memeIndex.Waiting);
     }
 
     // volume/daily + volume/hourly stay raw: they bucket by CET calendar day / hour via

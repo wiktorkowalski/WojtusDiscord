@@ -25,4 +25,8 @@ internal sealed class MemeIndexOptions
     public string? ImportSecret { get; set; }
 
     public bool IsConfigured => ChannelIds.Length > 0;
+
+    // One rule for the indexer's skip and for the waiting count (#397). 0 = size unknown
+    // (pre-#221 data): it passes here and is checked again after the download.
+    public bool ExceedsMaxImageBytes(long fileSizeBytes) => fileSizeBytes > MaxImageBytes;
 }
