@@ -18,6 +18,9 @@ internal sealed record MemeSampleItem(
     Guid MessageId = default,
     long FileSizeBytes = 0);
 
+// OldestPostedAtUtc is null when nothing waits.
+internal sealed record MemeWaiting(int Count, DateTime? OldestPostedAtUtc);
+
 internal sealed class MemeSampleService(
     DiscordDbContext db,
     IOptions<MemeIndexOptions> options,
@@ -76,10 +79,14 @@ internal sealed class MemeSampleService(
 
     // Waiting (#397) = a candidate the annotation writer could take and that has no meme_index
     // row. Any row counts as handled, whatever its status. One number for all guilds.
-    public async Task<int> CountWaitingAsync(CancellationToken cancellationToken)
+    public async Task<int> CountWaitingAsync(CancellationToken cancellationToken) =>
+        (await GetWaitingAsync(cancellationToken)).Count;
+
+    // The same set as the count, with the post date of its oldest image (#395).
+    public async Task<MemeWaiting> GetWaitingAsync(CancellationToken cancellationToken)
     {
         if (!options.Value.IsConfigured)
-            return 0;
+            return new MemeWaiting(0, null);
 
         var takeable = (await GetCandidatesAsync(cancellationToken))
             .Where(c => !ImageMagic.IsGifFileName(c.FileName) && !options.Value.ExceedsMaxImageBytes(c.FileSizeBytes))
@@ -90,7 +97,8 @@ internal sealed class MemeSampleService(
                 .ToListAsync(cancellationToken))
             .ToHashSet();
 
-        return takeable.Count(c => !known.Contains(c.AttachmentDiscordId));
+        var waiting = takeable.Where(c => !known.Contains(c.AttachmentDiscordId)).ToList();
+        return new MemeWaiting(waiting.Count, waiting.Count == 0 ? null : waiting.Min(c => c.CreatedAtUtc));
     }
 
     private async Task<List<MemeSampleItem>> GetCandidatesCoreAsync(

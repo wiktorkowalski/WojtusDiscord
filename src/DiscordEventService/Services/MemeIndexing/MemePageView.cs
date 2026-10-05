@@ -30,7 +30,7 @@ internal sealed record MemePageView(string Content, IReadOnlyList<DiscordButtonC
 
         // Bare URLs render as pills (markdown links never do); message links
         // produce pills, not unfurled preview embeds.
-        var lines = page.Hits.Select(h => $"{JumpLink(guildId, h)} {HitLabel(h)}");
+        var lines = page.Hits.Select(h => $"{JumpLink(guildId, h.ChannelDiscordId, h.MessageDiscordId)} {HitLabel(h)}");
         var header = $"{offset + 1}–{offset + page.Hits.Count} z {page.Total}";
 
         return new MemePageView(
@@ -66,8 +66,9 @@ internal sealed record MemePageView(string Content, IReadOnlyList<DiscordButtonC
     private static DiscordButtonComponent PageButton(int offset, string query, string label) =>
         new(DiscordButtonStyle.Secondary, MemePageCustomId.Build(offset, query), label);
 
-    private static string JumpLink(ulong guildId, MemeSearchHit hit) =>
-        $"https://discord.com/channels/{guildId}/{hit.ChannelDiscordId}/{hit.MessageDiscordId}";
+    // Also the jump link of the dashboard's meme page (#395).
+    internal static string JumpLink(ulong guildId, ulong channelId, ulong messageId) =>
+        $"https://discord.com/channels/{guildId}/{channelId}/{messageId}";
 
     // What tells one hit from the next: the description's first sentence. Tags are not the
     // label: they repeat the query on every line (#391).

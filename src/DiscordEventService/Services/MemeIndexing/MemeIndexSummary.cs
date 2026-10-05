@@ -5,7 +5,8 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
-public sealed record MemeIndexSummary(long Indexed, long Waiting);
+// OldestWaitingPostedAtUtc: the post date of the oldest waiting image (#395); null when none waits.
+public sealed record MemeIndexSummary(long Indexed, long Waiting, DateTime? OldestWaitingPostedAtUtc = null);
 
 // Public because StatsController is public; the reader itself stays internal.
 public interface IMemeIndexSummaryReader
@@ -42,9 +43,9 @@ internal sealed class MemeIndexSummaryReader(
 
             var indexed = await db.MemeIndex.AsNoTracking()
                 .LongCountAsync(m => m.Status == MemeIndexStatus.Indexed, cancellationToken);
-            var waiting = await sampleService.CountWaitingAsync(cancellationToken);
+            var waiting = await sampleService.GetWaitingAsync(cancellationToken);
 
-            var summary = new MemeIndexSummary(indexed, waiting);
+            var summary = new MemeIndexSummary(indexed, waiting.Count, waiting.OldestPostedAtUtc);
             cache.Set(CacheKey, summary, CacheDuration);
             return summary;
         }

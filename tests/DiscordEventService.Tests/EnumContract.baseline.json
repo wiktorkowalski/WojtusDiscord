@@ -82,6 +82,7 @@
   },
   "DiscordEventService.Data.Entities.Core.MemeSearchSource": {
     "AssistantTool": 1,
+    "Dashboard": 4,
     "Other": 2,
     "PageButton": 3,
     "SlashCommand": 0

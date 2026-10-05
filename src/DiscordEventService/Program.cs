@@ -166,6 +166,8 @@ builder.Services.AddScoped<OpenRouterClient>();
 builder.Services.AddScoped<MemeSampleService>();
 builder.Services.AddScoped<IMemeIndexSummaryReader, MemeIndexSummaryReader>();
 builder.Services.AddScoped<AttachmentUrlRefreshService>();
+builder.Services.AddScoped<IMemeStatsReader, MemeStatsReader>();
+builder.Services.AddScoped<IMemeThumbnailResolver, MemeThumbnailResolver>();
 builder.Services.AddScoped<MemeAttachmentIndexer>();
 builder.Services.AddScoped<MemeAnnotationImportService>();
 builder.Services.AddScoped<MemeBenchmarkJob>();

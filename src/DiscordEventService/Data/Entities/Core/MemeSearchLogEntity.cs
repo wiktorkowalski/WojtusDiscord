@@ -9,6 +9,10 @@ public enum MemeSearchSource
 
     // A click on Następne / Poprzednie under a /meme answer (#391).
     PageButton = 3,
+
+    // The "Try a search" tester of the dashboard (#395). Not a person's search: the usage
+    // numbers leave it out, and its row has channel 0 and user 0.
+    Dashboard = 4,
 }
 
 // One row per meme search (#384): what was typed, by whom, and the settings in force. The ranked

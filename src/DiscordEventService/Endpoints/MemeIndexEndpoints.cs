@@ -81,22 +81,16 @@ internal static class MemeIndexEndpoints
             })
             .ToListAsync();
 
-        var countsByStatus = await db.MemeIndex
-            .GroupBy(m => m.Status)
-            .Select(g => new { g.Key, Count = g.Count() })
-            .ToDictionaryAsync(g => g.Key, g => g.Count);
+        var countsByStatus = await MemeIndexStatusQueries.CountByStatusAsync(db, cancellationToken);
 
-        var annotations = await db.MemeAnnotations
-            .GroupBy(a => new { a.ModelId, a.PromptVersion })
-            .Select(g => new MemeAnnotationCountDto
+        var annotations = (await MemeIndexStatusQueries.CountByWriterAsync(db, cancellationToken))
+            .Select(w => new MemeAnnotationCountDto
             {
-                ModelId = g.Key.ModelId,
-                PromptVersion = g.Key.PromptVersion,
-                Count = g.Count(),
+                ModelId = w.ModelId,
+                PromptVersion = w.PromptVersion,
+                Count = w.Count,
             })
-            .OrderBy(a => a.ModelId)
-            .ThenBy(a => a.PromptVersion)
-            .ToListAsync();
+            .ToList();
 
         return Results.Ok(new MemeIndexStatusResponse
         {
