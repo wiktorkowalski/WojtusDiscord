@@ -408,8 +408,9 @@ function SearchOutcome({ outcome }: { outcome: MemeSearchOutcome }) {
 
 function SearchTester() {
   const [text, setText] = useState('')
-  // A mutation, not a query: every run writes a search-log row, so it runs on submit only —
-  // no refetch on focus or on the top bar's refresh, and no retry after a 429.
+  // A mutation, not a query: the search scans every annotation and the server caps how many
+  // run at one time (429). So it runs on submit only — no refetch on focus or on the top
+  // bar's refresh, and no retry after a 429.
   const search = useMutation({ mutationFn: (q: string) => memeStatsApi.search(q, HIT_LIMIT) })
   const query = text.trim()
   const blocked = !query || search.isPending
