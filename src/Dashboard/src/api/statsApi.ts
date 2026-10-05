@@ -45,6 +45,8 @@ export interface Overview {
   topChannel: ChannelActivity | null
   messagesDaily: DailyPoint[]
   topEmojis: EmojiStat[]
+  memeIndexedCount: number
+  memeWaitingCount: number
 }
 
 export const statsApi = {

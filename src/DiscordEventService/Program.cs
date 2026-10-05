@@ -164,6 +164,7 @@ builder.Services.AddHttpClient(AttachmentUrlRefreshService.HttpClientName)
 
 builder.Services.AddScoped<OpenRouterClient>();
 builder.Services.AddScoped<MemeSampleService>();
+builder.Services.AddScoped<IMemeIndexSummaryReader, MemeIndexSummaryReader>();
 builder.Services.AddScoped<AttachmentUrlRefreshService>();
 builder.Services.AddScoped<MemeAttachmentIndexer>();
 builder.Services.AddScoped<MemeAnnotationImportService>();

@@ -130,7 +130,7 @@ internal sealed class MemeBenchmarkJob(
             return Skip(sampleItem, $"download failed: {ex.Message}");
         }
 
-        if (imageBytes.Length > memeIndexOptions.Value.MaxImageBytes)
+        if (memeIndexOptions.Value.ExceedsMaxImageBytes(imageBytes.Length))
             return Skip(sampleItem, $"image too large ({imageBytes.Length} bytes)");
 
         var mimeType = ImageMagic.SniffMimeType(imageBytes);

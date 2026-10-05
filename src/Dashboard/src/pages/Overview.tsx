@@ -72,6 +72,34 @@ function RangeToggle({ range, setRange }: { range: CommunityRange; setRange: (r:
   )
 }
 
+// Waiting = images in the meme channels that no annotation run has taken yet.
+// Zero stays quiet: only a backlog gets the accent colour.
+function MemeIndexPill({ indexed, waiting }: { indexed: number; waiting: number }) {
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        padding: '8px 13px',
+        background: C.bg,
+        border: `1px solid ${C.border}`,
+        borderRadius: 11,
+        fontSize: 13,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <Icon name="fire" size={14} color={C.fuchsia} />
+      <span style={{ color: C.muted }}>Meme index</span>
+      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600, color: C.text }}>{fmt(indexed)}</span>
+      <span style={{ color: C.faint }}>·</span>
+      <span style={{ fontFamily: 'JetBrains Mono, monospace', fontWeight: 600, color: waiting > 0 ? C.amber : C.faint }}>
+        {fmt(waiting)} waiting
+      </span>
+    </div>
+  )
+}
+
 interface TileSpec {
   icon: IconName
   name: string
@@ -340,7 +368,10 @@ export default function Overview() {
             How the server&apos;s doing · <span style={{ color: C.text }}>{d?.label ?? '…'}</span> · all times CET
           </p>
         </div>
-        <RangeToggle range={range} setRange={setRange} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          {overview.data && <MemeIndexPill indexed={overview.data.memeIndexedCount} waiting={overview.data.memeWaitingCount} />}
+          <RangeToggle range={range} setRange={setRange} />
+        </div>
       </div>
 
       {community.isError && <div style={{ ...cardStyle, padding: 20, color: C.red, marginBottom: 16 }}>Failed to load community stats.</div>}

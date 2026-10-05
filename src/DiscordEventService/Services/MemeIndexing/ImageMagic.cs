@@ -10,6 +10,11 @@ internal static class ImageMagic
         return ImageExtensions.Contains(ext);
     }
 
+    // The annotation writer never takes a GIF (static_skip_reason in tools/meme-eval/opus_run.py),
+    // so a GIF never gets a row and must not count as waiting (#397). The paid indexer still takes one.
+    public static bool IsGifFileName(string fileName) =>
+        Path.GetExtension(fileName).Equals(".gif", StringComparison.OrdinalIgnoreCase);
+
     // Filenames lie (FB_IMG_*.jpg that is really png) — bytes decide what we tell the vision model.
     public static string? SniffMimeType(ReadOnlySpan<byte> bytes)
     {
