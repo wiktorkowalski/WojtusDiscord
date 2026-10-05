@@ -2,9 +2,8 @@ import { useState } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { C } from '../theme'
-import { BarRow, cardStyle, fmt } from '../ui'
-import { Panel } from '../ui/Panel'
-import type { Load } from '../ui/Panel'
+import { BarRow, Panel, cardStyle, fmt } from '../ui'
+import type { Load } from '../ui'
 import { memeStatsApi } from '../api/memeStatsApi'
 import type {
   MemeDistribution,
@@ -498,8 +497,7 @@ function UsageTile({ name, value }: { name: string; value: string }) {
 
 const ellipsisCell: CSSProperties = { ...cellStyle, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis' }
 
-function TopHitCell({ search }: { search: MemeLoggedSearch }) {
-  const hit = search.topHit
+function TopHitCell({ hit }: { hit: MemeLoggedSearch['topHit'] }) {
   if (!hit) return <span style={{ color: C.faint }}>–</span>
   // Every field but the id and the score is null once the meme has left the index.
   if (hit.fileName === null) return <span style={{ color: C.muted }}>no longer in the index</span>
@@ -554,7 +552,7 @@ function SearchUsage({ usage }: { usage: MemeSearchUsage }) {
                 <td style={{ ...cellStyle, fontFamily: mono }}>{fmt(s.resultCount)}</td>
                 <td style={{ ...cellStyle, fontFamily: mono }}>{fmt(Math.round(s.durationMs))}</td>
                 <td style={{ ...ellipsisCell, paddingRight: 0, maxWidth: 280 }}>
-                  <TopHitCell search={s} />
+                  <TopHitCell hit={s.topHit} />
                 </td>
               </tr>
             ))}

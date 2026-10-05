@@ -2,8 +2,9 @@ import { useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { C } from '../theme'
-import { Avatar, BarRow, Delta, EmojiTile, HeatGrid, Icon, cardStyle, fmt, hhmm, decimalHours, useProfile, WEEKDAYS } from '../ui'
-import type { IconName } from '../ui'
+import { Link } from 'react-router-dom'
+import { Avatar, BarRow, Delta, EmojiTile, HeatGrid, Icon, Panel, cardStyle, fmt, hhmm, decimalHours, useProfile, WEEKDAYS } from '../ui'
+import type { IconName, Load } from '../ui'
 import { communityApi } from '../api/communityApi'
 import type { CommunityActivity, CommunityLeaderEntry, CommunityMetric, CommunityMetrics, CommunityRange } from '../api/communityApi'
 import { statsApi } from '../api/statsApi'
@@ -13,7 +14,6 @@ const mono = 'JetBrains Mono, monospace'
 const disp: CSSProperties = { fontFamily: 'Bricolage Grotesque, sans-serif', letterSpacing: '-0.02em', fontWeight: 700 }
 const labelStyle: CSSProperties = { fontSize: 11, fontWeight: 600, letterSpacing: '.12em', textTransform: 'uppercase', color: C.muted }
 const noteStyle: CSSProperties = { margin: 0, padding: '8px 0', fontSize: 13, color: C.muted }
-const cardPadding = 'clamp(16px, 4vw, 22px)'
 
 // "All time" has no previous window and no per-day series, so the report offers week and month only.
 type ReportRange = Exclude<CommunityRange, 'all'>
@@ -65,54 +65,6 @@ function dateSpan(days: Date[]): string {
   return `${dayMonth(days[0])} – ${dayMonth(last)} ${last.getUTCFullYear()}`
 }
 
-// ---- Shared card shell with the loading / error / empty states ----
-
-type Load = 'loading' | 'error' | 'ready'
-
-function Panel({
-  title,
-  titleSize = 17,
-  icon,
-  aside,
-  load,
-  empty,
-  style,
-  children,
-}: {
-  title: string
-  titleSize?: number
-  icon?: { name: IconName; color: string }
-  aside?: string
-  load: Load
-  /** Shown instead of the children when the data loaded but holds nothing. */
-  empty?: string | false
-  style?: CSSProperties
-  children: ReactNode
-}) {
-  return (
-    <section className="animate-rise" style={{ ...cardStyle, padding: cardPadding, minWidth: 0, ...style }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-          {icon && <Icon name={icon.name} size={16} color={icon.color} />}
-          <h2 style={{ ...disp, fontSize: titleSize, margin: 0, color: C.text }}>{title}</h2>
-        </div>
-        {aside && <span style={{ fontSize: 12.5, color: C.muted }}>{aside}</span>}
-      </div>
-      {load === 'loading' ? (
-        <p style={noteStyle} aria-busy="true">
-          Loading…
-        </p>
-      ) : load === 'error' ? (
-        <p style={{ ...noteStyle, color: C.red }}>Could not load this data.</p>
-      ) : empty ? (
-        <p style={noteStyle}>{empty}</p>
-      ) : (
-        children
-      )}
-    </section>
-  )
-}
-
 // ---- Header controls ----
 
 function RangeToggle({ range, setRange }: { range: ReportRange; setRange: (r: ReportRange) => void }) {
@@ -152,7 +104,9 @@ function RangeToggle({ range, setRange }: { range: ReportRange; setRange: (r: Re
 // Zero stays quiet: only a backlog gets the accent colour.
 function MemeIndexPill({ indexed, waiting }: { indexed: number; waiting: number }) {
   return (
-    <div
+    <Link
+      to="/memes"
+      title="Open the meme index page"
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -163,6 +117,7 @@ function MemeIndexPill({ indexed, waiting }: { indexed: number; waiting: number 
         borderRadius: 11,
         fontSize: 13,
         whiteSpace: 'nowrap',
+        textDecoration: 'none',
       }}
     >
       <Icon name="fire" size={14} color={C.fuchsia} />
@@ -170,7 +125,7 @@ function MemeIndexPill({ indexed, waiting }: { indexed: number; waiting: number 
       <span style={{ fontFamily: mono, fontWeight: 600, color: C.text }}>{fmt(indexed)}</span>
       <span style={{ color: C.faint }}>·</span>
       <span style={{ fontFamily: mono, fontWeight: 600, color: waiting > 0 ? C.amber : C.faint }}>{fmt(waiting)} waiting</span>
-    </div>
+    </Link>
   )
 }
 
