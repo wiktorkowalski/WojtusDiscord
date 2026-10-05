@@ -2,6 +2,9 @@
 // (+ app.jsx hours() and timeline.jsx agoStr()). NO React in this file.
 import { C } from '../theme'
 
+/** Short weekday names, indexed like `Date.getDay()` (0 = Sunday). */
+export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
+
 /** A 2D point [x, y] used by the SVG path helpers. */
 export type Pt = [number, number]
 
@@ -30,6 +33,12 @@ export function hhmm(min: number): string {
 export function hours(min: number): string {
   const h = Math.round(min / 60)
   return (h >= 10000 ? compact(h) : fmt(h)) + 'h'
+}
+
+/** Minutes -> decimal hours, e.g. "29.6 h"; whole hours from 100 h up ("1,192 h"). */
+export function decimalHours(min: number): string {
+  const h = min / 60
+  return (h >= 100 ? fmt(Math.round(h)) : h.toFixed(1)) + ' h'
 }
 
 /** Minutes-elapsed -> short relative label (timeline.jsx agoStr). */
