@@ -77,7 +77,7 @@ Each call of `MemeSearchService.SearchAsync` leaves one row in `meme_search_log`
 - **What is not logged.** A search that throws leaves no row (the caller logs the error). A query with no word characters runs no SQL and still leaves a row, with empty `tokens`.
 - **No FK to the annotation.** An import can replace an annotation in place, and the hit row must keep what the search saw. Deleting a search deletes its hits (cascade, unlike the Restrict of the other meme tables): a hit has no meaning without its search.
 - **The assistant cannot read it.** The log holds what each person typed, and any member can run the assistant's `query_database` tool. `wojtus_query` gets SELECT on every new table through the default privileges of #238 §4, so the migration revokes it on both tables. `SchemaCatalog` hides both tables as well: the schema hint does not name them and the dashboard explorer does not list them. The owner reads the log with direct SQL. A new table with per-person data needs the same two steps.
-- **Not in the application log.** No log line carries the query text of a logged search. The `/meme` Information line holds the user id and the hit count. Two older lines still hold a query: the `/meme` Error line of a search that failed (it has no row), and the generic tool-call line of the assistant, which logs the arguments of every tool.
+- **Not in the application log.** No log line carries the query text of a logged search. The `/meme` Information line holds the user id and the hit count. One older line still holds a query: the generic tool-call line of the assistant, which logs the arguments of every tool. The `/meme` Error line of a search that failed (it has no row) held one too until #391.
 - **Not decided here:** a retention limit, a "searched again soon" miss signal, a dashboard page, access for the assistant, and feeding the logged queries into `tools/meme-eval/retrieval_eval.py`.
 
 The latest searches with their hits:
@@ -105,3 +105,13 @@ ORDER BY s.searched_at_utc DESC, s.id, r.rank;
 ```
 
 A search with no hits gives one line with empty hit columns. Add `WHERE zero_results` inside the subquery to list only the misses.
+
+## Addendum 2026-10-05 (#391): paging
+
+`/meme` shows 5 hits and pages through the search with two buttons, `Poprzednie` and `Następne`. Each page is one search with an `OFFSET`.
+
+- **The state is in the custom id.** A button carries `meme-page:<offset>:<query>`. The bot keeps nothing between clicks, so a button on an old message still works after a restart. Anyone may turn the page.
+- **A query over 79 characters gets no buttons.** Discord allows 100 characters for a custom id. The prefix takes 10, the longest offset 10 and the colon 1. The rule is one decision per query, not per page: a long query never has a button on one page and none on the next.
+- **A total order.** The outer order of the search SQL now ends with `attachment_discord_id`: `score DESC, message_created_at_utc DESC, attachment_discord_id`. Two attachments of one message can share a score and a time, and `OFFSET` needs an order with no ties, or a hit can show twice or never. `tools/meme-eval/retrieval_eval.py` mirrors the order.
+- **Each page is its own log row.** `meme_search_log.result_offset` holds where the page starts: 0 for a first page, and 0 for every row from before the column. `source` 3 = page button; a first page keeps `source` 0. `rank` in `meme_search_log_results` is absolute: the first hit of a page at offset 5 has rank 6.
+- **The query above** shows a page-button row as `other`. Add `WHEN 3 THEN 'page'` and `s.result_offset` to tell the pages of one search apart.

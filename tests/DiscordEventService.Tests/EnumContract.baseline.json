@@ -83,6 +83,7 @@
   "DiscordEventService.Data.Entities.Core.MemeSearchSource": {
     "AssistantTool": 1,
     "Other": 2,
+    "PageButton": 3,
     "SlashCommand": 0
   },
   "DiscordEventService.Data.Entities.Core.MessageMentionType": {
