@@ -15,6 +15,9 @@ namespace DiscordEventService.Tests;
 // #395: the queries behind the dashboard's "Meme index" page, each against a real database.
 public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
+    // AnswerWaitTimeout of a test that holds a gate.
+    private static readonly TimeSpan ShortWait = TimeSpan.FromMilliseconds(200);
+
     private static readonly DateTime Noon = new(2026, 3, 10, 12, 0, 0, DateTimeKind.Utc);
 
     private DiscordDbContext _db = null!;
@@ -43,7 +46,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
     [Fact]
     public async Task GetIndexAsync_EmptyDatabase_ReturnsZerosAndEmptyLists()
     {
-        var index = await NewReader().GetIndexAsync(CancellationToken.None);
+        var index = await IndexAsync();
 
         Assert.Equal(new MemeStatusCountsDto(0, 0, 0, 0, 0), index.Status);
         Assert.Equal(0, index.RefusalCount);
@@ -78,7 +81,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         // A refusal is the writer's outcome, not the row's: an Indexed row can carry one.
         await _data.AddMemeAsync(6UL, fileSizeBytes: 5, refused: true);
 
-        var index = await NewReader().GetIndexAsync(CancellationToken.None);
+        var index = await IndexAsync();
 
         Assert.Equal(new MemeStatusCountsDto(Pending: 1, Indexed: 3, Failed: 1, Skipped: 1, Total: 6), index.Status);
         Assert.Equal(2, index.RefusalCount);
@@ -90,10 +93,10 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
     public async Task GetIndexAsync_SecondCallInsideTheCacheWindow_ReturnsTheKeptAnswer()
     {
         await _data.AddIndexedAsync(1UL);
-        var first = await NewReader().GetIndexAsync(CancellationToken.None);
+        var first = await IndexAsync();
         await _data.AddIndexedAsync(2UL);
 
-        var second = await NewReader().GetIndexAsync(CancellationToken.None);
+        var second = await IndexAsync();
 
         Assert.Same(first, second);
         Assert.Equal(1, second.Status.Indexed);
@@ -104,7 +107,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
     [InlineData(false)]
     public async Task GetIndexAsync_AutomaticIndexingOption_IsReportedWithTheMemeChannels(bool automaticIndexing)
     {
-        var index = await NewReader(automaticIndexing).GetIndexAsync(CancellationToken.None);
+        var index = await IndexAsync(automaticIndexing);
 
         Assert.Equal(automaticIndexing, index.AutomaticIndexing);
         Assert.Equal([new MemeChannelDto(MemeStatsTestData.ChannelDiscordId, MemeStatsTestData.ChannelName)], index.Channels);
@@ -119,7 +122,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         foreach (var attachmentId in new[] { 2UL, 3UL, 4UL })
             await _data.AddAnnotationAsync(await _data.AddMemeAsync(attachmentId), MemeStatsTestData.ModelA, Noon.AddDays(1));
 
-        var index = await NewReader().GetIndexAsync(CancellationToken.None);
+        var index = await IndexAsync();
 
         Assert.Equal(
             [
@@ -140,7 +143,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddImageMessageAsync(3UL, Noon.AddDays(-9));
         await _data.AddImageMessageAsync(4UL, Noon.AddDays(-20), messageDeleted: true);
 
-        var index = await NewReader().GetIndexAsync(CancellationToken.None);
+        var index = await IndexAsync();
 
         Assert.Equal(new MemeNotIndexedDto(2, Noon.AddDays(-9)), index.NotIndexed);
     }
@@ -154,7 +157,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddImageMessageAsync(3UL);
         using var cache = new MemoryCache(new MemoryCacheOptions());
 
-        var index = await NewReader().GetIndexAsync(CancellationToken.None);
+        var index = await IndexAsync();
         var overview = (await new StatsController(_db).Overview(NewSummaryReader(cache), default)).Value!;
 
         Assert.Equal(2, index.NotIndexed.Count);
@@ -172,7 +175,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddIndexedAsync(2UL, postedAtUtc: new DateTime(2023, 12, 31, 23, 30, 0, DateTimeKind.Utc));
         await _data.AddIndexedAsync(3UL, postedAtUtc: new DateTime(2024, 5, 1, 12, 0, 0, DateTimeKind.Utc));
 
-        var index = await NewReader().GetIndexAsync(CancellationToken.None);
+        var index = await IndexAsync();
 
         Assert.Equal(
             [new MemeYearCountDto(2021, 1), new MemeYearCountDto(2022, 0), new MemeYearCountDto(2023, 0), new MemeYearCountDto(2024, 2)],
@@ -191,7 +194,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         var pending = await _data.AddMemeAsync(3UL, MemeIndexStatus.Pending, postedAtUtc: year.AddYears(1));
         await _data.AddAnnotationAsync(pending, configure: a => a.Tags = ["pending"]);
 
-        var index = await NewReader().GetIndexAsync(CancellationToken.None);
+        var index = await IndexAsync();
 
         Assert.Equal([new MemeYearCountDto(2022, 1)], index.ByYear);
         Assert.Equal(1, index.SearchableCount);
@@ -225,7 +228,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
             a.Tags = ["new"];
         });
 
-        var distributions = (await NewReader().GetIndexAsync(CancellationToken.None)).Distributions;
+        var distributions = (await IndexAsync()).Distributions;
 
         Assert.Equal([new MemeBucketDto("template_meme", 1)], distributions.ImageKind.Buckets);
         Assert.Equal([new MemeBucketDto("pl", 1)], distributions.Language.Buckets);
@@ -243,7 +246,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddAnnotationAsync(meme, MemeStatsTestData.ModelB, Noon, a => a.Tags = ["from b"]);
         await _data.AddAnnotationAsync(meme, MemeStatsTestData.ModelA, Noon, a => a.Tags = ["from a"]);
 
-        var tags = (await NewReader().GetIndexAsync(CancellationToken.None)).Distributions.Tags;
+        var tags = (await IndexAsync()).Distributions.Tags;
 
         Assert.Equal([new MemeBucketDto("from a", 1)], tags.Buckets);
     }
@@ -257,7 +260,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         foreach (var attachmentId in new[] { 4UL, 5UL, 6UL })
             await _data.AddIndexedAsync(attachmentId, a => a.ImageKind = null);
 
-        var imageKind = (await NewReader().GetIndexAsync(CancellationToken.None)).Distributions.ImageKind;
+        var imageKind = (await IndexAsync()).Distributions.ImageKind;
 
         // The null bucket is last, also when it is the largest.
         Assert.Equal(
@@ -274,7 +277,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddIndexedAsync(2UL, a => a.Language = MemeLanguage.Mixed);
         await _data.AddIndexedAsync(3UL, a => a.Language = null);
 
-        var language = (await NewReader().GetIndexAsync(CancellationToken.None)).Distributions.Language;
+        var language = (await IndexAsync()).Distributions.Language;
 
         // A tie on the count: by name.
         Assert.Equal(
@@ -293,7 +296,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddIndexedAsync(4UL, a => a.Source = null);
         await _data.AddIndexedAsync(5UL, a => a.Source = null);
 
-        var source = (await NewReader().GetIndexAsync(CancellationToken.None)).Distributions.Source;
+        var source = (await IndexAsync()).Distributions.Source;
 
         Assert.Equal(
             [new MemeBucketDto("jbzd", 2), new MemeBucketDto("other", 1), new MemeBucketDto(null, 2)],
@@ -312,7 +315,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddIndexedAsync(3UL, a => a.Tags = ["zebra", "zebra"]);
         await _data.AddIndexedAsync(4UL, a => a.Tags = []);
 
-        var tags = (await NewReader().GetIndexAsync(CancellationToken.None)).Distributions.Tags;
+        var tags = (await IndexAsync()).Distributions.Tags;
 
         Assert.Equal(MemeStatsReader.TopListSize, tags.Buckets.Count);
         Assert.Equal(new MemeBucketDto("zebra", 3), tags.Buckets[0]);
@@ -330,7 +333,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddIndexedAsync(3UL, a => a.Templates = []);
         await _data.AddIndexedAsync(4UL, a => a.Templates = []);
 
-        var templates = (await NewReader().GetIndexAsync(CancellationToken.None)).Distributions.Templates;
+        var templates = (await IndexAsync()).Distributions.Templates;
 
         Assert.Equal([new MemeBucketDto("wojak", 2), new MemeBucketDto("doge", 1)], templates.Buckets);
         Assert.Equal(2, templates.DistinctCount);
@@ -347,7 +350,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddIndexedAsync(attachmentId++, a => a.Franchise = null);
         await _data.AddIndexedAsync(attachmentId, a => a.Franchise = null);
 
-        var franchises = (await NewReader().GetIndexAsync(CancellationToken.None)).Distributions.Franchises;
+        var franchises = (await IndexAsync()).Distributions.Franchises;
 
         Assert.Equal(["Wiedźmin", "A", "B", "C", "D", "E", "F", "G"], franchises.Buckets.Select(b => b.Name));
         Assert.Equal(2, franchises.Buckets[0].Count);
@@ -360,7 +363,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
     [Fact]
     public async Task GetSearchUsageAsync_EmptyLog_ReturnsZerosAndNoRates()
     {
-        var usage = await NewReader().GetSearchUsageAsync(30, CancellationToken.None);
+        var usage = await UsageAsync(30);
 
         Assert.Equal(30, usage.Days);
         Assert.Equal(0, usage.SearchCount);
@@ -385,7 +388,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddSearchAsync((MemeSearchSource)99, now.AddHours(-6), "later source", durationMs: 5000);
         await _data.AddSearchAsync(MemeSearchSource.SlashCommand, now.AddDays(-8), "old", durationMs: 9000);
 
-        var usage = await NewReader().GetSearchUsageAsync(7, CancellationToken.None);
+        var usage = await UsageAsync(7);
 
         Assert.Equal(4, usage.SearchCount);
         Assert.Equal(1, usage.ZeroResultCount);
@@ -406,7 +409,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
             MemeSearchSource.SlashCommand, searchedAtUtc, "rakieta", durationMs: 12.5,
             userDiscordId: 424242UL, channelDiscordId: 777777UL, hits: [1UL, 99UL]);
 
-        var search = Assert.Single((await NewReader().GetSearchUsageAsync(30, CancellationToken.None)).Latest);
+        var search = Assert.Single((await UsageAsync(30)).Latest);
 
         Assert.Equal(searchedAtUtc, search.SearchedAtUtc, TimeSpan.FromMilliseconds(1));
         Assert.Equal("rakieta", search.Query);
@@ -428,7 +431,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
     {
         await _data.AddSearchAsync(MemeSearchSource.SlashCommand, DateTime.UtcNow.AddMinutes(-5), "gone", durationMs: 5, hits: 99UL);
 
-        var search = Assert.Single((await NewReader().GetSearchUsageAsync(30, CancellationToken.None)).Latest);
+        var search = Assert.Single((await UsageAsync(30)).Latest);
 
         Assert.Equal(new MemeLoggedTopHitDto(99UL, 1.0, null, null, null, null), search.TopHit);
     }
@@ -446,7 +449,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         await _data.AddAnnotationAsync(meme);
         await _data.AddSearchAsync(MemeSearchSource.SlashCommand, DateTime.UtcNow.AddMinutes(-5), "rakieta", durationMs: 5, hits: 1UL);
 
-        var search = Assert.Single((await NewReader().GetSearchUsageAsync(30, CancellationToken.None)).Latest);
+        var search = Assert.Single((await UsageAsync(30)).Latest);
 
         Assert.Equal(new MemeLoggedTopHitDto(1UL, 1.0, null, null, null, null), search.TopHit);
     }
@@ -456,11 +459,11 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
     public async Task GetSearchUsageAsync_SecondCallWithTheSameDays_ReturnsTheKeptAnswer()
     {
         await _data.AddSearchAsync(MemeSearchSource.SlashCommand, DateTime.UtcNow.AddMinutes(-5), "a", durationMs: 5);
-        var first = await NewReader().GetSearchUsageAsync(30, CancellationToken.None);
+        var first = await UsageAsync(30);
         await _data.AddSearchAsync(MemeSearchSource.SlashCommand, DateTime.UtcNow.AddMinutes(-4), "b", durationMs: 5);
 
-        var second = await NewReader().GetSearchUsageAsync(30, CancellationToken.None);
-        var otherDays = await NewReader().GetSearchUsageAsync(31, CancellationToken.None);
+        var second = await UsageAsync(30);
+        var otherDays = await UsageAsync(90);
 
         Assert.Same(first, second);
         Assert.Equal(1, second.SearchCount);
@@ -495,7 +498,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         for (var i = 0; i < MemeStatsReader.LatestSearchCount + 3; i++)
             await _data.AddSearchAsync(MemeSearchSource.SlashCommand, now.AddMinutes(-i - 1), $"q{i}", durationMs: 1);
 
-        var usage = await NewReader().GetSearchUsageAsync(30, CancellationToken.None);
+        var usage = await UsageAsync(30);
 
         Assert.Equal(MemeStatsReader.LatestSearchCount + 3, usage.SearchCount);
         Assert.Equal(
@@ -570,7 +573,7 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
 
         Assert.Equal(0, await _db.MemeSearchLog.CountAsync());
         Assert.Equal(0, await _db.MemeSearchLogResults.CountAsync());
-        Assert.Equal(0, (await NewReader().GetSearchUsageAsync(30, CancellationToken.None)).SearchCount);
+        Assert.Equal(0, (await UsageAsync(30)).SearchCount);
     }
 
     [Fact]
@@ -611,18 +614,72 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         Assert.Single(free!.Hits);
     }
 
+    // The wait for an answer that another request computes has an end: then "busy", not a longer queue.
+    [Fact]
+    public async Task GetIndexAsync_AnotherRequestHoldsTheGatePastTheWaitLimit_ReturnsNullAndComputesNothing()
+    {
+        await _data.AddIndexedAsync(1UL);
+        using var limits = new MemeDashboardLimits { AnswerWaitTimeout = ShortWait };
+        await limits.IndexGate.WaitAsync();
+
+        var busy = await NewReader(limits: limits).GetIndexAsync(CancellationToken.None);
+        limits.IndexGate.Release();
+        var free = await NewReader(limits: limits).GetIndexAsync(CancellationToken.None);
+
+        Assert.Null(busy);
+        Assert.Equal(1, free!.Status.Indexed);
+    }
+
+    [Fact]
+    public async Task GetSearchUsageAsync_AnotherRequestHoldsTheGatePastTheWaitLimit_ReturnsNullAndComputesNothing()
+    {
+        await _data.AddSearchAsync(MemeSearchSource.SlashCommand, DateTime.UtcNow.AddMinutes(-5), "a", durationMs: 5);
+        using var limits = new MemeDashboardLimits { AnswerWaitTimeout = ShortWait };
+        await limits.SearchUsageGate.WaitAsync();
+
+        var busy = await NewReader(limits: limits).GetSearchUsageAsync(30, CancellationToken.None);
+        var keptWhileBusy = limits.SearchUsage.Count;
+        limits.SearchUsageGate.Release();
+        var free = await NewReader(limits: limits).GetSearchUsageAsync(30, CancellationToken.None);
+
+        Assert.Null(busy);
+        Assert.Equal(0, keptWhileBusy);
+        Assert.Equal(1, free!.SearchCount);
+    }
+
+    // A kept answer needs no gate: a request for it is served while another value is computed.
+    [Fact]
+    public async Task GetSearchUsageAsync_KeptAnswerWhileTheGateIsHeld_IsServedAtOnce()
+    {
+        var kept = await UsageAsync(30);
+        await _limits.SearchUsageGate.WaitAsync();
+
+        var served = await NewReader().GetSearchUsageAsync(30, CancellationToken.None);
+        _limits.SearchUsageGate.Release();
+
+        Assert.Same(kept, served);
+    }
+
+    private async Task<MemeIndexDto> IndexAsync(bool automaticIndexing = false) =>
+        (await NewReader(automaticIndexing).GetIndexAsync(CancellationToken.None))!;
+
+    private async Task<MemeSearchUsageDto> UsageAsync(int days) =>
+        (await NewReader().GetSearchUsageAsync(days, CancellationToken.None))!;
+
     private async Task<MemeSearchResultDto> SearchAsync(string query, int limit, CancellationToken cancellationToken) =>
         (await NewReader().SearchAsync(query, limit, cancellationToken))!;
 
     // db: a context of its own for a reader that runs next to others, as every request has.
-    private MemeStatsReader NewReader(bool automaticIndexing = false, DiscordDbContext? db = null)
+    // limits: its own caps for a test that holds a gate and must not wait the real time.
+    private MemeStatsReader NewReader(
+        bool automaticIndexing = false, DiscordDbContext? db = null, MemeDashboardLimits? limits = null)
     {
         var context = db ?? _db;
         var options = NewOptions(automaticIndexing);
         // A cache of its own: every reader computes the waiting count from the database.
         var cache = new MemoryCache(new MemoryCacheOptions());
         return new MemeStatsReader(
-            context, NewSummaryReader(cache, context), new MemeSearchService(context, _searchLog), _limits, options);
+            context, NewSummaryReader(cache, context), new MemeSearchService(context, _searchLog), limits ?? _limits, options);
     }
 
     private MemeIndexSummaryReader NewSummaryReader(IMemoryCache cache, DiscordDbContext? db = null) =>

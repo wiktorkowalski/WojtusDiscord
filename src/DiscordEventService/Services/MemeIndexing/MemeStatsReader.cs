@@ -13,11 +13,13 @@ namespace DiscordEventService.Services.MemeIndexing;
 // Public because MemeStatsController is public; the reader itself stays internal.
 public interface IMemeStatsReader
 {
-    Task<MemeIndexDto> GetIndexAsync(CancellationToken cancellationToken);
+    // Null from any of the three = busy (MemeDashboardLimits): nothing was computed for this call.
+    // For the first two: another request computes the answer and the wait for it reached its limit.
+    Task<MemeIndexDto?> GetIndexAsync(CancellationToken cancellationToken);
 
-    Task<MemeSearchUsageDto> GetSearchUsageAsync(int days, CancellationToken cancellationToken);
+    Task<MemeSearchUsageDto?> GetSearchUsageAsync(int days, CancellationToken cancellationToken);
 
-    // Null = too many tester searches run right now (MemeDashboardLimits); nothing was searched.
+    // Null = too many tester searches run right now; nothing was searched.
     Task<MemeSearchResultDto?> SearchAsync(string query, int limit, CancellationToken cancellationToken);
 }
 
@@ -70,12 +72,15 @@ internal sealed class MemeStatsReader(
 
     // The page asks on every load and the endpoint has no auth: the answer is computed at
     // most once per MemeDashboardLimits.IndexCacheDuration, by one request at a time.
-    public async Task<MemeIndexDto> GetIndexAsync(CancellationToken cancellationToken)
+    // The wait for that request has a limit: past it this one answers "busy" (null).
+    public async Task<MemeIndexDto?> GetIndexAsync(CancellationToken cancellationToken)
     {
         if (limits.FreshIndex() is { } cached)
             return cached;
 
-        await limits.IndexGate.WaitAsync(cancellationToken);
+        if (!await limits.IndexGate.WaitAsync(limits.AnswerWaitTimeout, cancellationToken))
+            return null;
+
         try
         {
             // Another request may have computed it while this one waited.
@@ -136,14 +141,17 @@ internal sealed class MemeStatsReader(
             await GetDistributionsAsync(cancellationToken));
     }
 
-    // No auth here either, and days makes 365 different answers: each is computed at most once
-    // per MemeDashboardLimits.IndexCacheDuration, by one request at a time.
-    public async Task<MemeSearchUsageDto> GetSearchUsageAsync(int days, CancellationToken cancellationToken)
+    // No auth here either. days is one of a few values (the controller's list), and the answer
+    // for each is computed at most once per MemeDashboardLimits.IndexCacheDuration, by one
+    // request at a time. The wait for that request has a limit: past it, "busy" (null).
+    public async Task<MemeSearchUsageDto?> GetSearchUsageAsync(int days, CancellationToken cancellationToken)
     {
         if (limits.SearchUsage.Get<MemeSearchUsageDto>(days) is { } cached)
             return cached;
 
-        await limits.SearchUsageGate.WaitAsync(cancellationToken);
+        if (!await limits.SearchUsageGate.WaitAsync(limits.AnswerWaitTimeout, cancellationToken))
+            return null;
+
         try
         {
             // Another request may have computed it while this one waited.

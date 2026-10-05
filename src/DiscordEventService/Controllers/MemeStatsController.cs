@@ -15,28 +15,33 @@ public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
     public const string ThumbnailSegment = "thumbnails";
 
     public const int DefaultUsageDays = 30;
-    public const int MaxUsageDays = 365;
     public const int MaxSearchLimit = 20;
     public const int MaxQueryLength = 200;
+
+    // The windows the page can ask for. A closed list: each value is one cached answer, so a
+    // caller cannot make every request a new computation by changing the number.
+    public static readonly IReadOnlyList<int> AllowedUsageDays = [7, DefaultUsageDays, 90, 365];
 
     // Retry-After of a 429 or a 503 from a cap of MemeDashboardLimits.
     private const string RetryAfterSeconds = "5";
 
     [HttpGet]
     [ProducesResponseType<MemeIndexDto>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult<MemeIndexDto>> Index(CancellationToken ct) =>
-        await stats.GetIndexAsync(ct);
+        await stats.GetIndexAsync(ct) is { } index ? index : Busy();
 
     [HttpGet("search-usage")]
     [ProducesResponseType<MemeSearchUsageDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult<MemeSearchUsageDto>> SearchUsage(
         [FromQuery] int days = DefaultUsageDays, CancellationToken ct = default)
     {
-        if (days is < 1 or > MaxUsageDays)
-            return BadRequest(new { error = $"days must be between 1 and {MaxUsageDays}." });
+        if (!AllowedUsageDays.Contains(days))
+            return BadRequest(new { error = $"days must be one of: {string.Join(", ", AllowedUsageDays)}." });
 
-        return await stats.GetSearchUsageAsync(days, ct);
+        return await stats.GetSearchUsageAsync(days, ct) is { } usage ? usage : Busy();
     }
 
     [HttpGet("search")]
@@ -84,5 +89,12 @@ public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
 
         Response.Headers.CacheControl = $"private, max-age={(int)MemeThumbnailResolver.BrowserMaxAge.TotalSeconds}";
         return Redirect(thumbnail.Url);
+    }
+
+    // The answer is being computed for another request and the wait for it reached its limit.
+    private ObjectResult Busy()
+    {
+        Response.Headers.RetryAfter = RetryAfterSeconds;
+        return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "The answer is being computed. Try again." });
     }
 }

@@ -34,8 +34,13 @@ internal sealed class MemeDashboardLimits : IDisposable
     public static readonly TimeSpan IndexCacheDuration = TimeSpan.FromSeconds(30);
 
     // Answers of GET api/stats/memes/search-usage kept at one time: one per value of days.
-    // Above the 365 values a caller can ask for, so the limit is a bound, not a policy.
-    public const int MaxCachedSearchUsages = 512;
+    // Above the few values the controller lets through, so the limit is a bound, not a policy.
+    public const int MaxCachedSearchUsages = 16;
+
+    // How long a request waits for the index or the search-usage answer that another request
+    // computes. Past it the request answers 503: a waiter holds a request and a DbContext, so
+    // the wait must have an end. Settable so a test does not wait the real time.
+    public TimeSpan AnswerWaitTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
     private IndexSnapshot? _index;
 

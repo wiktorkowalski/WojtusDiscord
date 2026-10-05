@@ -127,6 +127,9 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
     [InlineData("/search?q=a&limit=21")]
     [InlineData("/search-usage?days=0")]
     [InlineData("/search-usage?days=366")]
+    // Inside the old range, outside the list: one cached answer per listed value, no more.
+    [InlineData("/search-usage?days=31")]
+    [InlineData("/search-usage?days=1")]
     public async Task Request_InputOutOfBounds_Returns400WithTheErrorShape(string path)
     {
         await using var host = await StartAsync();
@@ -137,6 +140,42 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal(["error"], json.RootElement.EnumerateObject().Select(p => p.Name));
         Assert.Equal(JsonValueKind.String, json.RootElement.GetProperty("error").ValueKind);
+    }
+
+    [Theory]
+    [InlineData(7)]
+    [InlineData(30)]
+    [InlineData(90)]
+    [InlineData(365)]
+    public async Task SearchUsage_DaysOnTheList_Returns200(int days)
+    {
+        await using var host = await StartAsync();
+
+        using var json = await GetJsonAsync(host, $"{BasePath}/search-usage?days={days}");
+
+        Assert.Equal(days, json.RootElement.GetProperty("days").GetInt32());
+    }
+
+    // Another request computes the answer and does not finish in time: 503, and the request leaves.
+    [Theory]
+    [InlineData("")]
+    [InlineData("/search-usage")]
+    public async Task Request_AnswerGateHeldPastTheWaitLimit_Returns503WithRetryAfterAndTheErrorShape(string path)
+    {
+        await using var host = await StartAsync(answerWaitTimeout: TimeSpan.FromMilliseconds(200));
+        await host.Limits.IndexGate.WaitAsync();
+        await host.Limits.SearchUsageGate.WaitAsync();
+
+        var response = await host.Client.GetAsync(BasePath + path);
+        host.Limits.IndexGate.Release();
+        host.Limits.SearchUsageGate.Release();
+        var afterRelease = await host.Client.GetAsync(BasePath + path);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(5), response.Headers.RetryAfter!.Delta);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(["error"], json.RootElement.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(HttpStatusCode.OK, afterRelease.StatusCode);
     }
 
     [Fact]
@@ -420,7 +459,8 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         Func<IReadOnlyList<string>, IEnumerable<(string Original, string? Refreshed)>>? refresh = null,
         HttpStatusCode? failWith = null,
         ulong[]? channelIds = null,
-        TimeSpan? delay = null)
+        TimeSpan? delay = null,
+        TimeSpan? answerWaitTimeout = null)
     {
         var discord = new StubDiscordApi(refresh ?? (urls => urls.Select(u => (u, (string?)(u + FreshSignature)))), failWith, delay);
 
@@ -437,7 +477,9 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         builder.Services.AddMemoryCache();
         builder.Services.AddSingleton<IHttpClientFactory>(new FakeHttpClientFactory(discord));
         builder.Services.AddSingleton<MemeSearchLogWriter>();
-        builder.Services.AddSingleton<MemeDashboardLimits>();
+        builder.Services.AddSingleton(_ => answerWaitTimeout is { } wait
+            ? new MemeDashboardLimits { AnswerWaitTimeout = wait }
+            : new MemeDashboardLimits());
         builder.Services.AddScoped<MemeSearchService>();
         builder.Services.AddScoped<MemeSampleService>();
         builder.Services.AddScoped<IMemeIndexSummaryReader, MemeIndexSummaryReader>();
