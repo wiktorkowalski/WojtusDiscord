@@ -239,5 +239,6 @@ public sealed class MemePageViewTests
         ulong channelId = 20UL,
         ulong messageId = 1000UL) =>
         new(channelId, messageId, AttachmentDiscordId: messageId + 1, fileName, descriptionPl, descriptionEn,
-            tags ?? [], DateTime.UnixEpoch, Score: 1.0);
+            tags ?? [], DateTime.UnixEpoch, Score: 1.0,
+            ImageKind: null, Templates: [], ModelId: "model", PromptVersion: "v1", TsRank: 0.5, TrigramSimilarity: 1.0);
 }

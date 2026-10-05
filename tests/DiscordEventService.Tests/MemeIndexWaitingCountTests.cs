@@ -235,7 +235,7 @@ public sealed class MemeIndexWaitingCountTests(PostgresFixture fixture) : IClass
 
         var second = await NewSummaryReader(cache).GetAsync(CancellationToken.None);
 
-        Assert.Equal(new MemeIndexSummary(Indexed: 1, Waiting: 2), first);
+        Assert.Equal((1L, 2L), (first.Indexed, first.Waiting));
         Assert.Equal(first, second);
         Assert.Equal(3, await NewSampleService().CountWaitingAsync(CancellationToken.None));
     }
@@ -271,7 +271,7 @@ public sealed class MemeIndexWaitingCountTests(PostgresFixture fixture) : IClass
 
             var summaries = await Task.WhenAll(readers.Select(r => Task.Run(() => r.GetAsync(CancellationToken.None))));
 
-            Assert.Equal(new MemeIndexSummary(Indexed: 1, Waiting: 2), summaries[0]);
+            Assert.Equal((1L, 2L), (summaries[0].Indexed, summaries[0].Waiting));
             Assert.All(summaries, s => Assert.Same(summaries[0], s));
         }
         finally
