@@ -394,29 +394,29 @@ function RankedRows({ rows, color }: { rows: BoardRow[]; color: string }) {
   const { openProfile } = useProfile()
   const max = Math.max(...rows.map((r) => r.value), 1)
   return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-        {rows.map((row, i) => {
-          const body = <BoardRowBody row={row} rank={i + 1} max={max} color={color} />
-          const profileId = row.profileId
-          return profileId ? (
-            <button
-              key={row.key}
-              type="button"
-              onClick={() => openProfile(profileId)}
-              title={`Open the profile of ${row.name}`}
-              style={{ ...boardRowStyle, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', transition: 'background .15s' }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = C.bg2)}
-              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-            >
-              {body}
-            </button>
-          ) : (
-            <div key={row.key} style={boardRowStyle}>
-              {body}
-            </div>
-          )
-        })}
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {rows.map((row, i) => {
+        const body = <BoardRowBody row={row} rank={i + 1} max={max} color={color} />
+        const profileId = row.profileId
+        return profileId ? (
+          <button
+            key={row.key}
+            type="button"
+            onClick={() => openProfile(profileId)}
+            title={`Open the profile of ${row.name}`}
+            style={{ ...boardRowStyle, background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left', transition: 'background .15s' }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = C.bg2)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+          >
+            {body}
+          </button>
+        ) : (
+          <div key={row.key} style={boardRowStyle}>
+            {body}
+          </div>
+        )
+      })}
+    </div>
   )
 }
 
