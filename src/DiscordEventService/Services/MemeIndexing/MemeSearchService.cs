@@ -65,14 +65,14 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
     internal static readonly string RankStopListVersion = Convert.ToHexStringLower(
         SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', RankStopWords.Order(StringComparer.Ordinal)))))[..StopListVersionLength];
 
-    // Every call leaves one row in meme_search_log (#384), also a search with no hits. The row
-    // is written after this method returns (MemeSearchLogWriter), so it adds no wait and its
-    // failure cannot reach the caller. A search that throws leaves no row.
     // What search can return, in LINQ: the gate of the search SQL below (Indexed, message not
     // deleted), for a reader that must not show more than search does (#395).
     internal static IQueryable<MemeIndexEntity> Searchable(IQueryable<MemeIndexEntity> memes) =>
         memes.Where(m => m.Status == MemeIndexStatus.Indexed && !m.Message.IsDeleted);
 
+    // Every call leaves one row in meme_search_log (#384), also a search with no hits. The row
+    // is written after this method returns (MemeSearchLogWriter), so it adds no wait and its
+    // failure cannot reach the caller. A search that throws leaves no row.
     public async Task<List<MemeSearchHit>> SearchAsync(
         ulong guildId, string query, int limit, MemeSearchCaller caller, CancellationToken cancellationToken) =>
         (await SearchPageAsync(guildId, query, offset: 0, limit, caller, cancellationToken)).Hits;
