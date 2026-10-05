@@ -357,7 +357,7 @@ function gameRows(games: CommunityActivity[]): BoardRow[] {
     key: g.name,
     name: g.name,
     value: g.minutes,
-    display: `${decimalHours(g.minutes)} · ${fmt(g.players)} ${g.players === 1 ? 'player' : 'players'}`,
+    display: `${hhmm(g.minutes)} · ${fmt(g.players)} ${g.players === 1 ? 'player' : 'players'}`,
   }))
 }
 
