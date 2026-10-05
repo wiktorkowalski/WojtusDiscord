@@ -29,8 +29,8 @@ export interface CommunityLeaderboards {
   topChatters: CommunityLeaderEntry[]
   memeLords: CommunityLeaderEntry[]
   reactionsReceived: CommunityLeaderEntry[]
-  reactionsGiven: CommunityLeaderEntry[]
   voice: CommunityLeaderEntry[]
+  reactionsGiven: CommunityLeaderEntry[]
 }
 
 export interface CommunityActivity {
@@ -45,12 +45,12 @@ export interface Community {
   prevLabel: string
   metrics: CommunityMetrics
   leaderboards: CommunityLeaderboards
+  // topEmotes, channels and topActivities follow the range window.
   topEmotes: EmojiStat[]
   channels: ChannelActivity[]
   topActivities: CommunityActivity[]
-  /** Sparse: a missing weekday × hour cell means 0. Fixed window, independent of `range`. */
+  // The heatmap always covers the last heatmapDays guild-local days, whatever the range.
   heatmap: HeatmapCell[]
-  /** Length of the heatmap window in days. */
   heatmapDays: number
 }
 

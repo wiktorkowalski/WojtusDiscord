@@ -65,14 +65,25 @@ public sealed record CommunityLeaderboardsDto(
     IReadOnlyList<CommunityLeaderEntryDto> TopChatters,
     IReadOnlyList<CommunityLeaderEntryDto> MemeLords,
     IReadOnlyList<CommunityLeaderEntryDto> ReactionsReceived,
-    IReadOnlyList<CommunityLeaderEntryDto> Voice);
+    IReadOnlyList<CommunityLeaderEntryDto> Voice,
+    IReadOnlyList<CommunityLeaderEntryDto> ReactionsGiven);
 
+// One game in the window: minutes played (overlap-free per player, bot downtime subtracted) and distinct players.
+public sealed record CommunityActivityDto(string Name, long Minutes, long Players);
+
+// TopEmotes, Channels and TopActivities follow the range window. Heatmap always covers the
+// last HeatmapDays guild-local days, whatever the range.
 public sealed record CommunityDto(
     string Range,
     string Label,
     string PrevLabel,
     CommunityMetricsDto Metrics,
-    CommunityLeaderboardsDto Leaderboards);
+    CommunityLeaderboardsDto Leaderboards,
+    IReadOnlyList<EmojiStatDto> TopEmotes,
+    IReadOnlyList<ChannelActivityDto> Channels,
+    IReadOnlyList<CommunityActivityDto> TopActivities,
+    IReadOnlyList<HeatmapCellDto> Heatmap,
+    int HeatmapDays);
 
 public sealed record SpotifyNowPlayingDto(
     ulong UserDiscordId,

@@ -324,8 +324,8 @@ interface BoardRow {
   profileId?: string
 }
 
-function memberRows(entries: CommunityLeaderEntry[] | undefined, format: (v: number) => string): BoardRow[] {
-  return (entries ?? []).map((e) => {
+function memberRows(entries: CommunityLeaderEntry[], format: (v: number) => string): BoardRow[] {
+  return entries.map((e) => {
     const name = e.username ?? e.userDiscordId
     return {
       key: e.userDiscordId,
@@ -381,11 +381,19 @@ function BoardRowBody({ row, rank, max, color }: { row: BoardRow; rank?: number;
   )
 }
 
-function Leaderboard({ title, icon, color, rows, load }: { title: string; icon: IconName; color: string; rows: BoardRow[]; load: Load }) {
+/** `rows` is undefined until the stats load; the panel then shows its loading or error state. */
+function Leaderboard({ title, icon, color, rows, load }: { title: string; icon: IconName; color: string; rows: BoardRow[] | undefined; load: Load }) {
+  return (
+    <Panel title={title} titleSize={15} icon={{ name: icon, color }} load={load} empty={rows?.length === 0 && 'No activity in this window.'}>
+      {rows && <RankedRows rows={rows} color={color} />}
+    </Panel>
+  )
+}
+
+function RankedRows({ rows, color }: { rows: BoardRow[]; color: string }) {
   const { openProfile } = useProfile()
   const max = Math.max(...rows.map((r) => r.value), 1)
   return (
-    <Panel title={title} titleSize={15} icon={{ name: icon, color }} load={load} empty={rows.length === 0 && 'No activity in this window.'}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         {rows.map((row, i) => {
           const body = <BoardRowBody row={row} rank={i + 1} max={max} color={color} />
@@ -409,7 +417,6 @@ function Leaderboard({ title, icon, color, rows, load }: { title: string; icon: 
           )
         })}
       </div>
-    </Panel>
   )
 }
 
@@ -511,7 +518,7 @@ export default function Overview() {
   const days = community.data && s ? windowDays(community.data.fetchedAt, s.metrics.messages.spark.length) : []
   const report = RANGES.find((r) => r.key === range) ?? RANGES[0]
   const selected = METRICS.find((m) => m.key === metricKey) ?? METRICS[0]
-  const { topEmotes = [], channels = [], topActivities = [], heatmap = [], heatmapDays = 30 } = s ?? {}
+  // `s` is undefined until the first load. Each card then shows its loading or error state and renders no data.
   const boards = s?.leaderboards
   // Dims the cards that still show the other window. A wrapper carries it: the rise-in animation pins a card's own opacity.
   const switching: CSSProperties = { opacity: community.isPlaceholderData ? 0.55 : 1, transition: 'opacity .15s' }
@@ -555,35 +562,35 @@ export default function Overview() {
           <Panel title={`${selected.name} per day`} aside="pick a tile above to change the metric" load={load} style={{ flex: '3 1 560px' }}>
             {s && <DayChart spec={selected} metric={s.metrics[selected.key]} days={days} />}
           </Panel>
-          <Panel title="Top emotes" load={load} empty={topEmotes.length === 0 && 'No reactions in this window.'} style={{ flex: '1 1 280px' }}>
-            <EmoteList emotes={topEmotes} />
+          <Panel title="Top emotes" load={load} empty={s?.topEmotes.length === 0 && 'No reactions in this window.'} style={{ flex: '1 1 280px' }}>
+            {s && <EmoteList emotes={s.topEmotes} />}
           </Panel>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(300px, 100%), 1fr))', gap: 18 }}>
-          <Leaderboard title="Top chatters" icon="crown" color={C.blurple} rows={memberRows(boards?.topChatters, count)} load={load} />
-          <Leaderboard title="Meme lords" icon="fire" color={C.fuchsia} rows={memberRows(boards?.memeLords, count)} load={load} />
-          <Leaderboard title="Reactions received" icon="reaction" color={C.amber} rows={memberRows(boards?.reactionsReceived, count)} load={load} />
-          <Leaderboard title="Reactions given" icon="reaction" color={C.amber} rows={memberRows(boards?.reactionsGiven, count)} load={load} />
-          <Leaderboard title="Time in VC" icon="voice" color={C.teal} rows={memberRows(boards?.voice, hhmm)} load={load} />
-          <Leaderboard title="Top games" icon="play" color={C.green} rows={gameRows(topActivities)} load={load} />
+          <Leaderboard title="Top chatters" icon="crown" color={C.blurple} rows={boards && memberRows(boards.topChatters, count)} load={load} />
+          <Leaderboard title="Meme lords" icon="fire" color={C.fuchsia} rows={boards && memberRows(boards.memeLords, count)} load={load} />
+          <Leaderboard title="Reactions received" icon="reaction" color={C.amber} rows={boards && memberRows(boards.reactionsReceived, count)} load={load} />
+          <Leaderboard title="Reactions given" icon="reaction" color={C.amber} rows={boards && memberRows(boards.reactionsGiven, count)} load={load} />
+          <Leaderboard title="Time in VC" icon="voice" color={C.teal} rows={boards && memberRows(boards.voice, hhmm)} load={load} />
+          <Leaderboard title="Top games" icon="play" color={C.green} rows={s && gameRows(s.topActivities)} load={load} />
         </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(420px, 100%), 1fr))', gap: 18 }}>
         <div aria-busy={community.isPlaceholderData} style={{ ...switching, display: 'flex', minWidth: 0 }}>
-          <Panel title="Channels" load={load} empty={channels.length === 0 && 'No channel activity in this window.'} style={{ flex: 1 }}>
-            <ChannelTable channels={channels} />
+          <Panel title="Channels" load={load} empty={s?.channels.length === 0 && 'No channel activity in this window.'} style={{ flex: 1 }}>
+            {s && <ChannelTable channels={s.channels} />}
           </Panel>
         </div>
         {/* The heatmap window is fixed, so it does not dim when the toggle changes. */}
         <Panel
           title="When is the server alive?"
-          aside={`messages, hour × weekday, last ${heatmapDays} days`}
+          aside={s ? `messages, hour × weekday, last ${s.heatmapDays} days` : 'messages, hour × weekday'}
           load={load}
-          empty={!heatmap.some((c) => c.count > 0) && `No messages in the last ${heatmapDays} days.`}
+          empty={s && !s.heatmap.some((c) => c.count > 0) && `No messages in the last ${s.heatmapDays} days.`}
         >
-          <Heatmap cells={heatmap} />
+          {s && <Heatmap cells={s.heatmap} />}
         </Panel>
       </div>
     </main>
