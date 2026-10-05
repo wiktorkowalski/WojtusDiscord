@@ -3,6 +3,7 @@ import { ProfileProvider, TopBar } from './ui'
 import Overview from './pages/Overview'
 import Timeline from './pages/Timeline'
 import Stats from './pages/Stats'
+import Memes from './pages/Memes'
 import Entities from './pages/Entities'
 import Tables from './pages/Tables'
 import RawExplorer from './pages/RawExplorer'
@@ -18,6 +19,7 @@ function App() {
         <Route path="/" element={<Overview />} />
         <Route path="/timeline" element={<Timeline />} />
         <Route path="/stats" element={<Stats />} />
+        <Route path="/memes" element={<Memes />} />
         <Route path="/entities" element={<Entities />} />
         <Route path="/tables" element={<Tables />} />
         <Route path="/raw" element={<RawExplorer />} />

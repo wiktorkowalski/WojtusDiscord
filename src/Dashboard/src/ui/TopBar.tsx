@@ -36,6 +36,7 @@ const NAV: NavSpec[] = [
   { to: '/', name: 'Overview', icon: 'home', end: true },
   { to: '/timeline', name: 'Timeline', icon: 'timeline' },
   { to: '/stats', name: 'Statistics', icon: 'stats' },
+  { to: '/memes', name: 'Memes', icon: 'fire' },
   { to: '/entities', name: 'Entities', icon: 'entities' },
   { to: '/tables', name: 'Tables', icon: 'tables' },
   { to: '/raw', name: 'Raw events', icon: 'raw' },
