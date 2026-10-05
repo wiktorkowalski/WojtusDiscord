@@ -240,6 +240,47 @@ public sealed class MemeIndexWaitingCountTests(PostgresFixture fixture) : IClass
         Assert.Equal(3, await NewSampleService().CountWaitingAsync(CancellationToken.None));
     }
 
+    // The endpoint has no auth: a second request inside the cache window must not scan again.
+    [Fact]
+    public async Task Status_SecondRequestInsideTheCacheWindow_ReturnsTheCachedWaitingCount()
+    {
+        await SeedMixedCorpusAsync();
+        await using var host = await StartAsync();
+        using var first = JsonDocument.Parse(await host.Client.GetStringAsync(StatusPath));
+        AddMessage(_memeChannel, 900UL, Attachment(9000UL, "later.png"));
+        await _db.SaveChangesAsync();
+
+        using var second = JsonDocument.Parse(await host.Client.GetStringAsync(StatusPath));
+
+        Assert.Equal(2, first.RootElement.GetProperty("waiting").GetInt32());
+        Assert.Equal(2, second.RootElement.GetProperty("waiting").GetInt32());
+    }
+
+    // Single-flight after an expiry. Each computation makes a new summary object, so one
+    // shared instance for every caller means the scan ran once. Every caller has its own
+    // DbContext, like every request has.
+    [Fact]
+    public async Task SummaryReader_ConcurrentReadsOnAnEmptyCache_ComputeOnce()
+    {
+        await SeedMixedCorpusAsync();
+        using var cache = new MemoryCache(new MemoryCacheOptions());
+        var contexts = Enumerable.Range(0, 8).Select(_ => NewContext()).ToList();
+        try
+        {
+            var readers = contexts.Select(db => new MemeIndexSummaryReader(db, NewSampleService(db: db), cache)).ToList();
+
+            var summaries = await Task.WhenAll(readers.Select(r => Task.Run(() => r.GetAsync(CancellationToken.None))));
+
+            Assert.Equal(new MemeIndexSummary(Indexed: 1, Waiting: 2), summaries[0]);
+            Assert.All(summaries, s => Assert.Same(summaries[0], s));
+        }
+        finally
+        {
+            foreach (var db in contexts)
+                await db.DisposeAsync();
+        }
+    }
+
     // One indexed image, two that wait, and one of each kind that must not count.
     private async Task SeedMixedCorpusAsync()
     {
@@ -254,8 +295,8 @@ public sealed class MemeIndexWaitingCountTests(PostgresFixture fixture) : IClass
         await AddRowAsync(indexed, 1000UL, "indexed.png", MemeIndexStatus.Indexed);
     }
 
-    private MemeSampleService NewSampleService(ulong[]? channelIds = null) =>
-        new(_db,
+    private MemeSampleService NewSampleService(ulong[]? channelIds = null, DiscordDbContext? db = null) =>
+        new(db ?? _db,
             Options.Create(new MemeIndexOptions { ChannelIds = channelIds ?? [MemeChannelDiscordId], MaxImageBytes = MaxImageBytes }),
             NullLogger<MemeSampleService>.Instance);
 
@@ -274,7 +315,9 @@ public sealed class MemeIndexWaitingCountTests(PostgresFixture fixture) : IClass
             o.MaxImageBytes = MaxImageBytes;
             configure?.Invoke(o);
         });
+        builder.Services.AddMemoryCache();
         builder.Services.AddScoped<MemeSampleService>();
+        builder.Services.AddScoped<IMemeIndexSummaryReader, MemeIndexSummaryReader>();
 
         var app = builder.Build();
         app.MapMemeIndexEndpoints();

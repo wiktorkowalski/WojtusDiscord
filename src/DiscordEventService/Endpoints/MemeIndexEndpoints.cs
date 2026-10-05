@@ -59,10 +59,11 @@ internal static class MemeIndexEndpoints
     }
 
     private static async Task<IResult> GetStatus(
-        DiscordDbContext db, MemeSampleService sampleService, CancellationToken cancellationToken)
+        DiscordDbContext db, IMemeIndexSummaryReader summaryReader, CancellationToken cancellationToken)
     {
-        // Not cached: this is the number the operator checks against an export.
-        var waiting = await sampleService.CountWaitingAsync(cancellationToken);
+        // Through the cached reader: this endpoint has no auth, and the count scans every
+        // attachment message of the meme channels. The number can be up to one minute old.
+        var waiting = (int)(await summaryReader.GetAsync(cancellationToken)).Waiting;
 
         var checkpoints = await db.BackfillCheckpoints
             .Where(c => c.Type == BackfillType.MemeIndex)

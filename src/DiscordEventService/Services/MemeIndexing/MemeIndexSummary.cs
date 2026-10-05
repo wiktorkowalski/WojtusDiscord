@@ -24,17 +24,33 @@ internal sealed class MemeIndexSummaryReader(
 
     private const string CacheKey = "meme-index-summary";
 
+    // Static because the reader is scoped: every request has its own instance, and after an
+    // expiry only one of them may run the scan. The others wait and read what it cached.
+    private static readonly SemaphoreSlim ComputeGate = new(1, 1);
+
     public async Task<MemeIndexSummary> GetAsync(CancellationToken cancellationToken)
     {
         if (cache.TryGetValue(CacheKey, out MemeIndexSummary? cached) && cached is not null)
             return cached;
 
-        var indexed = await db.MemeIndex.AsNoTracking()
-            .LongCountAsync(m => m.Status == MemeIndexStatus.Indexed, cancellationToken);
-        var waiting = await sampleService.CountWaitingAsync(cancellationToken);
+        await ComputeGate.WaitAsync(cancellationToken);
+        try
+        {
+            // Another request may have filled the cache while this one waited.
+            if (cache.TryGetValue(CacheKey, out cached) && cached is not null)
+                return cached;
 
-        var summary = new MemeIndexSummary(indexed, waiting);
-        cache.Set(CacheKey, summary, CacheDuration);
-        return summary;
+            var indexed = await db.MemeIndex.AsNoTracking()
+                .LongCountAsync(m => m.Status == MemeIndexStatus.Indexed, cancellationToken);
+            var waiting = await sampleService.CountWaitingAsync(cancellationToken);
+
+            var summary = new MemeIndexSummary(indexed, waiting);
+            cache.Set(CacheKey, summary, CacheDuration);
+            return summary;
+        }
+        finally
+        {
+            ComputeGate.Release();
+        }
     }
 }
