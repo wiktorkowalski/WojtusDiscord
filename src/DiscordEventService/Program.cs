@@ -160,6 +160,8 @@ builder.Services.AddHttpClient(AttachmentUrlRefreshService.HttpClientName)
     {
         client.BaseAddress = new Uri("https://discord.com/api/v10/");
         client.Timeout = urlRefreshTimeout;
+        // An answer holds at most 50 signed URLs: no reason to buffer more (#395).
+        client.MaxResponseContentBufferSize = 1024 * 1024;
     });
 
 builder.Services.AddScoped<OpenRouterClient>();

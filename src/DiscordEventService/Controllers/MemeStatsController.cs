@@ -19,6 +19,9 @@ public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
     public const int MaxSearchLimit = 20;
     public const int MaxQueryLength = 200;
 
+    // Retry-After of a 429 or a 503 from a cap of MemeDashboardLimits.
+    private const string RetryAfterSeconds = "5";
+
     [HttpGet]
     [ProducesResponseType<MemeIndexDto>(StatusCodes.Status200OK)]
     public async Task<ActionResult<MemeIndexDto>> Index(CancellationToken ct) =>
@@ -52,7 +55,10 @@ public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
 
         var result = await stats.SearchAsync(query, limit, ct);
         if (result is null)
+        {
+            Response.Headers.RetryAfter = RetryAfterSeconds;
             return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "Too many searches run right now. Try again." });
+        }
 
         return result;
     }
@@ -67,8 +73,14 @@ public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
         ulong attachmentDiscordId, [FromServices] IMemeThumbnailResolver thumbnails, CancellationToken ct)
     {
         var thumbnail = await thumbnails.ResolveAsync(attachmentDiscordId, ct);
+        if (thumbnail.Url is null && thumbnail.IsRetryable)
+        {
+            Response.Headers.RetryAfter = RetryAfterSeconds;
+            return StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
+
         if (thumbnail.Url is null)
-            return thumbnail.IsRetryable ? StatusCode(StatusCodes.Status503ServiceUnavailable) : NotFound();
+            return NotFound();
 
         Response.Headers.CacheControl = $"private, max-age={(int)MemeThumbnailResolver.BrowserMaxAge.TotalSeconds}";
         return Redirect(thumbnail.Url);

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Threading.RateLimiting;
 using System.Web;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
@@ -83,25 +84,35 @@ internal sealed class MemeThumbnailResolver(
         if (storedUrl is null)
             return Keep(attachmentDiscordId, MemeThumbnail.Gone, NotServableCacheDuration);
 
-        // One call to Discord at a time. A request that cannot get its turn answers 503.
-        if (!await limits.RefreshGate.WaitAsync(MemeDashboardLimits.RefreshWaitTimeout, cancellationToken))
+        // One call to Discord at a time. No slot (the queue is full, or the wait was too long): 503.
+        using var slot = await WaitForRefreshSlotAsync(cancellationToken);
+        if (slot is not { IsAcquired: true })
             return MemeThumbnail.Unavailable;
+
+        // A request for the same image may have filled the cache while this one waited.
+        if (Cached(attachmentDiscordId) is { } filledMeanwhile)
+            return filledMeanwhile;
+
+        using var permit = limits.RefreshBudget.AttemptAcquire();
+        if (!permit.IsAcquired)
+            return MemeThumbnail.Unavailable;
+
+        return await RefreshAsync(attachmentDiscordId, storedUrl, cancellationToken);
+    }
+
+    // Null = the wait reached RefreshWaitTimeout. A lease that is not acquired = the queue is full.
+    private async Task<RateLimitLease?> WaitForRefreshSlotAsync(CancellationToken cancellationToken)
+    {
+        using var waitLimit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        waitLimit.CancelAfter(MemeDashboardLimits.RefreshWaitTimeout);
 
         try
         {
-            // A request for the same image may have filled the cache while this one waited.
-            if (Cached(attachmentDiscordId) is { } filledMeanwhile)
-                return filledMeanwhile;
-
-            using var permit = limits.RefreshBudget.AttemptAcquire();
-            if (!permit.IsAcquired)
-                return MemeThumbnail.Unavailable;
-
-            return await RefreshAsync(attachmentDiscordId, storedUrl, cancellationToken);
+            return await limits.RefreshSlots.AcquireAsync(1, waitLimit.Token);
         }
-        finally
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            limits.RefreshGate.Release();
+            return null;
         }
     }
 
@@ -120,8 +131,23 @@ internal sealed class MemeThumbnailResolver(
 
     private async Task<MemeThumbnail> RefreshAsync(ulong attachmentDiscordId, string storedUrl, CancellationToken cancellationToken)
     {
-        // The refresh service logs its own failures and its own count.
-        var refreshed = await urlRefreshService.RefreshAsync([storedUrl], cancellationToken);
+        using var callLimit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        callLimit.CancelAfter(MemeDashboardLimits.RefreshCallTimeout);
+
+        AttachmentUrlRefreshResult refreshed;
+        try
+        {
+            // The refresh service logs its own failures and its own count.
+            refreshed = await urlRefreshService.RefreshAsync([storedUrl], callLimit.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Not logged by the refresh service: for it, this is the caller's cancellation.
+            logger.LogWarning(
+                "Attachment URL refresh for meme attachment {AttachmentId} took over {TimeoutSeconds} s; no thumbnail served",
+                attachmentDiscordId, MemeDashboardLimits.RefreshCallTimeout.TotalSeconds);
+            return Keep(attachmentDiscordId, MemeThumbnail.Unavailable, FailureCacheDuration);
+        }
 
         switch (refreshed.GetFreshUrl(storedUrl, out var freshUrl))
         {

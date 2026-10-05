@@ -19,8 +19,15 @@ internal sealed class MemeDashboardLimits : IDisposable
     // Calls to Discord's attachments/refresh-urls from the thumbnail path, per minute.
     public const int MaxRefreshesPerMinute = 120;
 
+    // Thumbnail requests that may wait for their turn to call Discord. One more gets 503 at once.
+    public const int MaxQueuedRefreshes = 32;
+
     // How long a thumbnail request waits for its turn before it answers 503.
     public static readonly TimeSpan RefreshWaitTimeout = TimeSpan.FromSeconds(10);
+
+    // How long one call to Discord may take. It holds the only slot, so it is far below the
+    // HTTP client's own timeout.
+    public static readonly TimeSpan RefreshCallTimeout = TimeSpan.FromSeconds(5);
 
     // How long one computed answer of GET api/stats/memes is served. The waiting count in it
     // is up to a minute old already (MemeIndexSummaryReader).
@@ -33,9 +40,16 @@ internal sealed class MemeDashboardLimits : IDisposable
 
     public SemaphoreSlim SearchGate { get; } = new(MaxConcurrentSearches, MaxConcurrentSearches);
 
-    // One refresh at a time. A request that waited reads the cache again before it calls
-    // Discord, so requests for one image at the same time make one call.
-    public SemaphoreSlim RefreshGate { get; } = new(1, 1);
+    // One refresh at a time, with a queue that has a limit. A request that waited reads the
+    // cache again before it calls Discord, so requests for one image at the same time make one
+    // call. A waiter that gives up (timeout, client gone) leaves the queue; a lease is
+    // released when it is disposed.
+    public RateLimiter RefreshSlots { get; } = new ConcurrencyLimiter(new ConcurrencyLimiterOptions
+    {
+        PermitLimit = 1,
+        QueueLimit = MaxQueuedRefreshes,
+        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+    });
 
     public RateLimiter RefreshBudget { get; } = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
     {
@@ -57,7 +71,7 @@ internal sealed class MemeDashboardLimits : IDisposable
     {
         IndexGate.Dispose();
         SearchGate.Dispose();
-        RefreshGate.Dispose();
+        RefreshSlots.Dispose();
         RefreshBudget.Dispose();
         Thumbnails.Dispose();
     }

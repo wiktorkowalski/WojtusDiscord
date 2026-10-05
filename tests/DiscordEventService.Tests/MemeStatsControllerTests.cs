@@ -157,6 +157,7 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         var response = await host.Client.GetAsync($"{BasePath}/search?q=rakieta");
 
         Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(5), response.Headers.RetryAfter!.Delta);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal(["error"], json.RootElement.EnumerateObject().Select(p => p.Name));
     }
@@ -330,6 +331,44 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         Assert.Equal(0, host.Discord.Calls);
     }
 
+    // The wait for the one Discord slot has a bound too: past it a request is turned away at once.
+    [Fact]
+    public async Task Thumbnail_RefreshQueueFull_Returns503AtOnceWithoutACallToDiscord()
+    {
+        await _data.AddIndexedAsync(AttachmentId);
+        await using var host = await StartAsync();
+        var slot = host.Limits.RefreshSlots.AttemptAcquire();
+        var queued = Enumerable.Range(0, MemeDashboardLimits.MaxQueuedRefreshes)
+            .Select(_ => host.Limits.RefreshSlots.AcquireAsync().AsTask())
+            .ToList();
+
+        var response = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
+
+        Assert.True(slot.IsAcquired);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(5), response.Headers.RetryAfter!.Delta);
+        Assert.Equal(0, host.Discord.Calls);
+
+        slot.Dispose();
+        foreach (var waiter in queued)
+            (await waiter).Dispose();
+    }
+
+    // A call that hangs must not hold the only slot for the HTTP client's 30 s.
+    [Fact]
+    public async Task Thumbnail_DiscordDoesNotAnswerInTime_Returns503AndDoesNotAskAgainAtOnce()
+    {
+        await _data.AddIndexedAsync(AttachmentId);
+        await using var host = await StartAsync(delay: TimeSpan.FromMinutes(1));
+
+        var first = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
+        var second = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, first.StatusCode);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, second.StatusCode);
+        Assert.Equal(1, host.Discord.Calls);
+    }
+
     // A signed URL that expires inside the margin is served and not kept: the next request asks again.
     [Fact]
     public async Task Thumbnail_SignedUrlAboutToExpire_IsNotCached()
@@ -376,9 +415,10 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
     private async Task<TestHost> StartAsync(
         Func<IReadOnlyList<string>, IEnumerable<(string Original, string? Refreshed)>>? refresh = null,
         HttpStatusCode? failWith = null,
-        ulong[]? channelIds = null)
+        ulong[]? channelIds = null,
+        TimeSpan? delay = null)
     {
-        var discord = new StubDiscordApi(refresh ?? (urls => urls.Select(u => (u, (string?)(u + FreshSignature)))), failWith);
+        var discord = new StubDiscordApi(refresh ?? (urls => urls.Select(u => (u, (string?)(u + FreshSignature)))), failWith, delay);
 
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
@@ -430,7 +470,8 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
     // POST attachments/refresh-urls, the only call the meme page makes to Discord.
     private sealed class StubDiscordApi(
         Func<IReadOnlyList<string>, IEnumerable<(string Original, string? Refreshed)>> refresh,
-        HttpStatusCode? failWith) : HttpMessageHandler
+        HttpStatusCode? failWith,
+        TimeSpan? delay) : HttpMessageHandler
     {
         private readonly List<List<string>> _requestedUrls = [];
         private int _calls;
@@ -455,6 +496,9 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
                 .GetProperty("attachment_urls").EnumerateArray().Select(e => e.GetString()!).ToList();
             lock (_requestedUrls)
                 _requestedUrls.Add(urls);
+
+            if (delay is { } wait)
+                await Task.Delay(wait, cancellationToken);
 
             if (failWith is { } status)
                 return new HttpResponseMessage(status) { Content = new StringContent("{\"message\":\"boom\"}") };

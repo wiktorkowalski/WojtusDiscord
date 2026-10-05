@@ -77,7 +77,9 @@ internal sealed class AttachmentUrlRefreshService(
                 await Task.Delay(DelayBetweenBatches, cancellationToken);
         }
 
-        logger.LogInformation(
+        // One URL is a dashboard thumbnail (#395), up to 120 a minute: Debug. A run of the indexer asks for many.
+        logger.Log(
+            distinct.Count > 1 ? LogLevel.Information : LogLevel.Debug,
             "Refreshed {RefreshedCount} of {RequestedCount} attachment URLs ({FailedBatchCount} in failed batches)",
             result.RefreshedCount, distinct.Count, result.FailedBatchCount);
         return result;
