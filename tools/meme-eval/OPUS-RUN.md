@@ -11,7 +11,7 @@ The result goes into `meme_annotations` through the import endpoint (#369). A pr
 | Writer key | `model_id = claude-code/claude-opus-5.5`, `prompt_version = v4`, no `reasoning_effort` |
 | Agent prompt | `tools/meme-eval/opus-annotation-prompt.md` |
 | Annotator task | `tools/meme-eval/ANNOTATOR-TASK.md` |
-| Scripts | `tools/meme-eval/opus_run.py`, `tools/meme-eval/validate_batch.py`, `tools/meme-eval/import_run.sh` |
+| Scripts | `tools/meme-eval/opus_run.py`, `tools/meme-eval/validate_batch.py`, `tools/meme-eval/import_run.sh`, `tools/meme-eval/corpus_copy.sh` |
 
 Prod database: SELECT only. `opus_run.py export` runs one SELECT in a read-only session. Connection details are not in the repo.
 
@@ -124,15 +124,36 @@ python3 tools/meme-eval/retrieval_eval.py --inputs src/DiscordEventService/Data/
 
 The script finds every `model_id` and prints one block per writer and one for all writers together. Compare the `tok=prod` rows marked `(baseline)`: production search since #380 (stop list in the rank query only).
 
-Measured on 2026-10-04, 249 queries, top-1 / recall@5 / MRR:
+Measured on 2026-10-05, 249 queries, top-1 / recall@5 / MRR:
 
 | Writer | top-1 | recall@5 | MRR |
 |---|---|---|---|
-| `claude-code/claude-opus-5.5` | 81.1 % | 85.9 % | 0.836 |
-| `google/gemini-3.8-flash` @low | 81.5 % | 87.1 % | 0.845 |
-| all three writers together | 85.5 % | 90.8 % | 0.879 |
+| `claude-code/claude-opus-5.5` | 88.0 % | 92.8 % | 0.904 |
+| `google/gemini-3.8-flash` @low | 88.8 % | 94.4 % | 0.916 |
+| `google/gemini-3-flash-preview` | 87.1 % | 95.2 % | 0.910 |
+| all three writers together | 92.8 % | 98.0 % | 0.951 |
 
-Queries of type "who": recall@5 0.771 for Opus, 0.914 for 3.8-flash@low.
+Numbers from this query set dated before 2026-10-05 are about 7 points lower and wrong: `eval-inputs-20261002/blindq0.json` had the ids of three memes out of step with `qimg0.json`, so 18 queries pointed at the wrong meme. The file in the run data is corrected (`blindq0.json.orig` is the old one). Before a new measurement, check that `blindq*.json` and `qimg*.json` list the same ids in the same order. Paired comparisons from the old runs hold: the 18 queries missed in every variant.
+
+### On the real corpus
+
+The 100-meme corpus is too easy: the target competes with 99 memes. For a ranking question, measure against the whole corpus in a local copy. Do not run the eval on prod: it creates a temporary view and sends several thousand ranking queries.
+
+```
+export PGHOST=<prod db host> PGPORT=<prod db port> PGPASSWORD=<prod db password>
+tools/meme-eval/corpus_copy.sh                      # the owner runs this; makes the local database meme_corpus
+python3 tools/meme-eval/retrieval_eval.py --inputs <eval inputs> --guild 341531063920754700 --db meme_corpus \
+  --trigram-weights 0.5,1.0 --glued-probes --out <results file>
+```
+
+- `corpus_copy.sh` stops when the local database exists already. Drop it first (`DROP DATABASE meme_corpus;` in the local container) or pass another name.
+- `corpus_copy.sh` reads prod in read-only sessions: the schema, `meme_annotations`, `meme_index`, and from `messages` only `id`, `created_at_utc`, `is_deleted` of the rows that hold a meme. No message content leaves prod.
+- One variant (249 queries, one tokenizer, one weight) takes about 2 minutes on the local database. The script runs four tokenizers per weight. Run the weights as parallel processes.
+- The script prints gained / lost against production search, with no p-value. Use a two-sided sign test on the two counts.
+
+Measured on 2026-10-05, 5,029 memes, Opus as the only writer, production search, 249 queries: top-1 63.9 %, recall@5 77.5 %, MRR 0.709. 21 targets are not in the first 100 results. On the 100-meme corpus the same writer has 88.0 / 92.8 / 0.904. A query passes a median of 344 memes through the filter. Target first by query type: quote 49 of 49, vague 27 of 40, topic 24 of 41, scene 23 of 40, template 20 of 35, who 13 of 35, owner-written 3 of 9.
+
+The results for `TrigramWeight` and the hyphen question are on #380 (closed with no change). That sweep ran before the label correction, so its tables leave the 18 queries out (n = 231).
 
 ### Every ~500 memes (about 13 batches)
 
@@ -144,7 +165,9 @@ The retrieval eval has queries for the 100 eval memes only. For the running corp
 
 Not built: the side-by-side variant from the ticket (3.8-flash@low output for the same 20 memes). It needs a links file for `POST /api/ops/meme-benchmark/from-file` with the slot `google/gemini-3.8-flash|effort=low` (about $0.07 for 20 images), and no script writes that file from an attachment list yet.
 
-Judge result of 2026-10-04: 22 memes, two from every fifth batch of 0003–0053. Mean 4.86 (19 × 5, 3 × 4), one invented tag, no name on a cut-out face, no private person in `people`. The judge is Opus too: read this as "no quality problem", not as an exact score. Batches 0056–0124 had no judge pass.
+Judge result of 2026-10-04: 22 memes, two from every fifth batch of 0003–0053. Mean 4.86 (19 × 5, 3 × 4), one invented tag, no name on a cut-out face, no private person in `people`. Judge result of 2026-10-05: 28 memes, two from every fifth batch of 0058–0123. Mean 4.79 (23 × 5, 4 × 4, 1 × 3), one invented fact, no name on a cut-out face, no private person in `people`, no annotation that belongs to another image. Weakest field: `templates` holds a scene description in place of a template name in 4 of the 28.
+
+The judge is Opus too: read both results as "no quality problem", not as an exact score.
 
 Known difference, measured on 2026-10-04: Opus through the subscription names no one from the face alone (`widely_recognized` in 0 of 50 memes, 11 memes with a known person described without a name). Search by a person's name depends on the second writer, 3.8-flash@low. Do not count a missing name as a quality drop.
 
