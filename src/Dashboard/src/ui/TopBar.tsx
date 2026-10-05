@@ -47,6 +47,8 @@ function navLinkStyle(isActive: boolean): CSSProperties {
     display: 'flex',
     alignItems: 'center',
     gap: 7,
+    flexShrink: 0,
+    whiteSpace: 'nowrap',
     padding: '8px 13px',
     borderRadius: 9,
     textDecoration: 'none',
@@ -81,9 +83,11 @@ export function TopBar() {
     <header
       style={{
         display: 'flex',
+        // Narrow screens: brand, nav and status each take their own row; the nav scrolls inside its row.
+        flexWrap: 'wrap',
         alignItems: 'center',
-        gap: 22,
-        padding: '16px 32px',
+        gap: '10px 22px',
+        padding: '16px clamp(16px, 4vw, 32px)',
         borderBottom: `1px solid ${C.border}`,
         background: 'rgba(19,20,23,.6)',
         backdropFilter: 'blur(8px)',
@@ -115,7 +119,7 @@ export function TopBar() {
         </div>
       </div>
 
-      <nav style={{ display: 'flex', gap: 2, marginLeft: 12 }}>
+      <nav style={{ display: 'flex', gap: 2, marginLeft: 12, minWidth: 0, overflowX: 'auto' }}>
         {NAV.map(({ to, name, icon, end }) => (
           <NavLink key={to} to={to} end={end} style={({ isActive }) => navLinkStyle(isActive)}>
             {({ isActive }) => (
@@ -128,7 +132,7 @@ export function TopBar() {
         ))}
       </nav>
 
-      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 16 }}>
+      <div style={{ marginLeft: 'auto', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center' }}>
           {onlineShown.map((u, i) => (
             <button

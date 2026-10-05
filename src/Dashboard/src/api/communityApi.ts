@@ -1,4 +1,5 @@
 import { fetchApi, toQuery } from './client'
+import type { ChannelActivity, EmojiStat, HeatmapCell } from './statsApi'
 
 export type CommunityRange = 'week' | 'month' | 'all'
 
@@ -29,6 +30,13 @@ export interface CommunityLeaderboards {
   memeLords: CommunityLeaderEntry[]
   reactionsReceived: CommunityLeaderEntry[]
   voice: CommunityLeaderEntry[]
+  reactionsGiven: CommunityLeaderEntry[]
+}
+
+export interface CommunityActivity {
+  name: string
+  minutes: number
+  players: number
 }
 
 export interface Community {
@@ -37,6 +45,13 @@ export interface Community {
   prevLabel: string
   metrics: CommunityMetrics
   leaderboards: CommunityLeaderboards
+  // topEmotes, channels and topActivities follow the range window.
+  topEmotes: EmojiStat[]
+  channels: ChannelActivity[]
+  topActivities: CommunityActivity[]
+  // The heatmap always covers the last heatmapDays guild-local days, whatever the range.
+  heatmap: HeatmapCell[]
+  heatmapDays: number
 }
 
 export const communityApi = {
