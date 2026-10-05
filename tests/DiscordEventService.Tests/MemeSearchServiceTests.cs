@@ -524,6 +524,118 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         Assert.Empty(await ReadSearchLogAsync());
     }
 
+    [Fact]
+    public async Task SearchPageAsync_ConsecutivePages_ContinueWithNoOverlapNoGapAndOneTotal()
+    {
+        await SeedPagingCorpusAsync();
+
+        List<MemeSearchPage> pages = [];
+        for (var offset = 0; offset < 9; offset += 3)
+            pages.Add(await RunSearchPageAsync("zyrafa", offset, limit: 3));
+
+        // 7 attachments, 8 annotations: the total counts attachments, and is the same on every page.
+        Assert.All(pages, p => Assert.Equal(7, p.Total));
+        // Newest message first. 303 and 304 share a message and a score: only the attachment id
+        // orders them, and the page break falls between them.
+        Assert.Equal([301UL, 302UL, 303UL], pages[0].Hits.Select(h => h.AttachmentDiscordId));
+        Assert.Equal([304UL, 305UL, 306UL], pages[1].Hits.Select(h => h.AttachmentDiscordId));
+        Assert.Equal([307UL], pages[2].Hits.Select(h => h.AttachmentDiscordId));
+        Assert.Equal(pages[0].Hits[2].Score, pages[1].Hits[0].Score);
+        Assert.Equal(pages[0].Hits[2].MessageCreatedAtUtc, pages[1].Hits[0].MessageCreatedAtUtc);
+    }
+
+    [Fact]
+    public async Task SearchPageAsync_OffsetPastTheEnd_ReturnsNoHitsAndTotalZero()
+    {
+        await SeedPagingCorpusAsync();
+
+        var page = await RunSearchPageAsync("zyrafa", offset: 50, limit: 3);
+
+        Assert.Empty(page.Hits);
+        Assert.Equal(0, page.Total);
+    }
+
+    [Fact]
+    public async Task SearchAsync_FirstPage_LogsOffsetZero()
+    {
+        await SeedPagingCorpusAsync();
+
+        await RunSearchAsync("zyrafa", limit: 3);
+
+        var row = Assert.Single(await ReadSearchLogAsync());
+        Assert.Equal(0, row.ResultOffset);
+        Assert.Equal([1, 2, 3], row.Results.Select(r => r.Rank));
+    }
+
+    [Fact]
+    public async Task SearchPageAsync_PageTurn_LogsItsOffsetAndAbsoluteRanks()
+    {
+        await SeedPagingCorpusAsync();
+        var caller = new MemeSearchCaller(MemeSearchSource.PageButton, ChannelDiscordId: 77UL, UserDiscordId: 42UL);
+
+        var page = await RunSearchPageAsync("zyrafa", offset: 3, limit: 3, caller);
+
+        var row = Assert.Single(await ReadSearchLogAsync());
+        Assert.Equal(MemeSearchSource.PageButton, row.Source);
+        Assert.Equal(77UL, row.ChannelDiscordId);
+        Assert.Equal(42UL, row.UserDiscordId);
+        Assert.Equal(3, row.ResultOffset);
+        Assert.Equal(3, row.ResultLimit);
+        Assert.Equal(3, row.ResultCount);
+        Assert.Equal([4, 5, 6], row.Results.Select(r => r.Rank));
+        Assert.Equal(page.Hits.Select(h => h.AttachmentDiscordId), row.Results.Select(r => r.AttachmentDiscordId));
+    }
+
+    // 7 attachments with the same annotation text, so every score is equal and only the message
+    // time and the attachment id order them. 303 and 304 are two attachments of one message: a
+    // real tie on score and time. 305 has a second annotation: one meme, two matching rows.
+    private async Task SeedPagingCorpusAsync()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var (attachmentId, daysAgo) in new[] { (301UL, 1), (302UL, 2), (304UL, 3), (305UL, 4), (306UL, 5), (307UL, 6) })
+        {
+            var meme = await SeedIndexedMemeAsync(
+                attachmentId, 4000UL + attachmentId, "Żyrafa je liście", "", ["żyrafa"],
+                messageCreatedAtUtc: now.AddDays(-daysAgo));
+
+            if (attachmentId == 304UL)
+                await SeedSecondAttachmentAsync(meme, 303UL, "Żyrafa je liście", ["żyrafa"]);
+            if (attachmentId == 305UL)
+                await AddAnnotationAsync(meme, "Żyrafa je liście", "", ["żyrafa"], modelId: "model/second");
+        }
+    }
+
+    private async Task SeedSecondAttachmentAsync(MemeIndexEntity first, ulong attachmentDiscordId, string descriptionPl, string[] tags)
+    {
+        var meme = new MemeIndexEntity
+        {
+            MessageId = first.MessageId,
+            GuildDiscordId = first.GuildDiscordId,
+            ChannelDiscordId = first.ChannelDiscordId,
+            MessageDiscordId = first.MessageDiscordId,
+            AttachmentDiscordId = attachmentDiscordId,
+            FileName = $"meme-{attachmentDiscordId}.png",
+            FileSizeBytes = 1234,
+            ContentType = "image/png",
+            ContentHash = $"hash-{attachmentDiscordId}",
+            Status = MemeIndexStatus.Indexed
+        };
+        _db.MemeIndex.Add(meme);
+        await _db.SaveChangesAsync();
+        await AddAnnotationAsync(meme, descriptionPl, "", tags);
+    }
+
+    private async Task<MemeSearchPage> RunSearchPageAsync(
+        string query, int offset, int limit, MemeSearchCaller? caller = null)
+    {
+        await using var db = NewContext();
+        var log = MemeSearchTestServices.NewLogWriter(fixture.ConnectionString);
+        var page = await new MemeSearchService(db, log)
+            .SearchPageAsync(GuildDiscordId, query, offset, limit, caller ?? MemeSearchTestServices.AnyCaller, CancellationToken.None);
+        await log.LastWrite;
+        return page;
+    }
+
     private async Task<List<MemeSearchLogEntity>> ReadSearchLogAsync()
     {
         await using var db = NewContext();

@@ -5,7 +5,10 @@ public enum MemeSearchSource
 {
     SlashCommand = 0,
     AssistantTool = 1,
-    Other = 2
+    Other = 2,
+
+    // A click on Następne / Poprzednie under a /meme answer (#391).
+    PageButton = 3,
 }
 
 // One row per meme search (#384): what was typed, by whom, and the settings in force. The ranked
@@ -36,6 +39,8 @@ public class MemeSearchLogEntity
     // nothing else is left (#380).
     public string[] RankTokens { get; set; } = [];
 
+    // Where the page starts (#391): 0 for a first page. Rows from before the column have 0.
+    public int ResultOffset { get; set; }
     public int ResultLimit { get; set; }
     public int ResultCount { get; set; }
 
@@ -55,7 +60,8 @@ public class MemeSearchLogEntity
     public List<MemeSearchLogResultEntity> Results { get; set; } = [];
 }
 
-// One returned hit of a logged search, in rank order (1 = first).
+// One returned hit of a logged search, in rank order. Rank is absolute: the first hit of a page
+// at offset 5 has rank 6 (#391).
 public class MemeSearchLogResultEntity
 {
     public Guid Id { get; set; }

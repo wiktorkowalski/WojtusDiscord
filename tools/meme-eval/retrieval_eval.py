@@ -103,7 +103,7 @@ def rank_sql(index, guild, target, query, rank_tokens, filter_tokens, trigram_we
     raw = lit(query)
     return f"""
 SELECT {index}, COALESCE((SELECT r FROM (
-  SELECT attachment_discord_id, row_number() OVER (ORDER BY score DESC, message_created_at_utc DESC) AS r
+  SELECT attachment_discord_id, row_number() OVER (ORDER BY score DESC, message_created_at_utc DESC, attachment_discord_id) AS r
   FROM (
     SELECT DISTINCT ON (m.attachment_discord_id)
            m.attachment_discord_id,
@@ -120,7 +120,7 @@ SELECT {index}, COALESCE((SELECT r FROM (
            OR word_similarity(public.f_unaccent({raw}), a.search_text) >= {TRIGRAM_THRESHOLD})
     ORDER BY m.attachment_discord_id, score DESC, a.indexed_at_utc DESC, a.model_id, a.prompt_version
   ) AS best
-  ORDER BY score DESC, message_created_at_utc DESC
+  ORDER BY score DESC, message_created_at_utc DESC, attachment_discord_id
   LIMIT {RANK_DEPTH}
 ) AS ranked WHERE attachment_discord_id = {target}), 0);"""
 

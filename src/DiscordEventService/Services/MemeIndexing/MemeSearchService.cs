@@ -21,6 +21,10 @@ public sealed record MemeSearchHit(
     DateTime MessageCreatedAtUtc,
     double Score);
 
+// One page of a search (#391). Total is the number of matching memes on every page, not the
+// number shown. A page past the end has no hits and Total 0: the count comes with the rows.
+public sealed record MemeSearchPage(List<MemeSearchHit> Hits, int Total);
+
 public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter searchLog)
 {
     public const int DefaultLimit = 5;
@@ -57,7 +61,12 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
     // is written after this method returns (MemeSearchLogWriter), so it adds no wait and its
     // failure cannot reach the caller. A search that throws leaves no row.
     public async Task<List<MemeSearchHit>> SearchAsync(
-        ulong guildId, string query, int limit, MemeSearchCaller caller, CancellationToken cancellationToken)
+        ulong guildId, string query, int limit, MemeSearchCaller caller, CancellationToken cancellationToken) =>
+        (await SearchPageAsync(guildId, query, offset: 0, limit, caller, cancellationToken)).Hits;
+
+    // The same search from a given offset, with the total (#391). Each page is its own row in the log.
+    public async Task<MemeSearchPage> SearchPageAsync(
+        ulong guildId, string query, int offset, int limit, MemeSearchCaller caller, CancellationToken cancellationToken)
     {
         var searchedAtUtc = DateTime.UtcNow;
         var stopwatch = Stopwatch.StartNew();
@@ -73,11 +82,11 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         // A query with no word characters runs no SQL. It is still a search, and is logged as one.
         var rows = tokens.Count == 0
             ? []
-            : await QueryAsync(guildId, query, tokens, rankTokens, limit, cancellationToken);
+            : await QueryAsync(guildId, query, tokens, rankTokens, offset, limit, cancellationToken);
 
-        searchLog.Write(NewLogRow(searchedAtUtc, guildId, query, limit, caller, tokens, rankTokens, rows, stopwatch.Elapsed));
+        searchLog.Write(NewLogRow(searchedAtUtc, guildId, query, offset, limit, caller, tokens, rankTokens, rows, stopwatch.Elapsed));
 
-        return rows
+        var hits = rows
             .Select(r => new MemeSearchHit(
                 (ulong)r.ChannelDiscordId,
                 (ulong)r.MessageDiscordId,
@@ -89,10 +98,12 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
                 r.MessageCreatedAtUtc,
                 r.Score))
             .ToList();
+
+        return new MemeSearchPage(hits, rows.Count > 0 ? (int)rows[0].TotalCount : 0);
     }
 
     private Task<List<MemeSearchRow>> QueryAsync(
-        ulong guildId, string query, List<string> tokens, List<string> rankTokens, int limit, CancellationToken cancellationToken)
+        ulong guildId, string query, List<string> tokens, List<string> rankTokens, int offset, int limit, CancellationToken cancellationToken)
     {
         // OR not AND: the 'simple' config keeps stopwords, so AND-semantics would
         // zero out natural-language queries. Tokens are alphanumeric-only, so the
@@ -113,6 +124,11 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         // from the row that earned it — a weak or wrong annotation can add a hit, never hide one.
         // LIMIT applies after that, to attachments.
         //
+        // total_count is a window over the outer rows, before LIMIT: it counts attachments, the
+        // same on every page (#391). attachment_discord_id ends the outer ORDER BY because paging
+        // needs a total order: two attachments of one message can tie on score and time, and a
+        // tie may come back in a different order on the next page.
+        //
         // model_id, prompt_version, ts_rank and trigram_similarity are for the search log (#384):
         // the winning annotation and the two parts of its score. Nothing in the ranking reads them.
         return db.Database.SqlQuery<MemeSearchRow>($"""
@@ -128,7 +144,8 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
                    model_id,
                    prompt_version,
                    ts_rank,
-                   trigram_similarity
+                   trigram_similarity,
+                   count(*) OVER () AS total_count
             FROM (
                 SELECT DISTINCT ON (m.attachment_discord_id)
                        m.channel_discord_id,
@@ -155,8 +172,8 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
                        OR word_similarity(public.f_unaccent({query}), a.search_text) >= {TrigramThreshold})
                 ORDER BY m.attachment_discord_id, score DESC, a.indexed_at_utc DESC, a.model_id, a.prompt_version
             ) AS best
-            ORDER BY score DESC, message_created_at_utc DESC
-            LIMIT {limit}
+            ORDER BY score DESC, message_created_at_utc DESC, attachment_discord_id
+            LIMIT {limit} OFFSET {offset}
             """).ToListAsync(cancellationToken);
     }
 
@@ -164,6 +181,7 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         DateTime searchedAtUtc,
         ulong guildId,
         string query,
+        int offset,
         int limit,
         MemeSearchCaller caller,
         List<string> tokens,
@@ -180,6 +198,7 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
             Query = query,
             Tokens = [.. tokens],
             RankTokens = [.. rankTokens],
+            ResultOffset = offset,
             ResultLimit = limit,
             ResultCount = rows.Count,
             DurationMs = duration.TotalMilliseconds,
@@ -189,7 +208,7 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
             Results = rows
                 .Select((row, index) => new MemeSearchLogResultEntity
                 {
-                    Rank = index + 1,
+                    Rank = offset + index + 1,
                     AttachmentDiscordId = (ulong)row.AttachmentDiscordId,
                     ModelId = row.ModelId,
                     PromptVersion = row.PromptVersion,
@@ -228,5 +247,6 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         string ModelId,
         string PromptVersion,
         double TsRank,
-        double TrigramSimilarity);
+        double TrigramSimilarity,
+        long TotalCount);
 }

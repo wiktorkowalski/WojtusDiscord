@@ -24,7 +24,8 @@ public sealed class MemeCommand(MemeSearchService searchService, ILogger<MemeCom
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "/meme failed for query {Query} in guild {GuildId}", query, ctx.Guild?.Id);
+            // No query text here either: what a person typed stays out of the application log.
+            logger.LogError(ex, "/meme failed in guild {GuildId}", ctx.Guild?.Id);
             await ctx.EditResponseAsync("Coś poszło nie tak przy szukaniu — spróbuj jeszcze raz.");
         }
     }
@@ -38,52 +39,16 @@ public sealed class MemeCommand(MemeSearchService searchService, ILogger<MemeCom
         }
 
         var caller = new MemeSearchCaller(MemeSearchSource.SlashCommand, ctx.Channel.Id, ctx.User.Id);
-        var hits = await searchService.SearchAsync(
-            ctx.Guild.Id, query, MemeSearchService.DefaultLimit, caller, CancellationToken.None);
+        var page = await searchService.SearchPageAsync(
+            ctx.Guild.Id, query, offset: 0, MemePageView.PageSize, caller, CancellationToken.None);
 
         // No query text here: meme_search_log holds it, with the ranked hits (#384).
         logger.LogInformation(
-            "/meme by {UserId} in guild {GuildId}: {HitCount} hits",
-            ctx.User.Id, ctx.Guild.Id, hits.Count);
+            "/meme by {UserId} in guild {GuildId}: {HitCount} hits of {TotalCount}",
+            ctx.User.Id, ctx.Guild.Id, page.Hits.Count, page.Total);
 
-        if (hits.Count == 0)
-        {
-            await ctx.EditResponseAsync("Nic nie znalazłem dla tego zapytania.");
-            return;
-        }
-
-        // Bare URLs render as pills (markdown links never do); message links
-        // produce pills, not unfurled preview embeds. Descriptions are
-        // model-generated text landing in plain content — meme OCR could
-        // contain @everyone — so all mentions are explicitly disarmed.
-        var lines = hits.Select(h => $"{JumpLink(ctx.Guild.Id, h)} {HitLabel(h)}");
-
-        await ctx.EditResponseAsync(new DiscordMessageBuilder()
-            .WithContent(string.Join("\n", lines))
-            .WithAllowedMentions(Mentions.None));
+        // The text and the paging buttons are MemePageView's, shared with the button handler (#391).
+        await ctx.EditResponseAsync(
+            MemePageView.Render(ctx.Guild.Id, query, offset: 0, page).ApplyTo(new DiscordMessageBuilder()));
     }
-
-    private static string JumpLink(ulong guildId, MemeSearchHit hit) =>
-        $"https://discord.com/channels/{guildId}/{hit.ChannelDiscordId}/{hit.MessageDiscordId}";
-
-    // The "why it matched" label: tags (short, keyword-y, and the A-weighted
-    // search field — they usually contain the matched term). Rows without tags
-    // fall back to the description's first sentence, then the file name.
-    private static string HitLabel(MemeSearchHit hit)
-    {
-        if (hit.Tags.Length > 0)
-            return Truncate(string.Join(" · ", hit.Tags), 120);
-
-        var text = (hit.DescriptionPl ?? hit.DescriptionEn ?? hit.FileName).ReplaceLineEndings(" ");
-        return Truncate(FirstSentence(text), 80);
-    }
-
-    private static string FirstSentence(string text)
-    {
-        var end = text.IndexOf(". ", StringComparison.Ordinal);
-        return end < 0 ? text : text[..(end + 1)];
-    }
-
-    private static string Truncate(string text, int maxLength) =>
-        text.Length <= maxLength ? text : text[..(maxLength - 1)] + "…";
 }

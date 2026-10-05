@@ -61,7 +61,7 @@ public sealed class InteractionMentionSuppressionTests
     public void MessageBuilder_SuppressesMentionsByDefault()
     {
         // The same default is what makes the repo's existing WithAllowedMentions(Mentions.None)
-        // calls (DiscordTurnSurface, MemeCommand, ConfirmationService) declarations rather than
+        // calls (DiscordTurnSurface, ConfirmationService) and MemePageView's AddMentions declarations rather than
         // mechanism — worth pinning here so a library change surfaces in one place.
         var untouched = new DiscordMessageBuilder().WithContent("@everyone");
 

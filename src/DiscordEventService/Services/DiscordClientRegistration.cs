@@ -81,6 +81,8 @@ internal static class DiscordClientRegistration
             .AddEventHandlers<MessageEventHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<ConversationEventHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<ConfirmationComponentHandler>(ServiceLifetime.Scoped)
+            // #391: outside ConfigureCommands on purpose. Without /meme no such button exists.
+            .AddEventHandlers<MemePageComponentHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<ReactionEventHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<PollEventHandler>(ServiceLifetime.Scoped)
             .AddEventHandlers<PinEventHandler>(ServiceLifetime.Scoped)

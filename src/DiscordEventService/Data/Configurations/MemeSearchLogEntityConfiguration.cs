@@ -13,6 +13,10 @@ internal sealed class MemeSearchLogEntityConfiguration : IEntityTypeConfiguratio
         // "The latest searches" is the one query this table exists for.
         builder.HasIndex(s => s.SearchedAtUtc);
 
+        // Keeps the model equal to the column that AddMemeSearchLogResultOffset created (#391):
+        // the default in its AddColumn is what gave the rows from before paging their 0.
+        builder.Property(s => s.ResultOffset).HasDefaultValue(0);
+
         builder.Property(s => s.ZeroResults)
             .HasComputedColumnSql("result_count = 0", stored: true);
     }
