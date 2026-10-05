@@ -1,4 +1,5 @@
 import { fetchApi, toQuery } from './client'
+import type { ChannelActivity, EmojiStat, HeatmapCell } from './statsApi'
 
 export type CommunityRange = 'week' | 'month' | 'all'
 
@@ -28,7 +29,14 @@ export interface CommunityLeaderboards {
   topChatters: CommunityLeaderEntry[]
   memeLords: CommunityLeaderEntry[]
   reactionsReceived: CommunityLeaderEntry[]
+  reactionsGiven: CommunityLeaderEntry[]
   voice: CommunityLeaderEntry[]
+}
+
+export interface CommunityActivity {
+  name: string
+  minutes: number
+  players: number
 }
 
 export interface Community {
@@ -37,6 +45,13 @@ export interface Community {
   prevLabel: string
   metrics: CommunityMetrics
   leaderboards: CommunityLeaderboards
+  topEmotes: EmojiStat[]
+  channels: ChannelActivity[]
+  topActivities: CommunityActivity[]
+  /** Sparse: a missing weekday × hour cell means 0. Fixed window, independent of `range`. */
+  heatmap: HeatmapCell[]
+  /** Length of the heatmap window in days. */
+  heatmapDays: number
 }
 
 export const communityApi = {
