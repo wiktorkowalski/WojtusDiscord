@@ -75,8 +75,8 @@ internal sealed class MemeDashboardLimits : IDisposable
 
     public SemaphoreSlim SearchGate { get; } = new(MaxConcurrentSearches, MaxConcurrentSearches);
 
-    // A search takes a permit before it asks for a slot of SearchGate. No queue: over the
-    // limit a search is turned away at once.
+    // A search takes a permit after it has a slot of SearchGate: a request the gate turns away
+    // spends none. No queue: over the limit a search is turned away at once.
     public RateLimiter SearchBudget => _searchBudget.Value;
 
     // One refresh at a time, with a queue that has a limit. A request that waited reads the

@@ -631,8 +631,25 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         Assert.Single(first!.Hits);
         Assert.Single(second!.Hits);
         Assert.Null(overTheLimit);
-        // And it took no slot.
+        // The slot it held for the check is free again.
         Assert.Equal(MemeDashboardLimits.MaxConcurrentSearches, limits.SearchGate.CurrentCount);
+    }
+
+    // The budget is one for every caller: requests the gate turns away must not use it up.
+    [Fact]
+    public async Task SearchAsync_TurnedAwayByTheGate_SpendsNoPermitOfTheMinute()
+    {
+        await _data.AddIndexedAsync(1UL, a => a.Tags = ["rakieta"]);
+        using var limits = new MemeDashboardLimits { SearchesPerMinute = 1 };
+        for (var i = 0; i < MemeDashboardLimits.MaxConcurrentSearches; i++)
+            await limits.SearchGate.WaitAsync();
+
+        var busy = await NewReader(limits: limits).SearchAsync("rakieta", 5, CancellationToken.None);
+        limits.SearchGate.Release(MemeDashboardLimits.MaxConcurrentSearches);
+        var free = await NewReader(limits: limits).SearchAsync("rakieta", 5, CancellationToken.None);
+
+        Assert.Null(busy);
+        Assert.Single(free!.Hits);
     }
 
     // The wait for an answer that another request computes has an end: then "busy", not a longer queue.

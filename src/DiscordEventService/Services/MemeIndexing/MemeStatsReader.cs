@@ -208,19 +208,20 @@ internal sealed class MemeStatsReader(
 
     // The search scans every annotation and the endpoint has no auth: a fixed number may run
     // per minute and a fixed number at one time, and one more is turned away at once instead
-    // of queued. The rate comes first: a search over it must not take a slot.
+    // of queued. The slot comes first: the budget of the minute counts only searches that had
+    // a slot, so requests the gate turns away cannot use it up for every caller.
     public async Task<MemeSearchResultDto?> SearchAsync(string query, int limit, CancellationToken cancellationToken)
     {
-        // A permit of a fixed window does not come back when the lease is disposed.
-        using var permit = limits.SearchBudget.AttemptAcquire();
-        if (!permit.IsAcquired)
-            return null;
-
         if (!await limits.SearchGate.WaitAsync(TimeSpan.Zero, cancellationToken))
             return null;
 
         try
         {
+            // A permit of a fixed window does not come back when the lease is disposed.
+            using var permit = limits.SearchBudget.AttemptAcquire();
+            if (!permit.IsAcquired)
+                return null;
+
             return await SearchCoreAsync(query, limit, cancellationToken);
         }
         finally

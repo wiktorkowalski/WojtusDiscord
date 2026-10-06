@@ -206,7 +206,7 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
     }
 
     // #408: the slots cap how many searches run at one time, not how many a minute.
-    // The searches run one after another, so no slot is ever taken: the 429 is the rate's.
+    // The searches run one after another, so every slot is free for each: the 429 is the rate's.
     [Fact]
     public async Task Search_OverTheSearchesOfTheMinute_Returns429WithTheErrorShape()
     {
