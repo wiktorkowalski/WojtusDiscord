@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Infrastructure;
 using DiscordEventService.Jobs;
@@ -64,6 +65,10 @@ internal sealed class SocketLifecycleHandler(
     public async Task HandleEventAsync(DiscordClient sender, GuildDownloadCompletedEventArgs e)
     {
         BotMetrics.GuildDownloadCompleted();
+
+        // Boot to a filled gateway cache. Only the first cold connect of the process is kept.
+        BotMetrics.BootPhaseFinished("guild_download", DateTime.UtcNow - BootClock.StartedAtUtc);
+
         var correlationId = Guid.NewGuid();
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
@@ -90,8 +95,10 @@ internal sealed class SocketLifecycleHandler(
                     logger.LogInformation(
                         "GuildDownloadCompleted: gap {GapDuration:c} below threshold, running quick-sync only",
                         gap);
+                    var quickSyncStartedAt = Stopwatch.GetTimestamp();
                     foreach (var guildId in e.Guilds.Keys)
                         await quickSyncService.SyncAsync(guildId);
+                    BotMetrics.BootPhaseFinished("quick_sync", Stopwatch.GetElapsedTime(quickSyncStartedAt));
                     return;
                 }
 

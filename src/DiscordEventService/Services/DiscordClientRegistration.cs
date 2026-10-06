@@ -128,6 +128,10 @@ internal static class DiscordClientRegistration
             {
                 extension.AddProcessor(new SlashCommandProcessor());
                 extension.AddCommands([typeof(MemeCommand)], commandGuild);
+
+                // The one hook for every command: count and time it without an edit in each.
+                extension.CommandExecuted += (_, e) => CommandMetrics.RecordAsync(e.Context, exception: null);
+                extension.CommandErrored += (_, e) => CommandMetrics.RecordAsync(e.Context, e.Exception);
             }, new CommandsConfiguration { RegisterDefaultCommandProcessors = false });
         }
     }

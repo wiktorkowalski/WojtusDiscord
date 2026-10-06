@@ -1,3 +1,4 @@
+using DiscordEventService.Infrastructure;
 using DSharpPlus.Entities;
 
 namespace DiscordEventService.Services.Pipeline;
@@ -31,6 +32,7 @@ internal sealed class FkResolver(
         if (guild.IsSuccess && channel.IsSuccess && user.IsSuccess)
             return ResolvedFks.Resolved(guild.Value, channel.Value, user.Value);
 
+        CountUnresolved(guild.IsSuccess, channel.IsSuccess, user.IsSuccess);
         ctx.Logger.LogError(
             "Could not resolve required FKs for {LogContext}: guild resolved {GuildResolved}, channel resolved {ChannelResolved}, user resolved {UserResolved}; skipping insert",
             logContext ?? "no context", guild.IsSuccess, channel.IsSuccess, user.IsSuccess);
@@ -60,6 +62,7 @@ internal sealed class FkResolver(
         if (guild.IsSuccess && channel.IsSuccess)
             return ResolvedChannelFks.Resolved(guild.Value, channel.Value);
 
+        CountUnresolved(guild.IsSuccess, channelResolved: channel.IsSuccess);
         ctx.Logger.LogError(
             "Could not resolve required FKs for {LogContext}: guild resolved {GuildResolved}, channel resolved {ChannelResolved}; skipping insert",
             logContext ?? "no context", guild.IsSuccess, channel.IsSuccess);
@@ -86,6 +89,7 @@ internal sealed class FkResolver(
         if (guild.IsSuccess)
             return ResolvedGuildFk.Resolved(guild.Value);
 
+        CountUnresolved(guild.IsSuccess);
         ctx.Logger.LogError(
             "Could not resolve required FKs for {LogContext}: guild resolved {GuildResolved}; skipping insert",
             logContext ?? "no context", guild.IsSuccess);
@@ -115,12 +119,25 @@ internal sealed class FkResolver(
         if (guild.IsSuccess && user.IsSuccess)
             return ResolvedUserFks.Resolved(guild.Value, user.Value);
 
+        CountUnresolved(guild.IsSuccess, userResolved: user.IsSuccess);
         ctx.Logger.LogError(
             "Could not resolve required FKs for {LogContext}: guild resolved {GuildResolved}, user resolved {UserResolved}; skipping insert",
             logContext ?? "no context", guild.IsSuccess, user.IsSuccess);
         await ctx.RecordFailureAsync(new InvalidOperationException(
             $"Required FK not resolved ({logContext ?? "no context"}): guildResolved={guild.IsSuccess} userResolved={user.IsSuccess}"));
         return ResolvedUserFks.Failed;
+    }
+
+    // One count per key that did not resolve. A channel skipped because its guild failed
+    // counts as channel too: that insert was lost for the channel key as well.
+    private static void CountUnresolved(bool guildResolved, bool channelResolved = true, bool userResolved = true)
+    {
+        if (!guildResolved)
+            BotMetrics.FkNotResolved("guild");
+        if (!channelResolved)
+            BotMetrics.FkNotResolved("channel");
+        if (!userResolved)
+            BotMetrics.FkNotResolved("user");
     }
 
     // A failed guild must not flow Guid.Empty into a fresh channel row's GuildId (#292);

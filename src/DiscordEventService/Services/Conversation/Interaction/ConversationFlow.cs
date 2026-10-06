@@ -182,7 +182,8 @@ internal sealed class ConversationFlow(
         // The deltas after the last tool round are the answer.
         await renderer.CompleteTurnAsync();
 
-        logger.LogInformation("Conversation reply for {Author} sent {MessageCount} message(s)",
+        // Debug: the Information line of a turn is the turn log of ConversationService.
+        logger.LogDebug("Conversation reply for {Author} sent {MessageCount} message(s)",
             context.InvokerDisplayName, renderer.MessageCount);
     }
 

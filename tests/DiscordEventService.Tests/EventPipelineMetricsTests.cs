@@ -72,6 +72,21 @@ public sealed class EventPipelineMetricsTests(PostgresFixture fixture) : IClassF
         Assert.Equal(2, metrics.Of(Failures, "event_type", eventType).Count);
     }
 
+    [Fact]
+    public async Task HandledEvent_MovesTheLastEventGaugesToNow()
+    {
+        await using var services = BuildServices();
+        using var metrics = new MetricsCapture();
+        var before = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        // "Voice..." is the prefix of the voice kind; no other test of the suite sends one.
+        await ExecuteAsync(services, $"VoiceMetricsTest-{Guid.NewGuid():N}", _ => Task.CompletedTask);
+        metrics.Observe();
+
+        Assert.True(Assert.Single(metrics.Of("wojtus.last_event.timestamp")).Value >= before);
+        Assert.True(Assert.Single(metrics.Of("wojtus.last_event.by_kind.timestamp", "kind", "voice")).Value >= before);
+    }
+
     private static string NewEventType() => $"MetricsTest-{Guid.NewGuid():N}";
 
     private static Task ExecuteAsync(ServiceProvider services, string eventType, Func<EventContext, Task> handler) =>

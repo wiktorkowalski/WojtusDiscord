@@ -26,6 +26,28 @@ public sealed class ConversationToolsetTests
         Assert.Contains("Error running tool", result.Result?.ToString());
     }
 
+    // query_database hands a failed query to the model as text. The model must get that text
+    // unchanged, and the call must not be counted as "ok".
+    [Fact]
+    public async Task InvokeAsync_ToolThrowsSoftFailure_ReturnsItsTextAndCountsAnError()
+    {
+        var name = $"soft_{Guid.NewGuid():N}";
+        var log = new RecordingLogger();
+        var tool = AIFunctionFactory.Create(
+            (Func<string>)(() => throw new ToolSoftFailureException("SQL error [42601]: syntax error")),
+            new AIFunctionFactoryOptions { Name = name, Description = "fails softly" });
+        var toolset = new ConversationToolset([tool], log.For<ConversationToolset>());
+        using var metrics = new MetricsCapture();
+
+        var result = await toolset.InvokeAsync(
+            new FunctionCallContent("call_1", name, new Dictionary<string, object?>()), CancellationToken.None);
+
+        Assert.Equal("SQL error [42601]: syntax error", result.Result?.ToString());
+        Assert.Equal("error", Assert.Single(metrics.Of("wojtus.conversation.tool.calls", "tool", name)).Tags["outcome"]);
+        // The tool logged its own failure: the toolset adds no Warning.
+        Assert.DoesNotContain(log.Entries, e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Warning);
+    }
+
     [Fact]
     public async Task InvokeAsync_UnknownTool_ReturnsErrorString()
     {

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Endpoints;
@@ -257,6 +258,9 @@ var app = builder.Build();
     // state as /health.
     BotMetrics.SetBuildInfo(app.Services.GetRequiredService<BuildInfo>());
     BotMetrics.SetGatewayStateReader(() => HealthResponseWriter.ReadGatewayState(discordClientAccessor));
+    // Memory only: the voice states of the gateway cache. BotMetrics guards the read.
+    BotMetrics.SetVoiceMemberReader(() => discordClient.Guilds.Sum(
+        guild => guild.Value.VoiceStates.Count(state => state.Value.Channel is not null)));
     StartupValidator.ValidateChildContainer(
         discordClient.ServiceProvider,
         app.Services.GetRequiredService<ILogger<Program>>());
@@ -277,18 +281,26 @@ if (dbOptions.AutoMigrate)
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
+    var migrateStartedAt = Stopwatch.GetTimestamp();
     await db.Database.MigrateAsync();
+    BotMetrics.BootPhaseFinished("migrate", Stopwatch.GetElapsedTime(migrateStartedAt));
 }
 
 // #288: must run before app.Run() starts the Hangfire server, so dead chain jobs are deleted
 // before any worker can re-fetch them.
+var sweepStartedAt = Stopwatch.GetTimestamp();
 await app.Services.GetRequiredService<StartupBackfillSweep>().SweepAsync();
+BotMetrics.BootPhaseFinished("backfill_sweep", Stopwatch.GetElapsedTime(sweepStartedAt));
 
 // Serve the bundled dashboard SPA (Vite build output in wwwroot). Must precede
 // the route-mapping below; the SPA fallback is registered LAST so it never
 // swallows /api, /health, /metrics, or /hangfire.
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// One Information line per request to the API, with the trace id. After the static files (they
+// answer before this runs) and inside the request activity.
+app.UseMiddleware<RequestLogMiddleware>();
 
 app.MapControllers();
 

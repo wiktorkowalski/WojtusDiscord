@@ -65,6 +65,9 @@ internal static class TelemetryRegistration
         if (!telemetry.HasValidTracesEndpoint || (!conversation.LangfuseConfigured && !telemetry.TracesConfigured))
             return;
 
+        // An export that fails is silent without this: see TraceExportFailureListener.
+        services.AddHostedService<TraceExportFailureListener>();
+
         services.AddOpenTelemetry().WithTracing(tracing =>
         {
             // langfuse.environment separates dev and prod traces inside the one shared

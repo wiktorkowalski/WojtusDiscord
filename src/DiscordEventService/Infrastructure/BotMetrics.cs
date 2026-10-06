@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using Hangfire.Storage.Monitoring;
 
@@ -41,6 +42,13 @@ internal static class BotMetrics
         "wojtus.event.raw.size", unit: "By", description: "Size of the JSON stored in raw_event_logs.",
         advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = SizeBytes });
 
+    private static readonly Counter<long> TypingThrottled = Meter.CreateCounter<long>(
+        "wojtus.typing.throttled", description: "TypingStarted events the 10 s throttle dropped before the pipeline.");
+    private static readonly Counter<long> Upserts = Meter.CreateCounter<long>(
+        "wojtus.upserts", description: "Entity upserts (DbSetUpsertExtensions.UpsertAsync), by entity and result.");
+    private static readonly Counter<long> FkUnresolved = Meter.CreateCounter<long>(
+        "wojtus.fk.unresolved", description: "Required foreign keys FkResolver could not resolve, by entity.");
+
     // Failures.
     private static readonly Counter<long> EventFailures = Meter.CreateCounter<long>(
         "wojtus.event.failures", description: "Failures handed to FailedEventService (hard and soft).");
@@ -83,6 +91,12 @@ internal static class BotMetrics
     private static readonly Counter<long> UsageAlerts = Meter.CreateCounter<long>(
         "wojtus.conversation.usage_alerts", description: "Cost-cap alerts fired, by cap.");
 
+    // Slash commands (CommandMetrics).
+    private static readonly Counter<long> CommandExecutions = Meter.CreateCounter<long>(
+        "wojtus.command.executions", description: "Slash command executions, by command and outcome.");
+    private static readonly Histogram<double> CommandDuration = Seconds(
+        "wojtus.command.duration", "Time from the creation of the interaction to the end of the command.", FastSeconds);
+
     // Meme search and indexing.
     private static readonly Counter<long> MemeSearches = Meter.CreateCounter<long>(
         "wojtus.meme.searches", description: "Meme searches, by caller kind.");
@@ -104,6 +118,9 @@ internal static class BotMetrics
     private static readonly Counter<long> MemeImportItems = Meter.CreateCounter<long>(
         "wojtus.meme.import.items", description: "Meme annotation import items, by outcome.");
 
+    private static readonly Counter<long> MemeDashboardRejections = Meter.CreateCounter<long>(
+        "wojtus.meme.dashboard.rejections", description: "Dashboard meme searches answered 429, by the cap they reached.");
+
     // Backfill and jobs.
     private static readonly Counter<long> BackfillRuns = Meter.CreateCounter<long>(
         "wojtus.backfill.runs", description: "Backfill job runs, by type and outcome.");
@@ -118,6 +135,13 @@ internal static class BotMetrics
     private static readonly Counter<long> HealthCheckWebhookFailures = Meter.CreateCounter<long>(
         "wojtus.healthcheck.webhook.failures", description: "Health check webhook sends that failed.");
 
+    private static readonly Counter<long> OrphanReplayRows = Meter.CreateCounter<long>(
+        "wojtus.orphan_replay.rows", description: "Raw events an orphan replay run looked at, by result (scanned, inserted, skipped).");
+
+    // Trace export (TraceExportFailureListener).
+    private static readonly Counter<long> TraceExportFailures = Meter.CreateCounter<long>(
+        "wojtus.trace.export.failures", description: "Errors the OTLP trace exporter reported (collector not reachable, export failed).");
+
     // Log events (LogEventCounterProvider).
     private static readonly Counter<long> LogEvents = Meter.CreateCounter<long>(
         "wojtus.log.events", description: "Log events that passed the log level filter, by level.");
@@ -126,7 +150,24 @@ internal static class BotMetrics
     private static readonly KeyValuePair<string, object?>[] LogLevelTags =
         [.. Enum.GetValues<LogLevel>().Select(level => Tag("level", level.ToString().ToLowerInvariant()))];
 
+    // The kinds of the last-event gauge: a fixed mapping from the event type, see EventKindOf.
+    private static readonly string[] EventKinds = ["message", "presence", "voice", "other"];
+    private static readonly KeyValuePair<string, object?>[] EventKindTags =
+        [.. EventKinds.Select(kind => Tag("kind", kind))];
+
+    // Unix seconds of the last gateway event, overall and per kind. 0 = none since boot.
+    private static readonly long[] LastEventUnixSecondsByKind = new long[EventKinds.Length];
+    private static long _lastEventUnixSeconds;
+
+    // What the last run of HealthCheckJob measured, keyed by check (and by event type for the
+    // one check that runs per type). Written every 5 minutes, read by a scrape.
+    private static readonly ConcurrentDictionary<(string Check, string? EventType), (double Value, bool Failing)> HealthChecks = new();
+    private static long _healthCheckLastRunUnixSeconds;
+
+    private static readonly ConcurrentDictionary<string, double> BootPhaseSeconds = new();
+
     private static Func<(bool? Connected, int? LatencyMs)>? _gatewayReader;
+    private static Func<int?>? _voiceMemberReader;
     private static Func<bool>? _unwritableWindowReader;
     private static string? _buildCommit;
     private static volatile StatisticsDto? _hangfireStatistics;
@@ -140,6 +181,21 @@ internal static class BotMetrics
             description: "1 when every gateway shard is connected, else 0.");
         Meter.CreateObservableGauge("wojtus.gateway.latency", ObserveGatewayLatency, unit: "s",
             description: "Gateway heartbeat latency.");
+        Meter.CreateObservableGauge("wojtus.voice.members", ObserveVoiceMembers,
+            description: "Members in a voice channel now, from the gateway cache.");
+        Meter.CreateObservableGauge("wojtus.last_event.timestamp", ObserveLastEvent, unit: "s",
+            description: "Unix time of the last gateway event through the event pipeline.");
+        Meter.CreateObservableGauge("wojtus.last_event.by_kind.timestamp", ObserveLastEventByKind, unit: "s",
+            description: "Unix time of the last gateway event through the event pipeline, by kind (message, presence, voice, other).");
+        Meter.CreateObservableGauge("wojtus.healthcheck.value", () => ObserveHealthChecks(result => result.Value),
+            description: "What the last health check run measured. Seconds since the last event for ingest_stall and "
+                + "event_silence, seconds the row is open for open_downtime, a count for every other check.");
+        Meter.CreateObservableGauge("wojtus.healthcheck.failing", () => ObserveHealthChecks(result => result.Failing ? 1d : 0d),
+            description: "1 when the condition of the check held at the last run, else 0. Independent of the alert cooldown.");
+        Meter.CreateObservableGauge("wojtus.healthcheck.last_run.timestamp", ObserveHealthCheckLastRun, unit: "s",
+            description: "Unix time the last health check run finished every check.");
+        Meter.CreateObservableGauge("wojtus.boot.phase.duration", ObserveBootPhases, unit: "s",
+            description: "Duration of a boot phase, first run since the process started (migrate, backfill_sweep, guild_download, quick_sync).");
         Meter.CreateObservableGauge("wojtus.db.unwritable.window.pending", () => _unwritableWindowReader?.Invoke() == true ? 1 : 0,
             description: "1 while an unwritable-database window is open or waits for its row.");
         Meter.CreateObservableGauge("wojtus.process.start.time",
@@ -164,7 +220,20 @@ internal static class BotMetrics
         var outcomeTag = Tag("outcome", outcome);
         Events.Add(1, eventTypeTag, outcomeTag);
         EventHandlerDuration.Record(elapsed.TotalSeconds, eventTypeTag, outcomeTag);
+
+        var nowUnixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        Volatile.Write(ref _lastEventUnixSeconds, nowUnixSeconds);
+        Volatile.Write(ref LastEventUnixSecondsByKind[EventKindOf(eventType)], nowUnixSeconds);
     }
+
+    public static void TypingEventThrottled() => TypingThrottled.Add(1);
+
+    // result: inserted, updated, or conflict (another writer inserted first; the row was then updated).
+    public static void EntityUpserted(string entity, string result) =>
+        Upserts.Add(1, Tag("entity", entity), Tag("result", result));
+
+    // entity: guild, channel or user.
+    public static void FkNotResolved(string entity) => FkUnresolved.Add(1, Tag("entity", entity));
 
     public static void RawEventLogged(string eventType, int sizeBytes) =>
         RawEventSize.Record(sizeBytes, Tag("event_type", eventType));
@@ -231,6 +300,18 @@ internal static class BotMetrics
         MemeSearchResults.Record(hitCount, callerTag);
     }
 
+    public static void CommandFinished(string command, string outcome, TimeSpan elapsed)
+    {
+        var commandTag = Tag("command", command);
+        var outcomeTag = Tag("outcome", outcome);
+        CommandExecutions.Add(1, commandTag, outcomeTag);
+        CommandDuration.Record(elapsed.TotalSeconds, commandTag, outcomeTag);
+    }
+
+    // reason: concurrency (too many searches at one time) or rate (the budget of the minute).
+    public static void MemeDashboardSearchRejected(string reason) =>
+        MemeDashboardRejections.Add(1, Tag("reason", reason));
+
     public static void MemeIndexOutcome(string outcome) => MemeIndexOutcomes.Add(1, Tag("outcome", outcome));
 
     public static void MemeVisionCalled(
@@ -273,6 +354,30 @@ internal static class BotMetrics
 
     public static void HealthCheckWebhookFailed() => HealthCheckWebhookFailures.Add(1);
 
+    // check: the same label value as HealthCheckAlertSent, so the gauges join the alert counter.
+    public static void HealthCheckMeasured(string check, double value, bool failing, string? eventType = null) =>
+        HealthChecks[(check, eventType)] = (value, failing);
+
+    public static void HealthCheckRunFinished() =>
+        Volatile.Write(ref _healthCheckLastRunUnixSeconds, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+    public static void OrphanReplayFinished(int scanned, int inserted, int skipped)
+    {
+        if (scanned > 0)
+            OrphanReplayRows.Add(scanned, Tag("result", "scanned"));
+        if (inserted > 0)
+            OrphanReplayRows.Add(inserted, Tag("result", "inserted"));
+        if (skipped > 0)
+            OrphanReplayRows.Add(skipped, Tag("result", "skipped"));
+    }
+
+    // The first run of a phase wins: a later cold connect of the same process is a reconnect,
+    // not a boot.
+    public static void BootPhaseFinished(string phase, TimeSpan elapsed) =>
+        BootPhaseSeconds.TryAdd(phase, elapsed.TotalSeconds);
+
+    public static void TraceExportFailed() => TraceExportFailures.Add(1);
+
     public static void LogEventWritten(LogLevel level)
     {
         var index = (int)level;
@@ -281,10 +386,13 @@ internal static class BotMetrics
     }
 
     // The sources of the observable gauges, each set once by its owner: Program.cs (build,
-    // gateway), HeartbeatBackgroundService (window) and HangfireStatisticsService.
+    // gateway, voice), HeartbeatBackgroundService (window) and HangfireStatisticsService.
     public static void SetBuildInfo(BuildInfo build) => _buildCommit = build.CommitShort;
 
     public static void SetGatewayStateReader(Func<(bool? Connected, int? LatencyMs)> reader) => _gatewayReader = reader;
+
+    // The reader must read memory only (the gateway cache): a scrape calls it.
+    public static void SetVoiceMemberReader(Func<int?> reader) => _voiceMemberReader = reader;
 
     public static void SetUnwritableWindowReader(Func<bool> reader) => _unwritableWindowReader = reader;
 
@@ -313,6 +421,69 @@ internal static class BotMetrics
         {
             return default;
         }
+    }
+
+    private static IEnumerable<Measurement<int>> ObserveVoiceMembers()
+    {
+        int? members;
+        try
+        {
+            members = _voiceMemberReader?.Invoke();
+        }
+        catch (Exception)
+        {
+            members = null;
+        }
+
+        if (members is { } count)
+            yield return new Measurement<int>(count);
+    }
+
+    private static IEnumerable<Measurement<long>> ObserveLastEvent()
+    {
+        if (Volatile.Read(ref _lastEventUnixSeconds) is > 0 and var unixSeconds)
+            yield return new Measurement<long>(unixSeconds);
+    }
+
+    private static IEnumerable<Measurement<long>> ObserveLastEventByKind()
+    {
+        for (var kind = 0; kind < EventKinds.Length; kind++)
+        {
+            if (Volatile.Read(ref LastEventUnixSecondsByKind[kind]) is > 0 and var unixSeconds)
+                yield return new Measurement<long>(unixSeconds, EventKindTags[kind]);
+        }
+    }
+
+    // Prefix rules on the event type names the handlers pass to EventPipeline. "MessageReaction*"
+    // and "MessagePollVoted" count as message: each is activity of a person in a text channel.
+    private static int EventKindOf(string eventType) => eventType switch
+    {
+        _ when eventType.StartsWith("Message", StringComparison.Ordinal) => 0,
+        "PresenceUpdated" => 1,
+        _ when eventType.StartsWith("Voice", StringComparison.Ordinal) => 2,
+        _ => 3,
+    };
+
+    private static IEnumerable<Measurement<double>> ObserveHealthChecks(Func<(double Value, bool Failing), double> select)
+    {
+        foreach (var (key, result) in HealthChecks)
+        {
+            yield return key.EventType is { } eventType
+                ? new Measurement<double>(select(result), Tag("check", key.Check), Tag("event_type", eventType))
+                : new Measurement<double>(select(result), Tag("check", key.Check));
+        }
+    }
+
+    private static IEnumerable<Measurement<long>> ObserveHealthCheckLastRun()
+    {
+        if (Volatile.Read(ref _healthCheckLastRunUnixSeconds) is > 0 and var unixSeconds)
+            yield return new Measurement<long>(unixSeconds);
+    }
+
+    private static IEnumerable<Measurement<double>> ObserveBootPhases()
+    {
+        foreach (var (phase, seconds) in BootPhaseSeconds)
+            yield return new Measurement<double>(seconds, Tag("phase", phase));
     }
 
     private static IEnumerable<Measurement<int>> ObserveBuildInfo()

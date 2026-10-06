@@ -34,25 +34,31 @@ internal sealed class HealthCheckJob(
 
     public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
+        // Every check runs with or without a webhook: each one publishes what it measured as a
+        // gauge (BotMetrics.HealthCheckMeasured) before it decides on an alert. With no webhook
+        // SendWebhookAsync sends nothing and answers false, so no alert state changes.
         var opts = options.Value;
         if (string.IsNullOrWhiteSpace(opts.WebhookUrl))
-        {
-            logger.LogDebug("Health check skipped: no webhook URL configured");
-            return;
-        }
+            logger.LogDebug("Health check runs for metrics only: no webhook URL configured");
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
         var now = DateTime.UtcNow;
 
+        // Read once per run: three checks alert only while the gateway is connected.
+        var gatewayFresh = await IsGatewayFreshAsync(db, now, cancellationToken);
+
         await CheckFailedEventsAsync(db, opts, now, cancellationToken);
-        await CheckIngestStallAsync(db, opts, now, cancellationToken);
+        await CheckIngestStallAsync(db, opts, now, gatewayFresh, cancellationToken);
         await CheckEventTypeRatioAsync(db, opts, now, cancellationToken);
         await CheckCrashLoopAsync(db, opts, now, cancellationToken);
-        await CheckEventSilenceAsync(db, opts, now, cancellationToken);
+        await CheckEventSilenceAsync(db, opts, now, gatewayFresh, cancellationToken);
         await CheckBackfillStallAsync(db, opts, now, cancellationToken);
-        await CheckOpenDowntimeAsync(db, opts, now, cancellationToken);
+        await CheckOpenDowntimeAsync(db, opts, now, gatewayFresh, cancellationToken);
         await CheckMessageTimestampInvariantAsync(db, opts, now, cancellationToken);
+
+        // Last: a run that a failed query cut short leaves this gauge old.
+        BotMetrics.HealthCheckRunFinished();
     }
 
     private async Task CheckFailedEventsAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
@@ -62,6 +68,7 @@ internal sealed class HealthCheckJob(
             .Where(f => f.FailedAtUtc > windowStart && !f.IsResolved)
             .CountAsync(cancellationToken);
 
+        BotMetrics.HealthCheckMeasured("failed_events", count, failing: count > 0);
         if (count == 0)
             return;
 
@@ -81,7 +88,7 @@ internal sealed class HealthCheckJob(
         var details = string.Join("\n", recent.Select(r =>
             $"- `{r.EventType}` in `{r.HandlerName}` ({r.ExceptionType}) at {r.FailedAtUtc:HH:mm:ss}"));
 
-        if (!await SendWebhookAsync("failed_events", opts.WebhookUrl!,
+        if (!await SendWebhookAsync("failed_events", opts.WebhookUrl,
             $"**{count} failed event(s)** in the last {opts.FailedEventWindowMinutes} min\n{details}", cancellationToken))
             return;
 
@@ -90,11 +97,8 @@ internal sealed class HealthCheckJob(
         logger.LogWarning("Health check alert: {Count} failed events in last {Window} min", count, opts.FailedEventWindowMinutes);
     }
 
-    private async Task CheckIngestStallAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
+    private async Task CheckIngestStallAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, bool gatewayFresh, CancellationToken cancellationToken)
     {
-        if (!await IsGatewayFreshAsync(db, now, cancellationToken))
-            return;
-
         var lastEvent = await db.RawEventLogs
             .OrderByDescending(r => r.ReceivedAtUtc)
             .Select(r => (DateTime?)r.ReceivedAtUtc)
@@ -103,8 +107,12 @@ internal sealed class HealthCheckJob(
         if (lastEvent is null)
             return;
 
+        // Silence while the gateway is down is downtime, not a stall: the age is published, the
+        // check does not fail.
         var eventAge = now - lastEvent.Value;
-        if (eventAge.TotalMinutes < opts.IngestStallMinutes)
+        var stalled = gatewayFresh && eventAge.TotalMinutes >= opts.IngestStallMinutes;
+        BotMetrics.HealthCheckMeasured("ingest_stall", eventAge.TotalSeconds, stalled);
+        if (!stalled)
             return;
 
         lock (_lock)
@@ -113,7 +121,7 @@ internal sealed class HealthCheckJob(
                 return;
         }
 
-        if (!await SendWebhookAsync("ingest_stall", opts.WebhookUrl!,
+        if (!await SendWebhookAsync("ingest_stall", opts.WebhookUrl,
             $"**Ingest stall detected** — bot is connected but no events for {eventAge.TotalMinutes:F0} min (last event at {lastEvent.Value:yyyy-MM-dd HH:mm:ss} UTC)", cancellationToken))
             return;
 
@@ -133,6 +141,7 @@ internal sealed class HealthCheckJob(
                 && d.Type != Data.Entities.Core.BotDowntimeType.DbUnreachable)
             .CountAsync(cancellationToken);
 
+        BotMetrics.HealthCheckMeasured("crash_loop", recentRestarts, recentRestarts >= CrashLoopRestartThreshold);
         if (recentRestarts < CrashLoopRestartThreshold)
             return;
 
@@ -142,7 +151,7 @@ internal sealed class HealthCheckJob(
                 return;
         }
 
-        if (!await SendWebhookAsync("crash_loop", opts.WebhookUrl!,
+        if (!await SendWebhookAsync("crash_loop", opts.WebhookUrl,
             $"**Possible crash-loop** — {recentRestarts} restarts in the last {CrashLoopWindowMinutes} minutes. Check container logs for `Stack overflow` or other fatal errors.", cancellationToken))
             return;
 
@@ -166,6 +175,10 @@ internal sealed class HealthCheckJob(
         var confirmedTypes = ConfirmDropStreaks(dropped.Select(d => d.EventType).ToHashSet(), opts);
 
         var confirmed = dropped.Where(d => confirmedTypes.Contains(d.EventType)).ToList();
+
+        // The value counts the types below the threshold now; the check fails only when a drop
+        // lasted the configured number of runs, like the alert.
+        BotMetrics.HealthCheckMeasured("event_ratio", dropped.Count, failing: confirmed.Count > 0);
         if (confirmed.Count == 0)
             return;
 
@@ -181,7 +194,7 @@ internal sealed class HealthCheckJob(
             return $"- `{d.EventType}`: {recentCount} in last {opts.EventRatioRecentHours}h (expected ~{d.ExpectedInWindow:F1} for this time of day)";
         }));
 
-        if (!await SendWebhookAsync("event_ratio", opts.WebhookUrl!,
+        if (!await SendWebhookAsync("event_ratio", opts.WebhookUrl,
             $"**Event type ratio drop** — {confirmed.Count} event type(s) below {opts.EventRatioDropThreshold:P0} of baseline for {opts.EventRatioConsecutiveRuns}+ runs:\n{details}", cancellationToken))
             return;
 
@@ -193,28 +206,31 @@ internal sealed class HealthCheckJob(
 
     // Silence is checked per type against a fixed threshold, not a ratio: on this server only presence
     // has enough volume for a ratio, and the May blackout kept presence flowing while messages died.
-    private async Task CheckEventSilenceAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
+    private async Task CheckEventSilenceAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, bool gatewayFresh, CancellationToken cancellationToken)
     {
-        var watched = opts.EventSilenceHours.Where(kvp => kvp.Value > 0).ToList();
-        if (watched.Count == 0 || !await IsGatewayFreshAsync(db, now, cancellationToken))
-            return;
-
-        foreach (var (eventType, silenceHours) in watched)
+        // The watched types come from configuration: a fixed, small set of label values.
+        foreach (var (eventType, silenceHours) in opts.EventSilenceHours.Where(kvp => kvp.Value > 0))
         {
             var lastEvent = await db.RawEventLogs
                 .Where(r => r.EventType == eventType)
                 .MaxAsync(r => (DateTime?)r.ReceivedAtUtc, cancellationToken);
 
             // A type never seen has no silence to measure; the last event marks the episode.
-            if (lastEvent is null || (now - lastEvent.Value).TotalHours < silenceHours)
+            if (lastEvent is null)
+                continue;
+
+            var silence = now - lastEvent.Value;
+            var silent = gatewayFresh && silence.TotalHours >= silenceHours;
+            BotMetrics.HealthCheckMeasured("event_silence", silence.TotalSeconds, silent, eventType);
+            if (!silent)
                 continue;
 
             var key = $"silence:{eventType}";
             if (!IsNewEpisode(key, lastEvent.Value))
                 continue;
 
-            var silentHours = (now - lastEvent.Value).TotalHours;
-            if (!await SendWebhookAsync("event_silence", opts.WebhookUrl!,
+            var silentHours = silence.TotalHours;
+            if (!await SendWebhookAsync("event_silence", opts.WebhookUrl,
                 $"**Event silence** — no `{eventType}` for {silentHours:F0}h (threshold {silenceHours}h) while the gateway is connected. Last one at {lastEvent.Value:yyyy-MM-dd HH:mm} UTC. Other event types may still be flowing — check handler errors and `raw_event_logs`.", cancellationToken))
                 continue;
 
@@ -231,6 +247,7 @@ internal sealed class HealthCheckJob(
             .Select(c => new { c.Id, c.GuildDiscordId, c.Type, c.LastUpdatedUtc, c.ProcessedCount, c.TotalCount })
             .ToListAsync(cancellationToken);
 
+        BotMetrics.HealthCheckMeasured("backfill_stall", stalled.Count, failing: stalled.Count > 0);
         foreach (var checkpoint in stalled)
         {
             // Keyed on the last update, so a stuck row alerts once and a later stall of the same row alerts again.
@@ -239,7 +256,7 @@ internal sealed class HealthCheckJob(
                 continue;
 
             var idleHours = (now - checkpoint.LastUpdatedUtc).TotalHours;
-            if (!await SendWebhookAsync("backfill_stall", opts.WebhookUrl!,
+            if (!await SendWebhookAsync("backfill_stall", opts.WebhookUrl,
                 $"**Backfill stalled** — `{checkpoint.Type}` for guild {checkpoint.GuildDiscordId} is InProgress with no progress for {idleHours:F0}h ({checkpoint.ProcessedCount}/{checkpoint.TotalCount?.ToString() ?? "?"}). If Hangfire shows the job Processing, it hung; otherwise the process died mid-run and the next chain resumes it.", cancellationToken))
                 continue;
 
@@ -249,7 +266,7 @@ internal sealed class HealthCheckJob(
         }
     }
 
-    private async Task CheckOpenDowntimeAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
+    private async Task CheckOpenDowntimeAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, bool gatewayFresh, CancellationToken cancellationToken)
     {
         var openCutoff = now.AddMinutes(-opts.OpenDowntimeMaxMinutes);
         var open = await db.BotDowntimeIntervals
@@ -258,16 +275,19 @@ internal sealed class HealthCheckJob(
             .Select(d => new { d.Id, d.Type, d.StartedAtUtc })
             .FirstOrDefaultAsync(cancellationToken);
 
-        if (open is null)
+        // While the gateway is down an open row is the correct state, not a leak. The value is 0
+        // when no row is open past the limit.
+        BotMetrics.HealthCheckMeasured(
+            "open_downtime", open is null ? 0 : (now - open.StartedAtUtc).TotalSeconds, failing: open is not null && gatewayFresh);
+        if (open is null || !gatewayFresh)
             return;
 
-        // While the gateway is down an open row is the correct state, not a leak.
         var key = $"open-downtime:{open.Id}";
-        if (!IsNewEpisode(key, open.StartedAtUtc) || !await IsGatewayFreshAsync(db, now, cancellationToken))
+        if (!IsNewEpisode(key, open.StartedAtUtc))
             return;
 
         var openMinutes = (now - open.StartedAtUtc).TotalMinutes;
-        if (!await SendWebhookAsync("open_downtime", opts.WebhookUrl!,
+        if (!await SendWebhookAsync("open_downtime", opts.WebhookUrl,
             $"**Downtime row left open** — `{open.Type}` row {open.Id} opened {openMinutes:F0} min ago and the gateway is connected. New downtime rows cannot open until it closes.", cancellationToken))
             return;
 
@@ -280,12 +300,8 @@ internal sealed class HealthCheckJob(
     // back to its own clock (#59).
     private async Task CheckMessageTimestampInvariantAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
     {
-        lock (_lock)
-        {
-            if ((now - _lastTimestampInvariantAlert).TotalHours < IntegrityAlertCooldownHours)
-                return;
-        }
-
+        // The count runs on every run, also inside the alert cooldown: the gauge must not be a
+        // day old. The cooldown still decides alone whether an alert goes out.
         var windowStart = now.AddHours(-TimestampInvariantWindowHours);
         var count = await db.MessageEvents
             .Where(m => m.EventType == Data.Entities.Events.MessageEventType.Created
@@ -293,10 +309,17 @@ internal sealed class HealthCheckJob(
                 && m.EventTimestampUtc == m.ReceivedAtUtc)
             .CountAsync(cancellationToken);
 
+        BotMetrics.HealthCheckMeasured("timestamp_invariant", count, failing: count > 0);
         if (count == 0)
             return;
 
-        if (!await SendWebhookAsync("timestamp_invariant", opts.WebhookUrl!,
+        lock (_lock)
+        {
+            if ((now - _lastTimestampInvariantAlert).TotalHours < IntegrityAlertCooldownHours)
+                return;
+        }
+
+        if (!await SendWebhookAsync("timestamp_invariant", opts.WebhookUrl,
             $"**Data integrity** — {count} `MessageCreated` row(s) in the last {TimestampInvariantWindowHours}h have `event_timestamp_utc = received_at_utc`. A handler is using its own clock instead of Discord's timestamp.", cancellationToken))
             return;
 
@@ -331,8 +354,13 @@ internal sealed class HealthCheckJob(
 
     // check: the metric label of the alert. Every alert goes through here, so this is the
     // one place that counts an alert sent and a send that failed.
-    private async Task<bool> SendWebhookAsync(string check, string webhookUrl, string message, CancellationToken cancellationToken)
+    // No webhook configured = nothing sent and nothing counted. The answer is false, so the
+    // caller records no alert, no cooldown and no episode.
+    private async Task<bool> SendWebhookAsync(string check, string? webhookUrl, string message, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(webhookUrl))
+            return false;
+
         try
         {
             var client = httpClientFactory.CreateClient();
