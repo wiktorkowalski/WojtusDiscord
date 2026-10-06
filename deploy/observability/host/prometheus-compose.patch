@@ -1,0 +1,10 @@
+--- prometheus/compose.yml.bak-20261006
++++ prometheus/compose.yml
+@@ -14,6 +14,7 @@
+       - '--web.console.templates=/usr/share/prometheus/consoles'
+       - '--web.enable-lifecycle'
+       - '--web.enable-admin-api'
++      - '--web.enable-remote-write-receiver'
+       - '--web.external-url=https://prometheus.home.vicio.ovh'
+     volumes:
+       - /etc/localtime:/etc/localtime:ro

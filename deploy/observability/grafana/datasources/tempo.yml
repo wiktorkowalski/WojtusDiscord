@@ -1,0 +1,26 @@
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      # uids of the provisioned Loki / Prometheus datasources (Grafana derives
+      # them from the datasource name, so they are stable across restarts).
+      tracesToLogsV2:
+        datasourceUid: P8E80F9AEF21F6940
+        spanStartTimeShift: '-5m'
+        spanEndTimeShift: '5m'
+        customQuery: true
+        query: '{container_name="discord-event-service"} |= "$${__trace.traceId}"'
+      tracesToMetrics:
+        datasourceUid: PBFA97CFB590B2093
+      serviceMap:
+        datasourceUid: PBFA97CFB590B2093
+      nodeGraph:
+        enabled: true
+      streamingEnabled:
+        search: true

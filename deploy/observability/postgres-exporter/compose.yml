@@ -1,0 +1,37 @@
+# Postgres metrics for the WojtusDiscord prod DB (wojtus-postgres). Read-only:
+# the exporter runs SELECTs on pg_stat_* and the catalogs, nothing else.
+# Credentials: `.env` in this directory is a SYMLINK to ../wojtusdiscord/.env,
+# so the password has one home. Compose reads it for ${...} interpolation only;
+# no other bot secret enters this container.
+services:
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    container_name: wojtus-postgres-exporter
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    environment:
+      DATA_SOURCE_URI: "wojtus-postgres:5432/${POSTGRES_DB:-discord_event_service}?sslmode=disable"
+      DATA_SOURCE_USER: ${POSTGRES_USER:-postgres}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD}
+    command:
+      - '--collector.long_running_transactions'
+      - '--collector.database_wraparound'
+      - '--collector.stat_activity_autovacuum'
+      - '--collector.statio_user_indexes'
+      - '--collector.postmaster'
+      # Needs shared_preload_libraries=pg_stat_statements on the server (set in the
+      # wojtusdiscord compose.yml) and CREATE EXTENSION pg_stat_statements (done 2026-10-06).
+      - '--collector.stat_statements'
+      # Query text as an info series (normalised SQL, parameters are $1..$n, so no user data).
+      - '--collector.stat_statements.include_query'
+    networks:
+      - wojtusdiscord_default
+      - monitoring
+
+networks:
+  wojtusdiscord_default:
+    external: true
+  monitoring:
+    external: true

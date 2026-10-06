@@ -1,0 +1,20 @@
+--- wojtusdiscord/compose.yml.bak-20261006
++++ wojtusdiscord/compose.yml
+@@ -2,6 +2,8 @@
+   postgres:
+     image: postgres:18
+     container_name: wojtus-postgres
++    # pg_stat_statements feeds the query panels of the Postgres dashboard (postgres-exporter).
++    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
+     restart: unless-stopped
+     env_file:
+       - .env
+@@ -32,6 +34,8 @@
+       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-discord_event_service};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD}
+       Discord__Token: ${DISCORD_TOKEN}
+       Database__AutoMigrate: "true"
++      # Traces to the homelab Tempo (OTLP/HTTP). Not a secret; empty disables the exporter.
++      Telemetry__OtlpTracesEndpoint: http://tempo:4318
+     depends_on:
+       postgres:
+         condition: service_healthy

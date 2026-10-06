@@ -1,0 +1,10 @@
+# Blackbox exporter module used by the `wojtusdiscord-http` scrape job.
+# Lives under `modules:` in /home/ubuntu/docker/blackbox/config/blackbox.yml on the host.
+# Reload after a change: docker kill -s HUP blackbox
+  http_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200]
+      fail_if_not_ssl: true

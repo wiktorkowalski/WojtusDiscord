@@ -1,0 +1,47 @@
+# Scrape jobs for WojtusDiscord on the homelab Prometheus.
+# This is the block that lives at the end of `scrape_configs:` in
+# /home/ubuntu/docker/prometheus/config/prometheus.yml on the host (that file also
+# holds every other homelab job and is not versioned). Keep both in step: edit here,
+# paste there, then `sync.sh` validates and reloads.
+# The same file needs `- 'wojtusdiscord-alerts.yml'` under `rule_files:`.
+  # ===== WojtusDiscord (added 2026-10-06; source of truth: WojtusDiscord repo, deploy/observability/) =====
+  # The bot itself: OpenTelemetry Prometheus exporter on /metrics (reached over the proxy network).
+  - job_name: "wojtusdiscord"
+    static_configs:
+      - targets: ["discord-event-service:8080"]
+        labels:
+          instance: "discord-event-service"
+
+  # Prod Postgres of the bot, via wojtus-postgres-exporter (read-only).
+  - job_name: "wojtus-postgres"
+    static_configs:
+      - targets: ["wojtus-postgres-exporter:9187"]
+        labels:
+          instance: "wojtus-postgres"
+
+  # Tempo self-metrics.
+  - job_name: "tempo"
+    static_configs:
+      - targets: ["tempo:3200"]
+        labels:
+          instance: "tempo"
+
+  # WojtusDiscord /health through Traefik (blackbox http_2xx). Covers DNS + TLS + proxy + app,
+  # which the direct scrape of discord-event-service:8080 does not.
+  - job_name: "wojtusdiscord-http"
+    scrape_interval: 30s
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - https://wojtusdiscord.home.vicio.ovh/health
+        labels:
+          service: "wojtusdiscord"
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: "blackbox:9115"
