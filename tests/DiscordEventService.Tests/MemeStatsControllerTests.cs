@@ -171,10 +171,7 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         host.Limits.SearchUsageGate.Release();
         var afterRelease = await host.Client.GetAsync(BasePath + path);
 
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-        Assert.Equal(TimeSpan.FromSeconds(5), response.Headers.RetryAfter!.Delta);
-        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal(["error"], json.RootElement.EnumerateObject().Select(p => p.Name));
+        await AssertTurnedAwayAsync(response, HttpStatusCode.ServiceUnavailable);
         Assert.Equal(HttpStatusCode.OK, afterRelease.StatusCode);
     }
 
@@ -199,10 +196,7 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
 
         var response = await host.Client.GetAsync($"{BasePath}/search?q=rakieta");
 
-        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
-        Assert.Equal(TimeSpan.FromSeconds(5), response.Headers.RetryAfter!.Delta);
-        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal(["error"], json.RootElement.EnumerateObject().Select(p => p.Name));
+        await AssertTurnedAwayAsync(response, HttpStatusCode.TooManyRequests);
     }
 
     // #408: the slots cap how many searches run at one time, not how many a minute.
@@ -219,10 +213,7 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
 
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
         Assert.Equal(HttpStatusCode.OK, second.StatusCode);
-        Assert.Equal(HttpStatusCode.TooManyRequests, third.StatusCode);
-        Assert.Equal(TimeSpan.FromSeconds(5), third.Headers.RetryAfter!.Delta);
-        using var json = JsonDocument.Parse(await third.Content.ReadAsStringAsync());
-        Assert.Equal(["error"], json.RootElement.EnumerateObject().Select(p => p.Name));
+        await AssertTurnedAwayAsync(third, HttpStatusCode.TooManyRequests);
         Assert.Equal(MemeDashboardLimits.MaxConcurrentSearches, host.Limits.SearchGate.CurrentCount);
     }
 
@@ -520,6 +511,15 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         _db.Messages
             .Where(m => m.DiscordId == MemeStatsTestData.MessageIdOf(AttachmentId))
             .ExecuteUpdateAsync(s => s.SetProperty(m => m.AttachmentsJson, attachmentsJson));
+
+    // A cap of MemeDashboardLimits answered: the status, Retry-After, and the error shape.
+    private static async Task AssertTurnedAwayAsync(HttpResponseMessage response, HttpStatusCode status)
+    {
+        Assert.Equal(status, response.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(5), response.Headers.RetryAfter!.Delta);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(["error"], json.RootElement.EnumerateObject().Select(p => p.Name));
+    }
 
     // ck_messages_soft_delete: a deleted message has its deletion time, and no other message has one.
     private Task<int> SetMessageDeletedAsync(bool isDeleted) =>

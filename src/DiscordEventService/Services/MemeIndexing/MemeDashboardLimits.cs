@@ -57,12 +57,7 @@ internal sealed class MemeDashboardLimits : IDisposable
     private IndexSnapshot? _index;
 
     public MemeDashboardLimits() =>
-        _searchBudget = new Lazy<RateLimiter>(() => new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
-        {
-            PermitLimit = SearchesPerMinute,
-            Window = TimeSpan.FromMinutes(1),
-            QueueLimit = 0,
-        }));
+        _searchBudget = new Lazy<RateLimiter>(() => PerMinute(SearchesPerMinute));
 
     // One request computes a search-usage answer; the others wait and read what it kept.
     public SemaphoreSlim SearchUsageGate { get; } = new(1, 1);
@@ -90,12 +85,7 @@ internal sealed class MemeDashboardLimits : IDisposable
         QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
     });
 
-    public RateLimiter RefreshBudget { get; } = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
-    {
-        PermitLimit = MaxRefreshesPerMinute,
-        Window = TimeSpan.FromMinutes(1),
-        QueueLimit = 0,
-    });
+    public RateLimiter RefreshBudget { get; } = PerMinute(MaxRefreshesPerMinute);
 
     // Its own cache, with a size limit: the application's shared IMemoryCache has none.
     public MemoryCache Thumbnails { get; } = new(new MemoryCacheOptions { SizeLimit = MaxCachedThumbnails });
@@ -118,6 +108,14 @@ internal sealed class MemeDashboardLimits : IDisposable
         RefreshBudget.Dispose();
         Thumbnails.Dispose();
     }
+
+    // A budget of one minute with no queue: over the limit a request is turned away at once.
+    private static FixedWindowRateLimiter PerMinute(int permitLimit) => new(new FixedWindowRateLimiterOptions
+    {
+        PermitLimit = permitLimit,
+        Window = TimeSpan.FromMinutes(1),
+        QueueLimit = 0,
+    });
 
     private sealed record IndexSnapshot(MemeIndexDto Index, DateTime ExpiresAtUtc);
 }

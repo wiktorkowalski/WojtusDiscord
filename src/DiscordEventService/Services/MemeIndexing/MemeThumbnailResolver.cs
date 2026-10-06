@@ -56,7 +56,7 @@ internal sealed class MemeThumbnailResolver(
 
     // Discord gave no usable URL (it declined, or the URL is not a Discord CDN URL): Discord is
     // asked again after this. A "not servable" from the database is not kept at all.
-    public static readonly TimeSpan NotServableCacheDuration = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan DeclinedCacheDuration = TimeSpan.FromMinutes(5);
 
     // Discord failed: no new call for this image for this long.
     public static readonly TimeSpan FailureCacheDuration = TimeSpan.FromSeconds(30);
@@ -73,7 +73,8 @@ internal sealed class MemeThumbnailResolver(
         var storedUrl = await FindServableStoredUrlAsync(attachmentDiscordId, cancellationToken);
 
         // Not cached: the next request asks the database again anyway, and ids with no row
-        // have no bound. What Discord answered before is dropped.
+        // have no bound. The check above already keeps a kept URL from being served; the
+        // removal makes an image that becomes servable again ask Discord again.
         if (storedUrl is null)
         {
             limits.Thumbnails.Remove(attachmentDiscordId);
@@ -169,7 +170,7 @@ internal sealed class MemeThumbnailResolver(
             case AttachmentUrlRefreshOutcome.BatchFailed:
                 return Keep(attachmentDiscordId, MemeThumbnail.Unavailable, FailureCacheDuration);
             case AttachmentUrlRefreshOutcome.Declined:
-                return Keep(attachmentDiscordId, MemeThumbnail.Gone, NotServableCacheDuration);
+                return Keep(attachmentDiscordId, MemeThumbnail.Gone, DeclinedCacheDuration);
         }
 
         // The redirect target is whatever came back: send the browser to the Discord CDN only.
@@ -178,7 +179,7 @@ internal sealed class MemeThumbnailResolver(
             logger.LogWarning(
                 "Refreshed URL of meme attachment {AttachmentId} is not an https Discord CDN URL; no thumbnail served",
                 attachmentDiscordId);
-            return Keep(attachmentDiscordId, MemeThumbnail.Gone, NotServableCacheDuration);
+            return Keep(attachmentDiscordId, MemeThumbnail.Gone, DeclinedCacheDuration);
         }
 
         var thumbnail = new MemeThumbnail(freshUrl, IsRetryable: false);
