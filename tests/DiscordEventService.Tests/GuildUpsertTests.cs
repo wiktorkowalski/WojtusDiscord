@@ -33,6 +33,28 @@ public sealed class GuildUpsertTests(PostgresFixture fixture) : IClassFixture<Po
         Assert.Equal("Alpha", row.Name);
     }
 
+    // The guild label is shared with every test that upserts a guild at the same time, so
+    // this asserts that both results were counted, not how often.
+    [Fact]
+    public async Task UpsertAsync_CountsInsertedThenUpdatedByEntity()
+    {
+        using var metrics = new MetricsCapture();
+
+        for (var run = 0; run < 2; run++)
+        {
+            await _db.Guilds.UpsertAsync(
+                g => g.DiscordId == 150UL,
+                s => s.SetProperty(g => g.Name, "Counted"),
+                () => new GuildEntity { DiscordId = 150UL, Name = "Counted" },
+                g => g.Id);
+            _db.ChangeTracker.Clear();
+        }
+
+        var results = metrics.Of("wojtus.upserts", "entity", "guild").Select(m => m.Tags["result"]).ToList();
+        Assert.Contains("inserted", results);
+        Assert.Contains("updated", results);
+    }
+
     [Fact]
     public async Task UpsertAsync_WhenExists_UpdatesRowKeepingId()
     {

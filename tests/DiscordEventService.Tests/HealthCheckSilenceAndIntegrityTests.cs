@@ -3,6 +3,7 @@ using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Infrastructure;
 using DiscordEventService.Jobs;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -57,6 +58,44 @@ public sealed class HealthCheckSilenceAndIntegrityTests(PostgresFixture fixture)
         await _db.SaveChangesAsync();
         await job.ExecuteAsync(CancellationToken.None);
         Assert.Equal(2, handler.Bodies.Count(b => b.Contains("Event silence")));
+    }
+
+    // The gauges are the health signal of an install with no webhook: every check must run
+    // and publish what it measured, and nothing may be sent.
+    [Fact]
+    public async Task ExecuteAsync_NoWebhook_PublishesEveryCheckAsGaugesAndSendsNothing()
+    {
+        var now = DateTime.UtcNow;
+        await SeedFreshGatewayAsync(now);
+        AddRawEvent("MessageCreated", now.AddHours(-50));
+        AddMessageEvent(MessageEventType.Created, now.AddHours(-1), now.AddHours(-1));
+        await _db.SaveChangesAsync();
+
+        var (job, handler) = NewJob(webhookUrl: null);
+        using var metrics = new MetricsCapture();
+        var before = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        await job.ExecuteAsync(CancellationToken.None);
+        metrics.Observe();
+
+        Assert.Empty(handler.Bodies);
+        Assert.Empty(metrics.Of("wojtus.healthcheck.alerts", "check", "event_silence"));
+
+        // Failing: 50 h of silence with a 48 h limit, and one row with the receive clock as event time.
+        var silence = Assert.Single(metrics.Of("wojtus.healthcheck.value", "check", "event_silence"));
+        Assert.Equal("MessageCreated", silence.Tags["event_type"]);
+        Assert.InRange(silence.Value, 50 * 3600 - 60, 50 * 3600 + 60);
+        Assert.Equal(1, Assert.Single(metrics.Of("wojtus.healthcheck.failing", "check", "event_silence")).Value);
+        Assert.Equal(1, Assert.Single(metrics.Of("wojtus.healthcheck.value", "check", "timestamp_invariant")).Value);
+        Assert.Equal(1, Assert.Single(metrics.Of("wojtus.healthcheck.failing", "check", "timestamp_invariant")).Value);
+
+        // Not failing: each of these still has a value.
+        foreach (var check in new[] { "failed_events", "ingest_stall", "event_ratio", "crash_loop", "backfill_stall", "open_downtime" })
+        {
+            Assert.Single(metrics.Of("wojtus.healthcheck.value", "check", check));
+            Assert.Equal(0, Assert.Single(metrics.Of("wojtus.healthcheck.failing", "check", check)).Value);
+        }
+
+        Assert.True(Assert.Single(metrics.Of("wojtus.healthcheck.last_run.timestamp")).Value >= before);
     }
 
     [Fact]
@@ -200,7 +239,7 @@ public sealed class HealthCheckSilenceAndIntegrityTests(PostgresFixture fixture)
             ReceivedAtUtc = receivedAt,
         });
 
-    private (HealthCheckJob Job, CapturingHandler Handler) NewJob()
+    private (HealthCheckJob Job, CapturingHandler Handler) NewJob(string? webhookUrl = "https://example.test/webhook")
     {
         var handler = new CapturingHandler();
         var provider = new ServiceCollection()
@@ -212,7 +251,7 @@ public sealed class HealthCheckSilenceAndIntegrityTests(PostgresFixture fixture)
         var job = new HealthCheckJob(
             provider.GetRequiredService<IServiceScopeFactory>(),
             new StubHttpClientFactory(handler),
-            Options.Create(new HealthCheckOptions { WebhookUrl = "https://example.test/webhook" }),
+            Options.Create(new HealthCheckOptions { WebhookUrl = webhookUrl }),
             NullLogger<HealthCheckJob>.Instance);
         return (job, handler);
     }

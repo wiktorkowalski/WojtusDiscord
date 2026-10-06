@@ -1,4 +1,5 @@
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Infrastructure;
 using DiscordEventService.Services.Pipeline;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
@@ -15,7 +16,12 @@ internal sealed class TypingEventHandler(EventPipeline pipeline, IMemoryCache ca
     {
         var cacheKey = $"typing:{e.User.Id}:{e.Channel.Id}";
         if (cache.TryGetValue(cacheKey, out _))
+        {
+            // Dropped before the pipeline: no raw row, no wojtus_events_total count.
+            BotMetrics.TypingEventThrottled();
             return;
+        }
+
         cache.Set(cacheKey, true, ThrottleWindow);
 
         await pipeline.ExecuteAsync(e, "TypingStarted", nameof(TypingEventHandler),

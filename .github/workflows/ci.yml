@@ -9,11 +9,13 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - 'deploy/observability/**'
   pull_request:
     branches: [master]
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      - 'deploy/observability/**'
 
 permissions:
   contents: read
@@ -89,7 +91,7 @@ jobs:
           done
 
           # /metrics must be the Prometheus scrape, not the SPA fallback's index.html, and must
-          # carry the app meter next to the runtime one. Both names are written at boot.
+          # carry the app meter next to the runtime one. All three names are written at boot.
           metrics_ok=0
           if [ "$healthy" = "1" ]; then
             metrics_code=$(curl -s -o /tmp/metrics.txt -w '%{http_code}' --max-time 5 http://127.0.0.1:5099/metrics || true)
@@ -99,6 +101,8 @@ jobs:
               echo "::error::/metrics answered with HTML — the SPA fallback took the route."
             elif ! grep -q '^wojtus_build_info' /tmp/metrics.txt; then
               echo "::error::/metrics has no app meter metric (wojtus_build_info)."
+            elif ! grep -q '^wojtus_boot_phase_duration_seconds{.*phase="migrate"' /tmp/metrics.txt; then
+              echo "::error::/metrics has no boot phase gauge (wojtus_boot_phase_duration_seconds, phase migrate)."
             elif ! grep -q '^dotnet_gc_collections_total' /tmp/metrics.txt; then
               echo "::error::/metrics has no runtime metric (dotnet_gc_collections_total)."
             else

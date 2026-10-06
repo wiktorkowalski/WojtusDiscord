@@ -49,15 +49,21 @@ internal sealed partial class DatabaseQueryService(
         NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
     };
 
-    public async Task<string> ExecuteAsync(string? sql, CancellationToken cancellationToken)
+    public async Task<string> ExecuteAsync(string? sql, CancellationToken cancellationToken) =>
+        (await RunAsync(sql, cancellationToken)).Text;
+
+    // A query that does not run to its rows ends as text for the model, never as an exception:
+    // the model reads the reason and corrects itself. Failed says that the text is such a
+    // failure, so the caller does not count the tool call as a success.
+    public async Task<(string Text, bool Failed)> RunAsync(string? sql, CancellationToken cancellationToken)
     {
         var settings = options.Value;
         if (!QueryRoleNameRegex().IsMatch(settings.QueryRoleName))
-            return "Database querying is misconfigured (invalid query role) and is unavailable.";
+            return ("Database querying is misconfigured (invalid query role) and is unavailable.", true);
 
         var trimmed = sql?.Trim() ?? string.Empty;
         if (ValidateSingleSelect(trimmed) is { } guardError)
-            return guardError;
+            return (guardError, true);
 
         var connection = (NpgsqlConnection)db.Database.GetDbConnection();
         var openedHere = connection.State != ConnectionState.Open;
@@ -91,7 +97,7 @@ internal sealed partial class DatabaseQueryService(
 
             // The reader is closed; roll back — nothing to commit, and this resets the role + txn flags.
             await transaction.RollbackAsync(cancellationToken);
-            return json;
+            return (json, false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -104,13 +110,13 @@ internal sealed partial class DatabaseQueryService(
             // non-superuser role (42501), a syntax error, a server statement_timeout (57014) — hand the
             // DB's own message back so the model can self-correct.
             logger.LogInformation("query_database rejected: {SqlState} {Message}", ex.SqlState, ex.MessageText);
-            return $"SQL error [{ex.SqlState}]: {ex.MessageText}";
+            return ($"SQL error [{ex.SqlState}]: {ex.MessageText}", true);
         }
         catch (Exception ex) when (ex is NpgsqlException or TimeoutException or OperationCanceledException)
         {
             // Client-side CommandTimeout and connection faults land here.
             logger.LogWarning(ex, "query_database failed");
-            return "The query was stopped (it ran too long or the connection failed). Narrow it and retry.";
+            return ("The query was stopped (it ran too long or the connection failed). Narrow it and retry.", true);
         }
         finally
         {

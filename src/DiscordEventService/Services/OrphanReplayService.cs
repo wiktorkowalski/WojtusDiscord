@@ -1,5 +1,6 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
@@ -41,6 +42,7 @@ internal sealed class OrphanReplayService(DiscordDbContext db, ILogger<OrphanRep
             skipped++;
         }
 
+        BotMetrics.OrphanReplayFinished(orphans.Count, inserted: 0, skipped);
         return new OrphanReplayResult(orphans.Count, 0, skipped);
     }
 }

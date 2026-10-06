@@ -126,13 +126,19 @@ internal sealed class ConversationToolRegistry(
     private AIFunction BuildQueryDatabaseTool(ConversationContext context) =>
         AIFunctionFactory.Create(
             ([Description("A single read-only SQL SELECT (or WITH … SELECT) statement to run.")] string sql,
-                CancellationToken ct) => databaseQuery.ExecuteAsync(sql, ct),
+                CancellationToken ct) => QueryDatabaseAsync(sql, ct),
             new AIFunctionFactoryOptions
             {
                 Name = "query_database",
                 Description = BuildQueryDatabaseDescription(context),
                 JsonSchemaCreateOptions = StrictSchema,
             });
+
+    private async Task<string> QueryDatabaseAsync(string sql, CancellationToken cancellationToken)
+    {
+        var (text, failed) = await databaseQuery.RunAsync(sql, cancellationToken);
+        return failed ? throw new ToolSoftFailureException(text) : text;
+    }
 
     // Per-turn so the relevant guild id can be baked in. The schema hint and the read-only/row-cap
     // contract teach the model to write a correct, single SELECT it can self-correct on failure.
@@ -664,6 +670,13 @@ internal sealed class ConversationToolset
             outcome = "cancelled";
             throw;
         }
+        catch (ToolSoftFailureException ex)
+        {
+            // The tool says in its own words that it failed (query_database): the model gets
+            // that text unchanged and the metric counts an error. No Warning: the tool logged it.
+            outcome = "error";
+            result = ex.Message;
+        }
         catch (Exception ex)
         {
             outcome = "error";
@@ -687,7 +700,8 @@ internal sealed class ConversationToolset
         return new FunctionResultContent(call.CallId, result);
     }
 
-    private static string DescribeArguments(IDictionary<string, object?>? arguments)
+    // Also the form of a tool call in the turn log (ConversationService).
+    internal static string DescribeArguments(IDictionary<string, object?>? arguments)
     {
         if (arguments is null || arguments.Count == 0)
             return "{}";
@@ -696,3 +710,7 @@ internal sealed class ConversationToolset
         return joined.Length <= MaxLoggedArgumentsLength ? joined : joined[..(MaxLoggedArgumentsLength - 1)] + "…";
     }
 }
+
+// Thrown by a tool whose failure is an answer for the model, not a fault: the message is the
+// tool result, word for word. Without it the toolset would count the call as "ok".
+internal sealed class ToolSoftFailureException(string resultText) : Exception(resultText);

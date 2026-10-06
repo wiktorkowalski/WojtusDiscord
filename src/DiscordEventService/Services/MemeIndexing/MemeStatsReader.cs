@@ -4,6 +4,7 @@ using DiscordEventService.Controllers;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Dtos;
+using DiscordEventService.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
@@ -213,14 +214,20 @@ internal sealed class MemeStatsReader(
     public async Task<MemeSearchResultDto?> SearchAsync(string query, int limit, CancellationToken cancellationToken)
     {
         if (!await limits.SearchGate.WaitAsync(TimeSpan.Zero, cancellationToken))
+        {
+            BotMetrics.MemeDashboardSearchRejected("concurrency");
             return null;
+        }
 
         try
         {
             // A permit of a fixed window does not come back when the lease is disposed.
             using var permit = limits.SearchBudget.AttemptAcquire();
             if (!permit.IsAcquired)
+            {
+                BotMetrics.MemeDashboardSearchRejected("rate");
                 return null;
+            }
 
             return await SearchCoreAsync(query, limit, cancellationToken);
         }

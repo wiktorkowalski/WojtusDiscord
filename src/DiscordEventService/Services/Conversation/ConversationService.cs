@@ -112,7 +112,11 @@ internal sealed class ConversationService(
                 Activity.Current = turn;
         }
 
-        var turnCostUsd = 0d;
+        // One Information line when the turn ends, on every way out: see TurnLog. Made here,
+        // before the first yield, because the trace id must come from the turn span itself.
+        // Its text gate is the option alone, stricter than captureSensitiveData above: a log
+        // line stays in Loki, so Development does not open it.
+        using var turnLog = new TurnLog(logger, context, turn, options.EnableSensitiveData ? userMessage : null);
 
         // The turn's web-search citations (#271), accumulated across every successful
         // round (a mixed tool round may also search) and rendered once under the answer.
@@ -194,7 +198,7 @@ internal sealed class ConversationService(
 
                 // A failed attempt may still bill (partial stream): its own ledger row and
                 // its cost summed into the turn — but no conversation_message rows.
-                turnCostUsd += RecordRoundCost(sink, round, turn, outcome);
+                turnLog.CostUsd += RecordRoundCost(sink, round, turn, outcome);
                 await memory.RecordUsageAsync(memoryTurn, context.InvokerId,
                     ExtractRoundUsage(sink, round, attempt, options.Model,
                         stopwatch.ElapsedMilliseconds, failed: true),
@@ -225,15 +229,17 @@ internal sealed class ConversationService(
         {
             var sink = new List<ChatResponseUpdate>();
             var outcome = new RoundOutcome();
+            turnLog.Rounds = round;
             await foreach (var renderEvent in StreamRoundAsync(chatOptions, round, sink, outcome))
                 yield return renderEvent;
 
             if (!outcome.Succeeded)
             {
+                turnLog.Finish(TurnLog.Failed, options.FailureMessage);
                 yield return new ConversationUpdate.AssistantTextDelta(options.FailureMessage);
                 turn?.SetTag("conversation.failed", true);
                 turn?.SetTag("conversation.rounds", round);
-                turn?.SetTag("conversation.cost_usd", turnCostUsd);
+                turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
                 if (captureSensitiveData)
                     turn?.SetTag("langfuse.trace.output", options.FailureMessage);
                 yield break;
@@ -245,7 +251,7 @@ internal sealed class ConversationService(
             // well-formed for the next round.
             var response = sink.ToChatResponse();
             messages.AddRange(response.Messages);
-            turnCostUsd += RecordRoundCost(sink, round, turn, outcome);
+            turnLog.CostUsd += RecordRoundCost(sink, round, turn, outcome);
             WebSearchCitations.AccumulateRound(sink, citations);
 
             var roundUsage = ExtractRoundUsage(
@@ -262,6 +268,8 @@ internal sealed class ConversationService(
 
             if (toolCalls.Count == 0)
             {
+                var answer = HadText(sink) ? response.Text : EmptyAnswerFallback;
+                turnLog.Finish(TurnLog.Answered, answer);
                 if (!HadText(sink))
                     yield return new ConversationUpdate.AssistantTextDelta(EmptyAnswerFallback);
                 if (WebSearchCitations.FormatSourceList(citations) is { } sources)
@@ -269,10 +277,9 @@ internal sealed class ConversationService(
                 logger.LogDebug("Conversation answered in {Rounds} round(s) for {Author}",
                     round, context.InvokerDisplayName);
                 turn?.SetTag("conversation.rounds", round);
-                turn?.SetTag("conversation.cost_usd", turnCostUsd);
+                turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
                 if (captureSensitiveData)
-                    turn?.SetTag("langfuse.trace.output",
-                        HadText(sink) ? response.Text : EmptyAnswerFallback);
+                    turn?.SetTag("langfuse.trace.output", answer);
                 yield break;
             }
 
@@ -283,6 +290,7 @@ internal sealed class ConversationService(
             ReanchorTurnSpan();
             foreach (var call in toolCalls)
             {
+                turnLog.ToolCalls.Add($"{call.Name}({ConversationToolset.DescribeArguments(call.Arguments)})");
                 var result = await toolset.InvokeAsync(call, cancellationToken);
                 messages.Add(new ChatMessage(ChatRole.Tool, [result]));
                 await memory.PersistToolResultAsync(memoryTurn, call.Name, result, cancellationToken);
@@ -299,6 +307,7 @@ internal sealed class ConversationService(
 
         var finalSink = new List<ChatResponseUpdate>();
         var finalOutcome = new RoundOutcome();
+        turnLog.Rounds = options.MaxToolRounds + 1;
         await foreach (var renderEvent in StreamRoundAsync(
             OpenRouterChatOptions.Create(options.ReasoningEffort, options.WebSearch),
             options.MaxToolRounds + 1, finalSink, finalOutcome))
@@ -306,15 +315,16 @@ internal sealed class ConversationService(
 
         if (!finalOutcome.Succeeded)
         {
+            turnLog.Finish(TurnLog.Failed, options.FailureMessage);
             yield return new ConversationUpdate.AssistantTextDelta(options.FailureMessage);
             turn?.SetTag("conversation.failed", true);
-            turn?.SetTag("conversation.cost_usd", turnCostUsd);
+            turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
             if (captureSensitiveData)
                 turn?.SetTag("langfuse.trace.output", options.FailureMessage);
             yield break;
         }
 
-        turnCostUsd += RecordRoundCost(finalSink, options.MaxToolRounds + 1, turn, finalOutcome);
+        turnLog.CostUsd += RecordRoundCost(finalSink, options.MaxToolRounds + 1, turn, finalOutcome);
         WebSearchCitations.AccumulateRound(finalSink, citations);
 
         var finalResponse = finalSink.ToChatResponse();
@@ -326,14 +336,15 @@ internal sealed class ConversationService(
             finalUsage.PromptTokens, finalUsage.CompletionTokens, cancellationToken);
         await memory.RecordUsageAsync(memoryTurn, context.InvokerId, finalUsage, cancellationToken);
 
+        var cappedAnswer = HadText(finalSink) ? finalResponse.Text : CapReachedFallback;
+        turnLog.Finish(TurnLog.RoundCap, cappedAnswer);
         if (!HadText(finalSink))
             yield return new ConversationUpdate.AssistantTextDelta(CapReachedFallback);
         if (WebSearchCitations.FormatSourceList(citations) is { } finalSources)
             yield return new ConversationUpdate.AssistantTextDelta($"\n{finalSources}");
-        turn?.SetTag("conversation.cost_usd", turnCostUsd);
+        turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
         if (captureSensitiveData)
-            turn?.SetTag("langfuse.trace.output",
-                HadText(finalSink) ? finalResponse.Text : CapReachedFallback);
+            turn?.SetTag("langfuse.trace.output", cappedAnswer);
     }
 
     // Whitespace-only counts as no visible text — stays consistent with the handler's
@@ -394,6 +405,64 @@ internal sealed class ConversationService(
 #pragma warning disable SCME0001 // ChatTokenUsage.Patch (JsonPatch) is experimental.
         return raw.Patch.TryGetValue("$.cost"u8, out double cost) ? cost : null;
 #pragma warning restore SCME0001
+    }
+
+    // The turn log (#341): one Information line per turn, the entry a trace in Grafana opens.
+    // The loop only wrote Debug lines, so the production log held nothing of a conversation.
+    //
+    // Written on dispose, so it covers every way out of the iterator: an answer, a failed
+    // round, the round cap, and a turn that ends early (timeout, cancellation, an exception,
+    // a consumer that stops reading). An early end keeps the outcome "aborted".
+    //
+    // The trace id is read from the turn span when the log is made, never from
+    // Activity.Current when it is written: after a yield the iterator runs on the context of
+    // its consumer. It is part of the message text because a line from this container has no
+    // scope line with the trace id.
+    //
+    // The question and the answer are kept only when Conversation:EnableSensitiveData is on.
+    // The tool arguments are always there, like in the "Tool ... args=" line of the toolset.
+    private sealed class TurnLog(
+        ILogger logger, ConversationContext context, Activity? turn, string? question) : IDisposable
+    {
+        public const string Answered = "answered";
+        public const string Failed = "failed";
+        public const string RoundCap = "round_cap";
+
+        private const string Redacted = "[redacted]";
+
+        private readonly long _startedAt = Stopwatch.GetTimestamp();
+        private readonly string _traceId = turn?.TraceId.ToString() ?? "none";
+        private readonly bool _captureText = question is not null;
+        private string _outcome = "aborted";
+        private string? _answer;
+
+        public int Rounds { get; set; }
+        public double CostUsd { get; set; }
+        public List<string> ToolCalls { get; } = [];
+
+        // Called before the last yields of a turn: a consumer that stops reading at the last
+        // delta still leaves the true outcome.
+        public void Finish(string outcome, string? answer)
+        {
+            _outcome = outcome;
+            _answer = _captureText ? answer : null;
+        }
+
+        public void Dispose() =>
+            logger.LogInformation(
+                "Conversation turn {Outcome}: invoker {InvokerId} ({InvokerName}), guild {GuildId}, channel {ChannelId}, "
+                + "rounds {Rounds}, tools [{ToolCalls}], cost ${CostUsd}, {ElapsedMs} ms, trace {TraceId}, "
+                + "question {Question}, answer {Answer}",
+                _outcome, context.InvokerId, SingleLine(context.InvokerDisplayName), context.GuildId, context.ChannelId,
+                Rounds, SingleLine(string.Join("; ", ToolCalls)), CostUsd,
+                (long)Stopwatch.GetElapsedTime(_startedAt).TotalMilliseconds, _traceId,
+                _captureText ? SingleLine(question) : Redacted, _captureText ? SingleLine(_answer) : Redacted);
+
+        // A display name, a tool argument, the question and the answer are text a person or the
+        // model wrote. A line break in one of them would start a new console line, and each
+        // console line is its own entry in Loki: it could pass for a log event of the bot.
+        private static string SingleLine(string? text) =>
+            text is null ? string.Empty : text.ReplaceLineEndings(" ");
     }
 
     // Out-channel for StreamRoundAsync (an iterator cannot return a value): whether the

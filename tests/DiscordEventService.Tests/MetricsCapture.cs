@@ -35,6 +35,17 @@ internal sealed class MetricsCapture : IDisposable
         }
     }
 
+    // Every measurement of one instrument. For an instrument with no tag of its own: the
+    // assertion must then hold whatever another test measured at the same time.
+    public List<Measured> Of(string instrument)
+    {
+        lock (_measurements)
+            return _measurements.Where(m => m.Instrument == instrument).ToList();
+    }
+
+    // An observable gauge measures nothing by itself: this does what a scrape does.
+    public void Observe() => _listener.RecordObservableInstruments();
+
     public void Dispose() => _listener.Dispose();
 
     private void Add(Instrument instrument, double value, ReadOnlySpan<KeyValuePair<string, object?>> tags)

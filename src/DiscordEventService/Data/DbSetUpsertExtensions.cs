@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using DiscordEventService.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Internal;
@@ -18,9 +19,12 @@ internal static class DbSetUpsertExtensions
         CancellationToken cancellationToken = default)
         where TEntity : class
     {
+        // The one place that knows which way an entity upsert went: counted here, by entity.
+        var result = "updated";
         var rowsAffected = await set.Where(match).ExecuteUpdateAsync(update, cancellationToken);
         if (rowsAffected == 0)
         {
+            result = "inserted";
             // No public API exposes the DbContext from a DbSet; this is the standard EF accessor.
             var db = set.GetService<ICurrentDbContext>().Context;
             try
@@ -33,9 +37,22 @@ internal static class DbSetUpsertExtensions
                 // Race: another writer inserted first — drop the failed Add and update instead.
                 db.ChangeTracker.Clear();
                 await set.Where(match).ExecuteUpdateAsync(update, cancellationToken);
+                result = "conflict";
             }
         }
+
+        BotMetrics.EntityUpserted(EntityLabel<TEntity>.Value, result);
         return await set.Where(match).Select(select).FirstOrDefaultAsync(cancellationToken);
+    }
+
+    // The metric label of an entity: the class name without "Entity", in lower case
+    // ("GuildEntity" -> "guild"). Computed once per entity type.
+    private static class EntityLabel<TEntity>
+    {
+        public static readonly string Value = BuildLabel(typeof(TEntity).Name);
+
+        private static string BuildLabel(string name) =>
+            (name.EndsWith("Entity", StringComparison.Ordinal) ? name[..^"Entity".Length] : name).ToLowerInvariant();
     }
 
     // Insert-or-get: on a 23505 race the existing row is returned UNMODIFIED (unlike UpsertAsync,

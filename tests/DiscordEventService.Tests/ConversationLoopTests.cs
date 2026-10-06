@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
@@ -6,6 +7,7 @@ using DiscordEventService.Services.Conversation;
 using DiscordEventService.Services.MemeIndexing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -77,12 +79,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         const string finalAnswer = "Found the turtle meme for you.";
         // Round 0 calls the tool with no narration text; round 1 streams the answer in two
         // deltas (to prove accumulation).
-        var client = new ScriptedChatClient((callIndex, _, _) => callIndex switch
-        {
-            0 => StreamToolCall("call_1", "meme_search",
-                new Dictionary<string, object?> { ["query"] = "zolw", ["limit"] = 5 }),
-            _ => StreamText("Found the turtle ", "meme for you."),
-        });
+        var client = ScriptToolThenAnswer("Found the turtle ", "meme for you.");
 
         var service = BuildService(client);
         var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester", IsAdmin: false, ChannelId: 7UL);
@@ -183,12 +180,122 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         Assert.Equal([true, true, true, false], client.CallHadTools);
     }
 
-    private ConversationService BuildService(IChatClient client, int maxToolRounds = 8)
+    // #341: one Information line per turn. With the sensitive-data gate off (the default) it
+    // names who, where, the rounds, the tool calls and the trace, and no text of the person
+    // or of the model.
+    [Fact]
+    public async Task GenerateReplyAsync_SensitiveDataOff_TurnLogHasToolsAndTraceButNoQuestionOrAnswer()
+    {
+        const string question = "znajdz mema o zolwiu";
+        const string answer = "Found the turtle meme for you.";
+        using var spans = ListenToConversationSpans();
+        var log = new RecordingLogger();
+        var service = BuildService(ScriptToolThenAnswer(answer), logger: log.For<ConversationService>());
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester", IsAdmin: false, ChannelId: 7UL);
+
+        await CollectAsync(service.GenerateReplyAsync(question, context, CancellationToken.None));
+
+        var line = Assert.Single(log.Entries, e => e.Level == LogLevel.Information).Message;
+        Assert.StartsWith("Conversation turn answered: invoker 42 (tester), guild 1, channel 7, rounds 2, ", line);
+        Assert.Contains("tools [meme_search(query=zolw, limit=5)]", line);
+        // The trace id of this turn's own span. The listener is for the whole process, so it
+        // also holds the turns of the tests that run at the same time.
+        var traceId = System.Text.RegularExpressions.Regex.Match(line, "trace ([0-9a-f]{32}),").Groups[1].Value;
+        Assert.Contains(traceId, spans.Snapshot());
+        Assert.EndsWith("question [redacted], answer [redacted]", line);
+        Assert.DoesNotContain(question, line);
+        Assert.DoesNotContain(answer, line);
+    }
+
+    [Fact]
+    public async Task GenerateReplyAsync_SensitiveDataOn_TurnLogHasQuestionAndAnswer()
+    {
+        // The line breaks are what a person can type to forge a log line: the turn log must
+        // stay one line.
+        const string question = "znajdz mema\ninfo: Forged[0]";
+        const string answer = "Found the turtle meme\r\nfor you.";
+        var log = new RecordingLogger();
+        var service = BuildService(
+            ScriptToolThenAnswer(answer), enableSensitiveData: true, logger: log.For<ConversationService>());
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "te\nster", IsAdmin: false, ChannelId: 7UL);
+
+        await CollectAsync(service.GenerateReplyAsync(question, context, CancellationToken.None));
+
+        var line = Assert.Single(log.Entries, e => e.Level == LogLevel.Information).Message;
+        Assert.Contains("invoker 42 (te ster)", line);
+        Assert.EndsWith("question znajdz mema info: Forged[0], answer Found the turtle meme for you.", line);
+        Assert.DoesNotContain('\n', line);
+    }
+
+    // A turn the consumer leaves early (what a timeout does) still writes its line.
+    [Fact]
+    public async Task GenerateReplyAsync_ConsumerStopsEarly_TurnLogSaysAborted()
+    {
+        var log = new RecordingLogger();
+        var service = BuildService(ScriptToolThenAnswer("unused"), logger: log.For<ConversationService>());
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester", IsAdmin: false, ChannelId: 7UL);
+
+        await foreach (var _ in service.GenerateReplyAsync("q", context, CancellationToken.None))
+            break;
+
+        var line = Assert.Single(log.Entries, e => e.Level == LogLevel.Information).Message;
+        Assert.StartsWith("Conversation turn aborted: ", line);
+    }
+
+    private static ScriptedChatClient ScriptToolThenAnswer(params string[] answerDeltas) =>
+        new((callIndex, _, _) => callIndex switch
+        {
+            0 => StreamToolCall("call_1", "meme_search",
+                new Dictionary<string, object?> { ["query"] = "zolw", ["limit"] = 5 }),
+            _ => StreamText(answerDeltas),
+        });
+
+    private static ConversationSpans ListenToConversationSpans() => new();
+
+    // Makes the conversation source start real spans (with no listener StartActivity returns
+    // null and a turn has no trace id) and keeps the trace id of each turn span.
+    private sealed class ConversationSpans : IDisposable
+    {
+        private readonly ActivityListener _listener;
+
+        public ConversationSpans()
+        {
+            _listener = new ActivityListener
+            {
+                ShouldListenTo = source => source.Name == ConversationTelemetry.SourceName,
+                Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+                ActivityStarted = activity =>
+                {
+                    if (activity.OperationName == "conversation.turn")
+                    {
+                        lock (TurnTraceIds)
+                            TurnTraceIds.Add(activity.TraceId.ToString());
+                    }
+                },
+            };
+            ActivitySource.AddActivityListener(_listener);
+        }
+
+        private List<string> TurnTraceIds { get; } = [];
+
+        public List<string> Snapshot()
+        {
+            lock (TurnTraceIds)
+                return [.. TurnTraceIds];
+        }
+
+        public void Dispose() => _listener.Dispose();
+    }
+
+    private ConversationService BuildService(
+        IChatClient client, int maxToolRounds = 8, bool enableSensitiveData = false,
+        ILogger<ConversationService>? logger = null)
     {
         var conversationOptions = Options.Create(new ConversationOptions
         {
             MaxToolRounds = maxToolRounds,
             ReasoningEffort = "low",
+            EnableSensitiveData = enableSensitiveData,
         });
         var openRouterOptions = Options.Create(new OpenRouterOptions { ApiKey = "test-key" });
 
@@ -211,7 +318,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             conversationOptions,
             openRouterOptions,
             new TestHostEnvironment(),
-            NullLogger<ConversationService>.Instance);
+            logger ?? NullLogger<ConversationService>.Instance);
     }
 
     private static async Task<List<ConversationUpdate>> CollectAsync(IAsyncEnumerable<ConversationUpdate> stream)
