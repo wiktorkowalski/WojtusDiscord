@@ -1,6 +1,7 @@
 using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
@@ -20,6 +21,9 @@ internal sealed class FailedEventService(DiscordDbContext db, ILogger<FailedEven
         DateTime? eventReceivedAt = null,
         Guid? correlationId = null)
     {
+        // Every failure of the event pipeline, hard or soft, comes through here once.
+        BotMetrics.EventFailureRecorded(eventType, handlerName);
+
         try
         {
             var failedEvent = new FailedEventEntity
@@ -52,6 +56,7 @@ internal sealed class FailedEventService(DiscordDbContext db, ILogger<FailedEven
                 "CRITICAL: Failed to record event failure. Original error: {EventType} in {HandlerName} - {OriginalExceptionMessage}",
                 eventType, handlerName, exception.Message);
 
+            BotMetrics.DeadLetterWritten(eventType, handlerName);
             await WriteDeadLetterFallbackAsync(
                 eventType, handlerName, guildId, channelId, userId, eventJson, exception, ex);
         }

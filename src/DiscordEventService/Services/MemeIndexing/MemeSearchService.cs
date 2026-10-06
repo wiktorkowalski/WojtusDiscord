@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services.MemeIndexing;
@@ -98,6 +99,9 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         var rows = tokens.Count == 0
             ? []
             : await QueryAsync(guildId, query, tokens, rankTokens, offset, limit, cancellationToken);
+
+        // No caller = the dashboard tester (#395).
+        BotMetrics.MemeSearched(caller?.Source.ToString() ?? "Tester", rows.Count, stopwatch.Elapsed);
 
         if (caller is not null)
             searchLog.Write(NewLogRow(searchedAtUtc, guildId, query, offset, limit, caller, tokens, rankTokens, rows, stopwatch.Elapsed));

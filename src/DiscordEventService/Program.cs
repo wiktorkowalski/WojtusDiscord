@@ -24,6 +24,14 @@ if (File.Exists(envPath)) Env.Load(envPath);
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Log events by level for /metrics. The DSharpPlus child container registers its own copy.
+builder.Logging.AddProvider(new LogEventCounterProvider());
+
+// A log line written inside a traced operation carries its trace and span id, as one more
+// scope line under the unchanged "warn: Category[0]" prefix (Logging:Console:IncludeScopes).
+builder.Logging.Configure(options => options.ActivityTrackingOptions =
+    ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
+
 // Fail fast on DI misconfigurations: ValidateOnBuild constructs every
 // registered service at host build time so missing/unresolvable dependencies
 // surface immediately, not when the dependent path first fires at runtime.
@@ -110,6 +118,10 @@ builder.Services.AddScoped<MessageMentionsBackfillService>();
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<DiscordDbContext>();
 
+// Metrics for the Prometheus scrape (always on) and traces for Langfuse and Tempo (each only
+// when configured).
+builder.Services.AddBotTelemetry(builder.Configuration, builder.Environment);
+
 // #193: /health reports the deployed commit + runtime state; resolved once, immutable.
 builder.Services.AddSingleton(BuildInfo.FromEntryAssembly());
 
@@ -177,11 +189,11 @@ builder.Services.AddScoped<MemeBenchmarkJob>();
 builder.Services.AddScoped<MemeIndexingJob>();
 builder.Services.AddScoped<MemeIndexSweepJob>();
 
-// Conversational assistant (#238, ADR-0006): the MEAI IChatClient over OpenRouter +
-// Langfuse OTel export. Registers the singleton chat client in the root container; the
+// Conversational assistant (#238, ADR-0006): the MEAI IChatClient over OpenRouter.
+// Registers the singleton chat client in the root container; the
 // DSharpPlus child container forwards to it (ConversationRegistration). ConversationService
 // is a shared scoped service (CoreServiceTypes); the handler lives in DiscordClientRegistration.
-builder.Services.AddConversationFeature(builder.Configuration, builder.Environment);
+builder.Services.AddConversationFeature(builder.Configuration);
 
 // Hangfire. With a fixed InvisibilityTimeout a job outliving it gets presumed
 // dead, re-queued, and the original execution cancelled — observed live on the
@@ -212,6 +224,10 @@ builder.Services.AddHangfireServer(options =>
     options.Queues = ["backfill", "default"];
 });
 
+// The Hangfire gauges on /metrics. JobStorage comes from DI: JobStorage.Current is null
+// until app.Run().
+builder.Services.AddHostedService<HangfireStatisticsService>();
+
 builder.Services.AddScoped<BackfillJobExecutor>();
 builder.Services.AddScoped<RolesBackfillJob>();
 builder.Services.AddScoped<EmojisBackfillJob>();
@@ -234,7 +250,13 @@ var app = builder.Build();
     // §6: hand the built client to the accessor before anything uses it (handlers fire only after
     // app.Run). The action services read it from here instead of resolving DiscordClient out of the
     // child container, which would re-enter the client's own construction and deadlock boot.
-    app.Services.GetRequiredService<DiscordClientAccessor>().Client = discordClient;
+    var discordClientAccessor = app.Services.GetRequiredService<DiscordClientAccessor>();
+    discordClientAccessor.Client = discordClient;
+
+    // The sources of the gateway and build gauges. The gateway one reads the same in-memory
+    // state as /health.
+    BotMetrics.SetBuildInfo(app.Services.GetRequiredService<BuildInfo>());
+    BotMetrics.SetGatewayStateReader(() => HealthResponseWriter.ReadGatewayState(discordClientAccessor));
     StartupValidator.ValidateChildContainer(
         discordClient.ServiceProvider,
         app.Services.GetRequiredService<ILogger<Program>>());
@@ -264,7 +286,7 @@ await app.Services.GetRequiredService<StartupBackfillSweep>().SweepAsync();
 
 // Serve the bundled dashboard SPA (Vite build output in wwwroot). Must precede
 // the route-mapping below; the SPA fallback is registered LAST so it never
-// swallows /api, /health, or /hangfire.
+// swallows /api, /health, /metrics, or /hangfire.
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -276,6 +298,9 @@ app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks
 {
     ResponseWriter = HealthResponseWriter.WriteAsync,
 });
+
+// Prometheus scrape of the meters registered in AddBotTelemetry.
+app.MapPrometheusScrapingEndpoint();
 
 app.MapHangfireDashboard("/hangfire");
 
@@ -310,7 +335,8 @@ app.MapMemeIndexEndpoints();
 app.MapMemeAnnotationImportEndpoints();
 
 // SPA fallback — LAST so it only catches client-side routes (any non-/api,
-// non-/health, non-/hangfire GET) and serves index.html for deep links.
+// non-/health, non-/metrics, non-/hangfire GET) and serves index.html for deep links.
+// A mapped endpoint wins over this catch-all, so /metrics never answers with index.html.
 app.MapFallbackToFile("index.html");
 
 app.Run();

@@ -1,28 +1,23 @@
 using System.ClientModel;
 using System.ClientModel.Primitives;
-using System.Text;
 using DiscordEventService.Configuration;
 using DiscordEventService.Infrastructure;
 using DiscordEventService.Services.Conversation.Interaction;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using OpenAI;
-using OpenTelemetry;
-using OpenTelemetry.Exporter;
-using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
 
 namespace DiscordEventService.Services.Conversation;
 
-// Wires the conversational assistant's IChatClient (MEAI over OpenRouter) plus its
-// Langfuse OTel export. The IChatClient is a process-wide singleton — the DSharpPlus
-// child container forwards to this one instance (like IBackgroundJobClient), so there
-// is a single OTel pipeline and HTTP stack. The TracerProvider is root-only.
+// Wires the conversational assistant's IChatClient (MEAI over OpenRouter). The IChatClient
+// is a process-wide singleton — the DSharpPlus child container forwards to this one instance
+// (like IBackgroundJobClient), so there is a single OTel pipeline and HTTP stack. The
+// TracerProvider that exports its spans is root-only (TelemetryRegistration).
 internal static class ConversationRegistration
 {
-    // Root container: bind options, build the singleton IChatClient, wire Langfuse.
+    // Root container: bind options, build the singleton IChatClient.
     public static IServiceCollection AddConversationFeature(
-        this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
+        this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<ConversationOptions>()
             .Bind(configuration.GetSection(ConversationOptions.SectionName));
@@ -50,7 +45,6 @@ internal static class ConversationRegistration
         // no-DiscordClient-in-DI rule as the action services.
         services.AddSingleton<IUsageAlertNotifier, DiscordUsageAlertNotifier>();
 
-        AddLangfuseTracing(services, configuration, environment);
         return services;
     }
 
@@ -133,36 +127,5 @@ internal static class ConversationRegistration
                 configure: client => client.EnableSensitiveData =
                     conversation.EnableSensitiveData || environment.IsDevelopment())
             .Build();
-    }
-
-    private static void AddLangfuseTracing(
-        IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
-    {
-        var options = configuration.GetSection(ConversationOptions.SectionName).Get<ConversationOptions>()
-            ?? new ConversationOptions();
-        if (!options.LangfuseConfigured)
-            return;
-
-        var endpoint = new Uri($"{options.LangfuseHost!.TrimEnd('/')}/api/public/otel/v1/traces");
-        var authorization = "Authorization=Basic " + Convert.ToBase64String(
-            Encoding.UTF8.GetBytes($"{options.LangfusePublicKey}:{options.LangfuseSecretKey}"));
-
-        // HttpProtobuf, not gRPC — Langfuse's OTLP endpoint silently no-ops on gRPC.
-        // langfuse.environment separates dev and prod traces inside the one shared
-        // Langfuse project (both export with the same keys).
-        services.AddOpenTelemetry().WithTracing(tracing => tracing
-            .ConfigureResource(resource => resource
-                .AddService("discord-event-service")
-                .AddAttributes(new Dictionary<string, object>
-                {
-                    ["langfuse.environment"] = environment.EnvironmentName.ToLowerInvariant(),
-                }))
-            .AddSource(ConversationTelemetry.SourceName)
-            .AddOtlpExporter(exporter =>
-            {
-                exporter.Endpoint = endpoint;
-                exporter.Protocol = OtlpExportProtocol.HttpProtobuf;
-                exporter.Headers = authorization;
-            }));
     }
 }

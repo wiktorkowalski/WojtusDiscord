@@ -71,7 +71,8 @@ internal static class HealthResponseWriter
         }
     }
 
-    private static (bool? Connected, int? LatencyMs) ReadGatewayState(DiscordClientAccessor accessor)
+    // Also the source of the gateway gauges on /metrics (BotMetrics).
+    internal static (bool? Connected, int? LatencyMs) ReadGatewayState(DiscordClientAccessor accessor)
     {
         // The accessor throws until Program.cs sets it just before app.Run — a probe that
         // races boot (Docker HEALTHCHECK starts at 5s) reports connected=null, not a 500.

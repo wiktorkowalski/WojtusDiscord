@@ -1,5 +1,6 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Services;
@@ -36,6 +37,7 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         };
         db.BotDowntimeIntervals.Add(row);
         await db.SaveChangesAsync();
+        BotMetrics.DowntimeIntervalWritten(type.ToString());
         logger.LogInformation(
             "Opened downtime row {DowntimeId} with type {DowntimeType} via {DetectionMethod}",
             row.Id, type, method);
@@ -83,6 +85,7 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         };
         db.BotDowntimeIntervals.Add(row);
         await db.SaveChangesAsync();
+        BotMetrics.DowntimeIntervalWritten(row.Type.ToString());
         logger.LogWarning(
             "Recorded DbUnreachable downtime {DowntimeId}: {FailedWriteCount} heartbeat writes failed over {DurationSeconds:F0}s",
             row.Id, window.FailedWriteCount, (window.EndedAtUtc - window.StartedAtUtc).TotalSeconds);
@@ -218,6 +221,7 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         };
         db.BotDowntimeIntervals.Add(row);
         await db.SaveChangesAsync();
+        BotMetrics.DowntimeIntervalWritten(row.Type.ToString());
         logger.LogInformation(
             "Recorded closed inferred downtime row {DowntimeId} for a gap the stop path did not record: {StartedAtUtc:O} to {EndedAtUtc:O} ({GapSeconds:F0}s)",
             row.Id, row.StartedAtUtc, now, gap.TotalSeconds);

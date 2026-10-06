@@ -1,5 +1,6 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Infrastructure;
 
 namespace DiscordEventService.Jobs;
 
@@ -191,9 +192,11 @@ internal abstract class BackfillJobBase
             try
             {
                 await processItem(item);
+                BotMetrics.BackfillItemFinished(BackfillType.ToString(), failed: false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                BotMetrics.BackfillItemFinished(BackfillType.ToString(), failed: true);
                 logger.LogWarning(ex, "Backfill failed for item {ItemId}, continuing with next", keyOf(item));
                 await RecordErrorAsync(db, checkpoint, ex, cancellationToken);
             }

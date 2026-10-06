@@ -3,6 +3,7 @@ using System.Text.Json;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Infrastructure;
 using DiscordEventService.Jobs;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -108,7 +109,7 @@ internal sealed class MemeAttachmentIndexer(
             // Transient refresh failure — the attachment itself was never
             // attempted, so this must stay retryable without burning one of
             // the sweep's capped attempts.
-            Fail(row, counters, "transient: refresh-urls batch failed");
+            Fail(row, counters, "transient: refresh-urls batch failed", "failed_transient");
             return;
         }
 
@@ -442,6 +443,7 @@ internal sealed class MemeAttachmentIndexer(
                     openRouter.ReasoningEffort, result.Metadata!, result.RawContent, DateTime.UtcNow);
                 MarkIndexed(row);
                 counters.Indexed++;
+                BotMetrics.MemeIndexOutcome("indexed");
                 break;
 
             // A refusal is this writer's outcome, not the attachment's (#373): the marker is what
@@ -476,6 +478,7 @@ internal sealed class MemeAttachmentIndexer(
     private void Skip(MemeIndexEntity row, MemeIndexRunCounters counters, string reason, AnnotationKey? refusedBy = null)
     {
         counters.Skipped++;
+        BotMetrics.MemeIndexOutcome("skipped");
 
         // A refusal marks the row whatever its status. An attachment-level skip is terminal for
         // every writer, so it takes an earlier marker away: with it the manual backfill would
@@ -512,7 +515,7 @@ internal sealed class MemeAttachmentIndexer(
         // Mirrors the increment: an Indexed row was never charged.
         if (row.Status != MemeIndexStatus.Indexed)
             row.AttemptCount--;
-        Fail(row, counters, error);
+        Fail(row, counters, error, "failed_transient");
     }
 
     // Only SQLSTATE 22/23 (the data itself was refused) is deterministic and charges an attempt;
@@ -527,11 +530,11 @@ internal sealed class MemeAttachmentIndexer(
         if (IsDataRejection(ex))
         {
             row.AttemptCount++;
-            Fail(row, counters, $"poisoned: {detail}");
+            Fail(row, counters, $"poisoned: {detail}", "failed_rejected");
         }
         else
         {
-            Fail(row, counters, $"transient: save failed: {detail}");
+            Fail(row, counters, $"transient: save failed: {detail}", "failed_transient");
         }
     }
 
@@ -539,9 +542,11 @@ internal sealed class MemeAttachmentIndexer(
         ex.GetBaseException() is PostgresException pg
         && (pg.SqlState.StartsWith("22", StringComparison.Ordinal) || pg.SqlState.StartsWith("23", StringComparison.Ordinal));
 
-    private void Fail(MemeIndexEntity row, MemeIndexRunCounters counters, string error)
+    // metricOutcome: which kind of failure the caller saw. The run counters do not split them.
+    private void Fail(MemeIndexEntity row, MemeIndexRunCounters counters, string error, string metricOutcome = BotMetrics.OutcomeFailed)
     {
         counters.Failed++;
+        BotMetrics.MemeIndexOutcome(metricOutcome);
         if (StaysIndexed(row, error))
             return;
 
