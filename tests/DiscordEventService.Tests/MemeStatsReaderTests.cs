@@ -614,6 +614,44 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         Assert.Single(free!.Hits);
     }
 
+    // #408: the slots cap how many searches run at one time, not how many a minute.
+    [Fact]
+    public async Task SearchAsync_OverTheSearchesOfTheMinute_ReturnsNullAndRunsNoSearch()
+    {
+        await _data.AddIndexedAsync(1UL, a => a.Tags = ["rakieta"]);
+        using var limits = new MemeDashboardLimits { SearchesPerMinute = 2 };
+
+        var first = await NewReader(limits: limits).SearchAsync("rakieta", 5, CancellationToken.None);
+        var second = await NewReader(limits: limits).SearchAsync("rakieta", 5, CancellationToken.None);
+        // A disposed context: a search that ran would throw, so null means nothing touched the database.
+        var disposed = NewContext();
+        await disposed.DisposeAsync();
+        var overTheLimit = await NewReader(db: disposed, limits: limits).SearchAsync("rakieta", 5, CancellationToken.None);
+
+        Assert.Single(first!.Hits);
+        Assert.Single(second!.Hits);
+        Assert.Null(overTheLimit);
+        // The slot it held for the check is free again.
+        Assert.Equal(MemeDashboardLimits.MaxConcurrentSearches, limits.SearchGate.CurrentCount);
+    }
+
+    // The budget is one for every caller: requests the gate turns away must not use it up.
+    [Fact]
+    public async Task SearchAsync_TurnedAwayByTheGate_SpendsNoPermitOfTheMinute()
+    {
+        await _data.AddIndexedAsync(1UL, a => a.Tags = ["rakieta"]);
+        using var limits = new MemeDashboardLimits { SearchesPerMinute = 1 };
+        for (var i = 0; i < MemeDashboardLimits.MaxConcurrentSearches; i++)
+            await limits.SearchGate.WaitAsync();
+
+        var busy = await NewReader(limits: limits).SearchAsync("rakieta", 5, CancellationToken.None);
+        limits.SearchGate.Release(MemeDashboardLimits.MaxConcurrentSearches);
+        var free = await NewReader(limits: limits).SearchAsync("rakieta", 5, CancellationToken.None);
+
+        Assert.Null(busy);
+        Assert.Single(free!.Hits);
+    }
+
     // The wait for an answer that another request computes has an end: then "busy", not a longer queue.
     [Fact]
     public async Task GetIndexAsync_AnotherRequestHoldsTheGatePastTheWaitLimit_ReturnsNullAndComputesNothing()

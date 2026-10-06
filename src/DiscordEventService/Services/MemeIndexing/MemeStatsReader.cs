@@ -19,7 +19,7 @@ public interface IMemeStatsReader
 
     Task<MemeSearchUsageDto?> GetSearchUsageAsync(int days, CancellationToken cancellationToken);
 
-    // Null = too many tester searches run right now; nothing was searched.
+    // Null = too many tester searches, at one time or in this minute; nothing was searched.
     Task<MemeSearchResultDto?> SearchAsync(string query, int limit, CancellationToken cancellationToken);
 }
 
@@ -207,7 +207,9 @@ internal sealed class MemeStatsReader(
     }
 
     // The search scans every annotation and the endpoint has no auth: a fixed number may run
-    // at one time, and one more is turned away at once instead of queued.
+    // per minute and a fixed number at one time, and one more is turned away at once instead
+    // of queued. The slot comes first: the budget of the minute counts only searches that had
+    // a slot, so requests the gate turns away cannot use it up for every caller.
     public async Task<MemeSearchResultDto?> SearchAsync(string query, int limit, CancellationToken cancellationToken)
     {
         if (!await limits.SearchGate.WaitAsync(TimeSpan.Zero, cancellationToken))
@@ -215,6 +217,11 @@ internal sealed class MemeStatsReader(
 
         try
         {
+            // A permit of a fixed window does not come back when the lease is disposed.
+            using var permit = limits.SearchBudget.AttemptAcquire();
+            if (!permit.IsAcquired)
+                return null;
+
             return await SearchCoreAsync(query, limit, cancellationToken);
         }
         finally

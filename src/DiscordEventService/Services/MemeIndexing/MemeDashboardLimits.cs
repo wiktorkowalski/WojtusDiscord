@@ -13,6 +13,10 @@ internal sealed class MemeDashboardLimits : IDisposable
     // Tester searches that may run at one time. One more gets 429.
     public const int MaxConcurrentSearches = 2;
 
+    // Tester searches per minute. The cap above alone lets a caller keep two full-corpus
+    // searches running all the time (#408). One more gets 429.
+    public const int MaxSearchesPerMinute = 30;
+
     // Signed thumbnail URLs kept in memory. An entry is one short string.
     public const int MaxCachedThumbnails = 2000;
 
@@ -42,7 +46,18 @@ internal sealed class MemeDashboardLimits : IDisposable
     // the wait must have an end. Settable so a test does not wait the real time.
     public TimeSpan AnswerWaitTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
+    // The permit limit of SearchBudget. Settable so a test does not run MaxSearchesPerMinute
+    // searches to reach it.
+    public int SearchesPerMinute { get; init; } = MaxSearchesPerMinute;
+
+    // Made on first use: a rate limiter takes its limit when it is built, and an init
+    // property is set after the field initializers run.
+    private readonly Lazy<RateLimiter> _searchBudget;
+
     private IndexSnapshot? _index;
+
+    public MemeDashboardLimits() =>
+        _searchBudget = new Lazy<RateLimiter>(() => PerMinute(SearchesPerMinute));
 
     // One request computes a search-usage answer; the others wait and read what it kept.
     public SemaphoreSlim SearchUsageGate { get; } = new(1, 1);
@@ -55,6 +70,10 @@ internal sealed class MemeDashboardLimits : IDisposable
 
     public SemaphoreSlim SearchGate { get; } = new(MaxConcurrentSearches, MaxConcurrentSearches);
 
+    // A search takes a permit after it has a slot of SearchGate: a request the gate turns away
+    // spends none. No queue: over the limit a search is turned away at once.
+    public RateLimiter SearchBudget => _searchBudget.Value;
+
     // One refresh at a time, with a queue that has a limit. A request that waited reads the
     // cache again before it calls Discord, so requests for one image at the same time make one
     // call. A waiter that gives up (timeout, client gone) leaves the queue; a lease is
@@ -66,12 +85,7 @@ internal sealed class MemeDashboardLimits : IDisposable
         QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
     });
 
-    public RateLimiter RefreshBudget { get; } = new FixedWindowRateLimiter(new FixedWindowRateLimiterOptions
-    {
-        PermitLimit = MaxRefreshesPerMinute,
-        Window = TimeSpan.FromMinutes(1),
-        QueueLimit = 0,
-    });
+    public RateLimiter RefreshBudget { get; } = PerMinute(MaxRefreshesPerMinute);
 
     // Its own cache, with a size limit: the application's shared IMemoryCache has none.
     public MemoryCache Thumbnails { get; } = new(new MemoryCacheOptions { SizeLimit = MaxCachedThumbnails });
@@ -88,10 +102,20 @@ internal sealed class MemeDashboardLimits : IDisposable
         SearchUsageGate.Dispose();
         SearchUsage.Dispose();
         SearchGate.Dispose();
+        if (_searchBudget.IsValueCreated)
+            _searchBudget.Value.Dispose();
         RefreshSlots.Dispose();
         RefreshBudget.Dispose();
         Thumbnails.Dispose();
     }
+
+    // A budget of one minute with no queue: over the limit a request is turned away at once.
+    private static FixedWindowRateLimiter PerMinute(int permitLimit) => new(new FixedWindowRateLimiterOptions
+    {
+        PermitLimit = permitLimit,
+        Window = TimeSpan.FromMinutes(1),
+        QueueLimit = 0,
+    });
 
     private sealed record IndexSnapshot(MemeIndexDto Index, DateTime ExpiresAtUtc);
 }
