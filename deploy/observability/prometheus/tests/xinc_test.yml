@@ -1,0 +1,35 @@
+rule_files: []
+evaluation_interval: 1m
+tests:
+  - interval: 15s
+    input_series:
+      - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
+        values: '1000x240 stale 4600x480'
+      - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
+        values: '0+15x240 stale 0+15x480'
+      # busy counter, 20 per minute, both lives
+      - series: 'busy_total{job="wojtusdiscord",instance="b"}'
+        values: '0+5x240 stale 0+5x480'
+      # boot-time counter: 1 right after every start (guild download)
+      - series: 'boot_total{job="wojtusdiscord",instance="b"}'
+        values: '_ 1x239 stale _ 1x479'
+      # rare counter: 1 in life 1 at 30m; reborn with the same value 3 min after the restart
+      - series: 'rare_total{job="wojtusdiscord",instance="b"}'
+        values: '_x120 1x120 stale _x12 1x468'
+      # rare counter reborn with a larger value 20 min after the restart, then +1 at 100m
+      - series: 'late_total{job="wojtusdiscord",instance="b"}'
+        values: '_x120 1x120 stale _x80 3x80 4x320'
+      # one failed scrape at 90m (stale marker, then the same process answers again)
+      - series: 'blip_total{job="wojtusdiscord",instance="b"}'
+        values: '_x120 7x120 stale 2x119 stale 2x360'
+    promql_expr_test:
+      - {expr: 'sum(sum_over_time(((busy_total{job="wojtusdiscord"} - (((last_over_time(busy_total{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (busy_total{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (busy_total{job="wojtusdiscord"} + 0))[30m:1m]))', eval_time: 50m, exp_samples: [{labels: '{}', value: 600}]}
+      - {expr: 'sum(sum_over_time(((busy_total{job="wojtusdiscord"} - (((last_over_time(busy_total{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (busy_total{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (busy_total{job="wojtusdiscord"} + 0))[30m:1m]))', eval_time: 75m, exp_samples: [{labels: "{}", value: 590}]}
+      - {expr: 'sum(sum_over_time(((busy_total{job="wojtusdiscord"} - (((last_over_time(busy_total{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (busy_total{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (busy_total{job="wojtusdiscord"} + 0))[30m:1m]))', eval_time: 110m, exp_samples: [{labels: '{}', value: 600}]}
+      - {expr: 'sum(sum_over_time(((boot_total{job="wojtusdiscord"} - (((last_over_time(boot_total{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (boot_total{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (boot_total{job="wojtusdiscord"} + 0))[2h:1m]))', eval_time: 120m, exp_samples: [{labels: '{}', value: 2}]}
+      - {expr: 'sum(sum_over_time(((boot_total{job="wojtusdiscord"} - (((last_over_time(boot_total{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (boot_total{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (boot_total{job="wojtusdiscord"} + 0))[30m:1m]))', eval_time: 75m, exp_samples: [{labels: '{}', value: 1}]}
+      - {expr: 'sum(sum_over_time(((rare_total{job="wojtusdiscord"} - (((last_over_time(rare_total{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (rare_total{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (rare_total{job="wojtusdiscord"} + 0))[2h:1m]))', eval_time: 120m, exp_samples: [{labels: '{}', value: 2}]}
+      - {expr: 'sum(sum_over_time(((late_total{job="wojtusdiscord"} - (((last_over_time(late_total{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (late_total{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (late_total{job="wojtusdiscord"} + 0))[2h:1m]))', eval_time: 120m, exp_samples: [{labels: '{}', value: 5}]}
+      - {expr: 'sum(sum_over_time(((blip_total{job="wojtusdiscord"} - (((last_over_time(blip_total{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (blip_total{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (blip_total{job="wojtusdiscord"} + 0))[2h:1m]))', eval_time: 120m, exp_samples: [{labels: '{}', value: 9}]}
+      # increase() for comparison: it misses every series birth
+      - {expr: 'sum(increase(boot_total[2h]))', eval_time: 120m, exp_samples: [{labels: '{}', value: 0}]}

@@ -1,0 +1,204 @@
+rule_files: [../wojtusdiscord-alerts.yml]
+evaluation_interval: 1m
+tests:
+  # A dead letter that creates its series: fires, then clears after the 30 m window.
+  - interval: 1m
+    input_series:
+      - series: 'wojtus_event_dead_letters_total{job="wojtusdiscord",instance="b",event_type="MessageCreated",handler="H"}'
+        values: '_x20 1x80'
+      - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
+        values: '1000x100'
+      - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
+        values: '5000+60x100'
+    alert_rule_test:
+      - eval_time: 19m
+        alertname: WojtusEventDeadLetter
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: WojtusEventDeadLetter
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord, event_type: MessageCreated, handler: H}
+            exp_annotations:
+              summary: "Dead letter for MessageCreated in H"
+              description: "The database refused a failed-event row and the bot wrote it to the JSONL fallback file. The row needs a manual replay. Check Postgres and the fallback file on the bot volume."
+      - eval_time: 60m
+        alertname: WojtusEventDeadLetter
+        exp_alerts: []
+  # One restart on a healthy bot: counters reset, gateway away for one scrape. Nothing fires.
+  - interval: 15s
+    input_series:
+      - series: 'wojtus_events_total{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",outcome="ok"}'
+        values: '0+5x240 stale 0+5x240'
+      - series: 'wojtus_event_failures_total{job="wojtusdiscord",instance="b",event_type="X",handler="H"}'
+        values: '5x240 stale _x12 1x227'
+      - series: 'wojtus_events_total{job="wojtusdiscord",instance="b",event_type="X",outcome="failed"}'
+        values: '5x240 stale _x12 1x227'
+      - series: 'wojtus_gateway_connected{job="wojtusdiscord",instance="b"}'
+        values: '1x240 stale 0 1x239'
+      - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
+        values: '1000x240 stale 4600x240'
+      - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
+        values: '0+15x240 stale 0+15x240'
+      - series: 'wojtus_heartbeat_writes_total{job="wojtusdiscord",instance="b",outcome="ok"}'
+        values: '0+3x240 stale 0+3x240'
+      - series: 'wojtus_log_events_total{job="wojtusdiscord",instance="b",level="error"}'
+        values: '6x240 stale _x4 6x235'
+      - series: 'wojtus_db_unwritable_window_pending{job="wojtusdiscord",instance="b"}'
+        values: '0x240 stale 0x240'
+    alert_rule_test:
+      - {eval_time: 61m, exp_alerts: [], alertname: WojtusGatewayDisconnected}
+      - {eval_time: 70m, exp_alerts: [], alertname: WojtusEventHandlerFailures}
+      - {eval_time: 70m, exp_alerts: [], alertname: WojtusEventFailureRatioHigh}
+      - {eval_time: 75m, exp_alerts: [], alertname: WojtusErrorLogBurst}
+      - {eval_time: 70m, exp_alerts: [], alertname: WojtusRestartLoop}
+      - {eval_time: 70m, exp_alerts: [], alertname: WojtusHeartbeatWriteFailures}
+      - {eval_time: 70m, exp_alerts: [], alertname: WojtusDbUnwritable}
+    promql_expr_test:
+      - expr: 'sum(sum_over_time(((wojtus_log_events_total{job="wojtusdiscord",level=~"error|critical"} - (((last_over_time(wojtus_log_events_total{job="wojtusdiscord",level=~"error|critical"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (wojtus_log_events_total{job="wojtusdiscord",level=~"error|critical"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (wojtus_log_events_total{job="wojtusdiscord",level=~"error|critical"} + 0))[15m:1m]))'
+        eval_time: 70m
+        exp_samples: [{labels: '{}', value: 6}]
+  # Real problems fire.
+  - interval: 15s
+    input_series:
+      - series: 'wojtus_gateway_connected{job="wojtusdiscord",instance="b"}'
+        values: '1x40 0x40'
+      - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
+        values: '1x20 2x20 3x20 4x20 5x20'
+      - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
+        values: '0+15x20 0+15x20 0+15x20 0+15x20 0+15x20'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: WojtusGatewayDisconnected
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord, job: wojtusdiscord, instance: b}
+            exp_annotations:
+              summary: "The bot is not connected to the Discord gateway"
+              description: "The process runs and answers scrapes, but wojtus_gateway_connected is 0 for 5 minutes. No event is ingested. Check the bot log for socket close codes and Discord status."
+      - eval_time: 24m
+        alertname: WojtusRestartLoop
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord, job: wojtusdiscord, instance: b}
+            exp_annotations:
+              summary: "The bot restarted 4 times in one hour"
+              description: "Check 'docker logs discord-event-service' for the exception before each exit, and docker_container_memory_oom_kills_total for an OOM kill."
+  # Rare events on a steady process: each creates its series.
+  - interval: 15s
+    input_series:
+      - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
+        values: '1000x400'
+      - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
+        values: '5000+15x400'
+      - series: 'wojtus_backfill_runs_total{job="wojtusdiscord",instance="b",type="Messages",outcome="failed"}'
+        values: '_x40 1x60'
+      - series: 'wojtus_conversation_cost_usd_total{job="wojtusdiscord",instance="b",model="m"}'
+        values: '_x10 2.5x100'
+      - series: 'wojtus_hangfire_jobs{job="wojtusdiscord",instance="b",state="failed"}'
+        values: '3x400'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: WojtusBackfillRunFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord, type: Messages}
+            exp_annotations:
+              summary: "Backfill Messages failed"
+              description: "A backfill run ended with an exception in the last hour. Search the bot log for 'backfill failed' and check the checkpoint row. A run a deploy cancels has outcome 'cancelled' and does not count."
+      - eval_time: 20m
+        alertname: WojtusConversationCostHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord}
+            exp_annotations:
+              summary: "Conversation cost is 2.50 USD in 24 hours"
+              description: "Normal is a few cents a day. Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user."
+      - {eval_time: 90m, exp_alerts: [], alertname: WojtusHangfireFailedJobsGrowing}
+  # Round 2. A deploy: the public URL fails two probes, the health-check gauge is absent for the
+  # first minutes of the new process. Nothing fires.
+  - interval: 30s
+    input_series:
+      - series: 'probe_success{job="wojtusdiscord-http",instance="https://wojtusdiscord.home.vicio.ovh/health",service="wojtusdiscord"}'
+        values: '1x20 0 0 1x100'
+      - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
+        values: '5000+30x20 stale 0+30x100'
+      - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
+        values: '1000x20 stale 7000x100'
+      # last run every 5 min in the old process; the new process publishes 0 until its first run
+      - series: 'wojtus_healthcheck_last_run_timestamp_seconds{job="wojtusdiscord",instance="b"}'
+        values: '0x10 300x10 stale 0x10 900x10 1200x10 1500x10 1800x10 2100x10 2400x10 2700x10 3000x10 3300x10'
+      - series: 'wojtus_healthcheck_failing{job="wojtusdiscord",instance="b",check="ingest_stall"}'
+        values: '0x20 stale _x10 0x90'
+    alert_rule_test:
+      - {eval_time: 12m, exp_alerts: [], alertname: WojtusHealthEndpointDown}
+      - {eval_time: 14m, exp_alerts: [], alertname: WojtusHealthEndpointDown}
+      - {eval_time: 14m, exp_alerts: [], alertname: WojtusHealthCheckStale}
+      - {eval_time: 20m, exp_alerts: [], alertname: WojtusHealthCheckStale}
+      - {eval_time: 50m, exp_alerts: [], alertname: WojtusHealthCheckStale}
+      - {eval_time: 50m, exp_alerts: [], alertname: WojtusHealthCheckFailing}
+  # Round 2, real problems.
+  - interval: 30s
+    input_series:
+      - series: 'probe_success{job="wojtusdiscord-http",instance="https://wojtusdiscord.home.vicio.ovh/health",service="wojtusdiscord"}'
+        values: '1x10 0x30'
+      - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
+        values: '5000+30x120'
+      - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
+        values: '1000x120'
+      # the job ran at t=300 s and never again
+      - series: 'wojtus_healthcheck_last_run_timestamp_seconds{job="wojtusdiscord",instance="b"}'
+        values: '0x10 300x110'
+      - series: 'wojtus_healthcheck_failing{job="wojtusdiscord",instance="b",check="event_silence",event_type="MessageCreated"}'
+        values: '0x10 1x110'
+      - series: 'wojtus_healthcheck_failing{job="wojtusdiscord",instance="b",check="failed_events"}'
+        values: '0x120'
+      - series: 'wojtus_trace_export_failures_total{job="wojtusdiscord",instance="b"}'
+        values: '_x10 1+1x40 41x70'
+      - series: 'wojtus_command_executions_total{job="wojtusdiscord",instance="b",command="meme",outcome="failed"}'
+        values: '_x20 1 2 3 4x97'
+      - series: 'wojtus_command_executions_total{job="wojtusdiscord",instance="b",command="meme",outcome="ok"}'
+        values: '_x10 1 2 3x107'
+      - series: 'wojtus_command_executions_total{job="wojtusdiscord",instance="b",command="ask",outcome="ok"}'
+        values: '_x10 5x110'
+      - series: 'wojtus_fk_unresolved_total{job="wojtusdiscord",instance="b",entity="channel"}'
+        values: '_x10 30x110'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: WojtusHealthEndpointDown
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord, instance: "https://wojtusdiscord.home.vicio.ovh/health"}
+            exp_annotations:
+              summary: "The bot does not answer on its public URL"
+              description: "The blackbox probe of https://wojtusdiscord.home.vicio.ovh/health through Traefik fails for 3 minutes. If WojtusGatewayDisconnected is quiet the bot runs and the fault is in Traefik, DNS or the certificate; check probe_http_status_code and the Runtime & HTTP dashboard, row 'Public URL probe'."
+      - eval_time: 20m
+        alertname: WojtusHealthCheckFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord, check: event_silence}
+            exp_annotations:
+              summary: "Bot health check event_silence fails"
+              description: "The bot's own HealthCheckJob reports event_silence as failing for 10 minutes (two runs). Open the Events & Ingest dashboard, row 'Health checks and downtime', for the value, and the bot log for the detail the job wrote."
+      - {eval_time: 14m, exp_alerts: [], alertname: WojtusHealthCheckStale}
+      - eval_time: 26m
+        alertname: WojtusHealthCheckStale
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord, job: wojtusdiscord, instance: b}
+            exp_annotations:
+              summary: "The bot's HealthCheckJob does not run"
+              description: "The job runs every 5 minutes, and no run finished for 15 minutes (or none since a start 20 minutes ago). Its checks and the WojtusHealthCheckFailing alert are blind. Open /hangfire: is the recurring job there, is a run stuck in Processing?"
+      - eval_time: 30m
+        alertname: WojtusTraceExportFailures
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord}
+            exp_annotations:
+              summary: "41 trace exports failed in 30 minutes"
+              description: "The bot cannot send spans to Tempo, traces of this time are lost. Check that the tempo container runs and that Telemetry:OtlpTracesEndpoint points at it."
+      - eval_time: 20m
+        alertname: WojtusCommandErrors
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord, command: meme}
+            exp_annotations:
+              summary: "Slash command meme fails"
+              description: "At least 3 executions of /meme ended with an unhandled exception in one hour, more than 30% of its runs. Search the bot log for the command name."
+      - eval_time: 15m
+        alertname: WojtusFkUnresolvedBurst
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord, entity: channel}
+            exp_annotations:
+              summary: "30 unresolved channel foreign keys in 15 minutes"
+              description: "FkResolver could not find a required channel row, so the events that need it were not written. A few after a start are normal (the entity sync is not done yet); a burst means the sync failed. Check the bot log and failed_events."

@@ -1,0 +1,29 @@
+# Tempo (traces) for the homelab LGTM stack. Single binary, local disk.
+# 2.10.x on purpose: 3.x moved to a live-store/block-builder layout with a
+# different config; revisit together with the EC2 move (#340).
+services:
+  tempo:
+    image: grafana/tempo:2.10.8
+    container_name: tempo
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    user: "1000:1000"
+    mem_limit: 1g
+    command:
+      - '-config.file=/etc/tempo/tempo.yml'
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./config:/etc/tempo:ro
+      - ./data:/var/tempo
+    networks:
+      # monitoring: Grafana queries + Prometheus scrape on :3200.
+      # proxy: discord-event-service pushes OTLP/HTTP to tempo:4318 (it is not on monitoring).
+      - monitoring
+      - proxy
+
+networks:
+  monitoring:
+    external: true
+  proxy:
+    external: true

@@ -6,6 +6,7 @@
 - PostgreSQL via `docker-compose.yml` (local dev DB on port 5432)
 - Dev bot account + separate Discord server configured in `.env`
 - Discord MCP (`SaseQ/discord-mcp` via Docker) available globally — **drive live tests autonomously with it**: send/edit messages, add reactions, read channels, join voice, manage roles, etc. without prompting the user. Only ask the user to act when the MCP is unavailable or the action genuinely can't be done via MCP
+- Monitoring: Prometheus + Loki + Tempo + Grafana on the homelab. Config (dashboards, alert rules, Tempo, postgres-exporter) lives in `deploy/observability/`; `./sync.sh` there validates and pushes it to the host. Dashboards and rules are generated: edit `tools/build.py` / `tools/alerts.py`, not the output. Bot metrics come from `Infrastructure/BotMetrics.cs` (`/metrics`); a new metric needs a panel and, if it can go wrong, a rule
 - Production DB: READ ONLY (SELECT-only by convention), never run migrations or writes against prod. Connect via `docker run --rm postgres:18 psql ...` (no local psql installed). Connection details are in the agent's private local memory; DB is reachable only on the home network
 
 ## Development workflow
