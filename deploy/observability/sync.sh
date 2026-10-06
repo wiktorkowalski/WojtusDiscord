@@ -71,8 +71,10 @@ sync_if_changed "$HERE/postgres-exporter/compose.yml" "$REMOTE/postgres-exporter
 # Validate the whole Prometheus config on the host, then reload. On a failed check the
 # previous rule file is put back, so a bad edit never reaches the running Prometheus.
 if ! ssh "$HOST" "docker run --rm --user 1000:1000 -v $REMOTE/prometheus/config:/c:ro --entrypoint promtool $PROMTOOL_IMAGE check config /c/prometheus.yml"; then
-  ssh "$HOST" "[ -f $REMOTE/prometheus/config/wojtusdiscord-alerts.yml.bak-$stamp ] && cp -p $REMOTE/prometheus/config/wojtusdiscord-alerts.yml.bak-$stamp $REMOTE/prometheus/config/wojtusdiscord-alerts.yml"
-  echo "promtool rejected the config on the host; previous alert file restored, nothing reloaded" >&2
+  # No backup means a first run: remove the new file, or the next Prometheus restart would read it.
+  rules=$REMOTE/prometheus/config/wojtusdiscord-alerts.yml
+  ssh "$HOST" "if [ -f $rules.bak-$stamp ]; then cp -p $rules.bak-$stamp $rules; else rm -f $rules; fi" || true
+  echo "promtool rejected the config on the host; previous alert file restored (or the new one removed), nothing reloaded" >&2
   exit 1
 fi
 ssh "$HOST" "docker exec prometheus kill -HUP 1"

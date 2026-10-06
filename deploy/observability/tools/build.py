@@ -175,11 +175,11 @@ def overview():
     d.add(stat("Events, 24 h", f'sum({xi("wojtus_events_total", "", "24h", "5m")})', decimals=0, no_value="0",
                thresholds=steps((CRIT, None), (GOOD, 1)),
                desc="Gateway events the bot ingested in the last 24 hours. Zero means no ingest." + BIRTH), 3, 3)
-    d.add(with_links(stat("Failed, 24 h", f'sum({xi("wojtus_events_total", "outcome=\"failed\"", "24h", "5m")})',
+    d.add(with_links(stat("Failed, 24 h", f'sum({xi("wojtus_events_total", FAILED, "24h", "5m")})',
                decimals=0, no_value="0", thresholds=ok_bad,
                desc="Gateway events with at least one failed handler in the last 24 hours."),
                link("Open Events & Ingest", "/d/wojtus-events/")), 3, 3)
-    d.add(with_links(stat("Errors, 24 h", f'sum({xi("wojtus_log_events_total", "level=~\"error|critical\"", "24h", "5m")})',
+    d.add(with_links(stat("Errors, 24 h", f'sum({xi("wojtus_log_events_total", ERRORS, "24h", "5m")})',
                decimals=0, no_value="0", thresholds=ok_bad,
                desc="Error and critical log events of the last 24 hours, counted in the bot. Click the value"
                     " for the Logs dashboard."), LOGS_LINK), 3, 3)
@@ -227,7 +227,7 @@ def overview():
              desc="Time one gateway event spends in the event pipeline, all event types."
                   " No point when no event arrives."), 8, 8)
     d.add(with_links(bars("Log events: warning and above",
-               [q(f'sum by (level)({xi("wojtus_log_events_total", "level=~\"warning|error|critical\"")})', "{{level}}")],
+               [q(f'sum by (level)({xi("wojtus_log_events_total", WARNINGS_UP)})', "{{level}}")],
                "Log events per interval that passed the level filter, counted in the bot. Click a bar for"
                " the Logs dashboard." + BIRTH,
                colors={"warning": WARN, "error": CRIT, "critical": PINK}), LOGS_LINK), 8, 8)
@@ -296,10 +296,10 @@ def events():
     d.row("Volume")
     d.add(stat("Events", f"sum({xi(EV, E, R)})", decimals=0, no_value="0",
                desc="Gateway events in the range, selected event types." + BIRTH), 4, 4)
-    d.add(stat("Failed events", f'sum({xi(EV, sel(E, "outcome=\"failed\""), R)})', decimals=0, no_value="0",
+    d.add(stat("Failed events", f'sum({xi(EV, sel(E, FAILED), R)})', decimals=0, no_value="0",
                thresholds=steps((GOOD, None), (CRIT, 1)),
                desc="Events with at least one failed handler in the range."), 4, 4)
-    d.add(stat("Serialization failures", f'sum({xi(EV, sel(E, "outcome=\"serialization_failed\""), R)})',
+    d.add(stat("Serialization failures", f'sum({xi(EV, sel(E, SER_FAILED), R)})',
                decimals=0, no_value="0", thresholds=steps((GOOD, None), (WARN, 1)),
                desc="Events stored with a fallback payload because the serializer failed. The handlers still ran."), 4, 4)
     d.add(stat("Dead letters", f'sum({xi("wojtus_event_dead_letters_total", E, R)})', decimals=0, no_value="0",
@@ -308,7 +308,7 @@ def events():
     d.add(stat("Handler p95", hq(0.95, HD, E, R), unit="s",
                thresholds=steps((GOOD, None), (WARN, 0.5), (CRIT, 2)),
                desc="95th percentile of the time an event spends in the pipeline, over the range."), 4, 4)
-    d.add(stat("Failed share", f'sum({xi(EV, sel(E, "outcome=\"failed\""), R)}) / sum({xi(EV, E, R)})',
+    d.add(stat("Failed share", f'sum({xi(EV, sel(E, FAILED), R)}) / sum({xi(EV, E, R)})',
                unit="percentunit", decimals=2, no_value="0%",
                thresholds=steps((GOOD, None), (WARN, 0.01), (CRIT, 0.05)),
                desc="Failed events as a share of all events in the range."), 4, 4)
@@ -357,7 +357,7 @@ def events():
                "Failures the database refused, sent to the JSONL fallback. Each one needs a manual replay.",
                colors=None), 8, 8)
     d.add(bars("Serialization failures by type",
-               [q(f'sum by (event_type)({xi(EV, sel(E, "outcome=\"serialization_failed\""))})', "{{event_type}}")],
+               [q(f'sum by (event_type)({xi(EV, sel(E, SER_FAILED))})', "{{event_type}}")],
                "Events whose payload the serializer could not write. Read the 2026-05 blackout notes before"
                " a change to RawEventLogService."), 8, 8)
     d.add(ts("Unwritable window pending", [q(f"max(wojtus_db_unwritable_window_pending{{{J}}})", "pending")],
@@ -475,7 +475,7 @@ def ai():
     d.row("Conversation")
     d.add(stat("Turns", f"sum({xi(C + 'turns_total', '', R)})", decimals=0, no_value="0",
                desc="Conversation turns in the range." + BIRTH), 4, 4)
-    d.add(stat("Failed turns", f"sum({xi(C + 'turns_total', 'outcome!=\"ok\"', R)})", decimals=0,
+    d.add(stat("Failed turns", f"sum({xi(C + 'turns_total', NOT_OK, R)})", decimals=0,
                no_value="0", thresholds=steps((GOOD, None), (CRIT, 1)),
                desc="Turns in the range that ended in a timeout or an error."), 4, 4)
     d.add(stat("Cost, 24 h", f"sum({xi(C + 'cost_usd_total', '', '24h', '5m')})", unit="currencyUSD", decimals=2,
@@ -557,7 +557,7 @@ def ai():
                desc="95th percentile over the range. Bucket bounds near the target are 0.5 s, 1 s and"
                     " 2.5 s, so the value is coarse between them."), 6, 4)
     d.add(stat("Searches with no hit",
-               f"sum({xi(M + 'search_results_bucket', 'le=\"0\"', R)}) / sum({xi(M + 'search_results_count', '', R)})",
+               f"sum({xi(M + 'search_results_bucket', LE_ZERO, R)}) / sum({xi(M + 'search_results_count', '', R)})",
                unit="percentunit", decimals=0, no_value="n/a",
                desc="Share of search pages that returned no meme, over the range."), 6, 4)
     d.add(ts("Meme search latency", [q(hqx(0.5, SD, rng=IV), "p50"), q(hqx(0.95, SD, rng=IV), "p95"),
@@ -696,19 +696,19 @@ def runtime():
     bad_t = steps((GOOD, None), (WARN, 1))
     d.add(stat("Discord requests", f"sum({xi(HCC, DISCORD, R)})", decimals=0, no_value="0",
                desc="Requests to the Discord REST API (discord.com) in the range: boot sync, backfill, replies." + BIRTH), 4, 4)
-    d.add(stat("Discord non-2xx", f'sum({xi(HCC, sel(DISCORD, "http_response_status_code!~\"2..\""), R)})', decimals=0,
+    d.add(stat("Discord non-2xx", f'sum({xi(HCC, sel(DISCORD, NON_2XX), R)})', decimals=0,
                no_value="0", thresholds=bad_t,
                desc="Discord REST answers outside 2xx in the range, 429 included, and requests with no answer."), 4, 4)
-    d.add(stat("Discord rate limits", f'sum({xi(HCC, sel(DISCORD, "http_response_status_code=\"429\""), R)})', decimals=0,
+    d.add(stat("Discord rate limits", f'sum({xi(HCC, sel(DISCORD, HTTP_429), R)})', decimals=0,
                no_value="0", thresholds=bad_t,
                desc="HTTP 429 from Discord in the range. DSharpPlus waits and retries; many of them mean a backfill"
                     " runs too fast."), 4, 4)
     d.add(stat("OpenRouter requests", f"sum({xi(HCC, OPENROUTER, R)})", decimals=0, no_value="0",
                desc="Requests to OpenRouter in the range: conversation model calls and meme vision calls."), 4, 4)
-    d.add(stat("OpenRouter non-2xx", f'sum({xi(HCC, sel(OPENROUTER, "http_response_status_code!~\"2..\""), R)})',
+    d.add(stat("OpenRouter non-2xx", f'sum({xi(HCC, sel(OPENROUTER, NON_2XX), R)})',
                decimals=0, no_value="0", thresholds=bad_t,
                desc="OpenRouter answers outside 2xx in the range, and requests with no answer."), 4, 4)
-    d.add(stat("Other hosts, failed", f'sum({xi(HCC, sel(OTHER, "error_type!=\"\""), R)})', decimals=0, no_value="0",
+    d.add(stat("Other hosts, failed", f'sum({xi(HCC, sel(OTHER, HAS_ERROR), R)})', decimals=0, no_value="0",
                thresholds=bad_t, desc="Failed requests to every other host (Tempo, Langfuse, webhooks) in the range."), 4, 4)
     d.add(bars("Discord REST requests by status",
                [q(f"sum by (http_response_status_code)({xi(HCC, DISCORD)}){PER_MIN}", "{{http_response_status_code}}")],
@@ -731,7 +731,7 @@ def runtime():
                "Requests per minute to every other host: the Discord gateway upgrade, Tempo, Langfuse, webhooks.",
                decimals=1), 8, 8)
     d.add(bars("Outbound errors",
-               [q(f'sum by (server_address, http_response_status_code, error_type)({xi(HCC, "error_type!=\"\"")})',
+               [q(f'sum by (server_address, http_response_status_code, error_type)({xi(HCC, HAS_ERROR)})',
                   "{{server_address}} {{http_response_status_code}} {{error_type}}")],
                "Outbound requests that failed, per interval: a 4xx or 5xx status, a timeout or a connection error."), 8, 8)
 

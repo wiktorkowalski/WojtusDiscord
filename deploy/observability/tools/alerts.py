@@ -9,7 +9,7 @@ run build.py, then `../sync.sh --check`.
 """
 import os
 
-from lib import J, xinc
+from lib import ERRORS, FAILED, J, NOT_OK, xinc
 
 PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "prometheus", "wojtusdiscord-alerts.yml")
 
@@ -178,11 +178,11 @@ b += rule("WojtusDbUnwritable",
           "The bot cannot write to Postgres",
           "An unwritable-database window is open for 5 minutes. Events of this time are lost. Check that wojtus-postgres is up and its disk is not full.")
 b += rule("WojtusHeartbeatWriteFailures",
-          f"sum({xi('wojtus_heartbeat_writes_total', 'outcome!=\"ok\"', '10m')}) > 12", "2m",
+          f"sum({xi('wojtus_heartbeat_writes_total', NOT_OK, '10m')}) > 12", "2m",
           '{{ $value | printf \\"%.0f\\" }} heartbeat writes failed in 10 minutes',
           "The bot writes one heartbeat row every 5 s. More than 12 failures is over a minute without a write. Check Postgres connections and the bot log.")
 b += rule("WojtusErrorLogBurst",
-          f"sum({xi('wojtus_log_events_total', 'level=~\"error|critical\"', '15m')}) > 15", "5m",
+          f"sum({xi('wojtus_log_events_total', ERRORS, '15m')}) > 15", "5m",
           '{{ $value | printf \\"%.0f\\" }} error log events in 15 minutes',
           "Open the WojtusDiscord / Logs dashboard and read the error categories. A burst of this size is rare.",
           "Baseline from Loki, 7 days to 2026-10-06: 30 error lines, at most 11 in one 15-minute window.")
@@ -193,7 +193,7 @@ b += rule("WojtusHangfireFailedJobsGrowing",
           "A background job failed after all its retries. Open /hangfire, tab Failed, and read the exception.",
           "The gauge reads the Hangfire tables, so a bot restart does not reset it.")
 b += rule("WojtusBackfillRunFailed",
-          f"sum by (type)({xi('wojtus_backfill_runs_total', 'outcome=\"failed\"', '1h')}) > 0", None,
+          f"sum by (type)({xi('wojtus_backfill_runs_total', FAILED, '1h')}) > 0", None,
           "Backfill {{ $labels.type }} failed",
           "A backfill run ended with an exception in the last hour. Search the bot log for 'backfill failed' and check the checkpoint row. A run a deploy cancels has outcome 'cancelled' and does not count.")
 b += rule("WojtusRestartLoop",

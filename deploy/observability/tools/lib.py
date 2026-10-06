@@ -135,6 +135,19 @@ OUTCOME_COLORS = [
 ]
 
 
+# Label selectors with quotes inside. Named here because a backslash inside the braces of an
+# f-string is a SyntaxError before Python 3.12, and the tools must run on 3.10.
+FAILED = 'outcome="failed"'
+SER_FAILED = 'outcome="serialization_failed"'
+NOT_OK = 'outcome!="ok"'
+ERRORS = 'level=~"error|critical"'
+WARNINGS_UP = 'level=~"warning|error|critical"'
+LE_ZERO = 'le="0"'
+NON_2XX = 'http_response_status_code!~"2.."'
+HTTP_429 = 'http_response_status_code="429"'
+HAS_ERROR = 'error_type!=""'
+
+
 def sel(*parts):
     return ",".join(p for p in parts if p)
 
