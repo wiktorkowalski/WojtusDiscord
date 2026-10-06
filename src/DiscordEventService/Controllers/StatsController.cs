@@ -237,7 +237,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         var leaderboards = await BuildCommunityLeaderboardsAsync(curStart, curEnd, ct);
         var topEmotes = await TopEmojisAsync(CommunityLeaderboardSize, curStart, curEnd, ct);
         var channels = await WindowChannelActivityAsync(curStart, curEnd, ct);
-        var topActivities = await WindowTopActivitiesAsync(curStart, curEnd, ct);
+        var topActivities = await WindowTopActivitiesAsync(curStart, curEnd, boundScan: range != "all", ct);
         var heatmap = await HeatmapAsync(CommunityHeatmapDays, ct);
 
         return new CommunityDto(
@@ -425,11 +425,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             $"""
             SELECT u.username, v.user_discord_id, u.avatar_hash,
                    round(SUM({VoiceSegmentMinutes}))::bigint
-            FROM (
-                SELECT user_discord_id, received_at_utc, channel_discord_id_after,
-                       LEAD(received_at_utc) OVER (PARTITION BY user_discord_id ORDER BY received_at_utc) AS next_ts
-                FROM voice_state_events
-            ) v
+            FROM ({VoiceSessions(Sql(curStart))}) v
             LEFT JOIN users u ON u.discord_id = v.user_discord_id
             WHERE v.channel_discord_id_after IS NOT NULL AND v.next_ts IS NOT NULL
               AND v.received_at_utc BETWEEN {Sql(curStart)} AND {Sql(curEnd)}
@@ -493,9 +489,14 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     // never overlap and a game counts once per segment, so no minute counts twice.
     // Segments are clipped to the window and lose their downtime overlap (SegmentMinutes).
     // Open segments (no following event) are excluded, as in the voice queries.
+    // `played` is MATERIALIZED so SegmentMinutes runs once per row: inlined, the planner
+    // copies its downtime subquery into the SUM and into the `minutes > 0` filter (#407).
+    // boundScan: see WindowPresenceScan. range=all passes false: its window starts at launch,
+    // so the bound drops nothing, and on prod the extra branch cost the planner its cache
+    // of the jsonb unnest (1.3 s -> 1.7 s).
     // Stays raw: LEAD() sessionization plus jsonb unnesting has no LINQ translation.
     private Task<List<CommunityActivityDto>> WindowTopActivitiesAsync(
-        DateTime start, DateTime end, CancellationToken ct) => QueryAsync(
+        DateTime start, DateTime end, bool boundScan, CancellationToken ct) => QueryAsync(
         $"""
         WITH seg AS (
             SELECT s.user_discord_id, s.activities_after_json AS acts,
@@ -504,7 +505,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             FROM (
                 SELECT user_discord_id, received_at_utc, activities_after_json,
                        LEAD(received_at_utc) OVER (PARTITION BY user_discord_id ORDER BY received_at_utc) AS next_ts
-                FROM presence_events
+                FROM {(boundScan ? WindowPresenceScan(Sql(start)) : "presence_events")}
             ) s
             WHERE s.next_ts IS NOT NULL
               AND s.received_at_utc < {Sql(end)} AND s.next_ts > {Sql(start)}
@@ -512,7 +513,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
               AND NOT EXISTS (
                   SELECT 1 FROM users u WHERE u.discord_id = s.user_discord_id AND u.is_bot)
         ),
-        played AS (
+        played AS MATERIALIZED (
             SELECT g.name, seg.user_discord_id,
                    SUM({SegmentMinutes("seg.seg_start", "seg.seg_end")}) AS minutes
             FROM seg
@@ -535,6 +536,32 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         ORDER BY minutes DESC, name LIMIT {CommunityLeaderboardSize}
         """,
         r => new CommunityActivityDto(r.GetString(0), r.GetInt64(1), r.GetInt64(2)), ct);
+
+    // The presence rows a window that starts at startSql can need, as a FROM item: every
+    // event from the start on, plus the last event before it of each user who has one from
+    // the start on. That event opens the segment that crosses the start. Every other segment
+    // ends before the start and fails the caller's `next_ts > start` filter anyway, so the
+    // result is the same as with the whole table (#407).
+    private static string WindowPresenceScan(string startSql) =>
+        $"""
+        (
+            SELECT user_discord_id, received_at_utc, activities_after_json
+            FROM presence_events
+            WHERE received_at_utc >= {startSql}
+            UNION ALL
+            SELECT b.user_discord_id, b.received_at_utc, b.activities_after_json
+            FROM (
+                SELECT DISTINCT user_discord_id FROM presence_events
+                WHERE received_at_utc >= {startSql}
+            ) w
+            CROSS JOIN LATERAL (
+                SELECT p.user_discord_id, p.received_at_utc, p.activities_after_json
+                FROM presence_events p
+                WHERE p.user_discord_id = w.user_discord_id AND p.received_at_utc < {startSql}
+                ORDER BY p.received_at_utc DESC LIMIT 1
+            ) b
+        ) pe
+        """;
 
     // Weekday x hour message counts in guild-local time; sparse (empty cells are absent).
     // lastDays = null is all-time; otherwise today plus the lastDays - 1 guild-local days
@@ -744,22 +771,15 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
 
     // Voice minutes: sessionize via LEAD() and count a segment when its start is inside
     // the window. Spark buckets segment minutes by the CET day of the segment start.
-    // Stays raw: whole-guild LEAD() window sessionization — a LINQ version would pull all
-    // voice_state_events into memory.
+    // Stays raw: LEAD() window sessionization — a LINQ version would pull the
+    // voice_state_events of the window into memory.
     private async Task<CommunityMetricDto> VoiceMinutesMetricAsync(
         DateTime curStart, DateTime curEnd, DateTime? prevStart, DateTime? prevEnd, int sparkDays, CancellationToken ct)
     {
-        const string sessions =
-            """
-            SELECT user_discord_id, received_at_utc, channel_discord_id_after,
-                   LEAD(received_at_utc) OVER (PARTITION BY user_discord_id ORDER BY received_at_utc) AS next_ts
-            FROM voice_state_events
-            """;
-
         async Task<long> SumAsync(DateTime start, DateTime end) => await ScalarAsync(
             $"""
             SELECT COALESCE(round(SUM({VoiceSegmentMinutes})), 0)::bigint
-            FROM ({sessions}) v
+            FROM ({VoiceSessions(Sql(start))}) v
             WHERE v.channel_discord_id_after IS NOT NULL AND v.next_ts IS NOT NULL
               AND v.received_at_utc BETWEEN {Sql(start)} AND {Sql(end)}
             """, ct);
@@ -767,12 +787,24 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
         var value = await SumAsync(curStart, curEnd);
         long? prev = prevStart is null || prevEnd is null ? null : await SumAsync(prevStart.Value, prevEnd.Value);
 
-        var spark = await VoiceSparkAsync(sessions, sparkDays, ct);
+        var spark = await VoiceSparkAsync(sparkDays, ct);
         return new CommunityMetricDto(value, prev, spark);
     }
 
-    private async Task<IReadOnlyList<long>> VoiceSparkAsync(
-        string sessions, int sparkDays, CancellationToken ct)
+    // Voice events from fromSql on, each with the time of the user's next event. Every
+    // caller keeps a segment by its START and never one that starts before fromSql, and
+    // LEAD() only looks forward, so the events before fromSql change nothing and are not
+    // read (#407). An upper bound must stay in the caller: here it would cut the next
+    // event off the last segment of the window.
+    private static string VoiceSessions(string fromSql) =>
+        $"""
+        SELECT user_discord_id, received_at_utc, channel_discord_id_after,
+               LEAD(received_at_utc) OVER (PARTITION BY user_discord_id ORDER BY received_at_utc) AS next_ts
+        FROM voice_state_events
+        WHERE received_at_utc >= {fromSql}
+        """;
+
+    private async Task<IReadOnlyList<long>> VoiceSparkAsync(int sparkDays, CancellationToken ct)
     {
         var sql =
             $"""
@@ -780,7 +812,7 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
             seg AS (
                 SELECT date_trunc('day', v.received_at_utc AT TIME ZONE '{Tz}')::date AS d,
                        SUM({VoiceSegmentMinutes}) AS m
-                FROM ({sessions}) v
+                FROM ({VoiceSessions(LocalDayStart(sparkDays - 1))}) v
                 WHERE v.channel_discord_id_after IS NOT NULL AND v.next_ts IS NOT NULL
                 GROUP BY 1
             )
@@ -801,57 +833,73 @@ public sealed class StatsController(DiscordDbContext db) : ControllerBase
     /// clamped), and (c) the segment does not overlap a recorded bot-downtime interval.
     /// Segment minutes are attributed to the window/day of the segment start. Treat the
     /// result as an approximation, not a precise online-time ledger.
-    /// Stays raw: whole-guild LEAD() window sessionization (over ~100k presence rows) — a
-    /// LINQ version would pull every presence row into memory.
+    /// Stays raw: LEAD() window sessionization — a LINQ version would pull the presence
+    /// rows of the window into memory.
     /// </summary>
     private async Task<CommunityMetricDto> OnlineMinutesMetricAsync(
         DateTime curStart, DateTime curEnd, DateTime? prevStart, DateTime? prevEnd, int sparkDays, CancellationToken ct)
     {
-        // segments = per-user presence events with the gap to the next event and a flag
-        // for non-offline status; eligible = gap <= 30 min, status non-offline, and no
-        // overlap with any bot_downtime_interval (open intervals coalesced to now()).
-        const string segments =
-            """
-            SELECT s.user_discord_id, s.received_at_utc AS seg_start, s.next_ts AS seg_end,
-                   EXTRACT(EPOCH FROM (s.next_ts - s.received_at_utc)) / 60.0 AS minutes
-            FROM (
-                SELECT user_discord_id, received_at_utc,
-                       GREATEST(desktop_status_after, mobile_status_after, web_status_after) AS overall,
-                       LEAD(received_at_utc) OVER (PARTITION BY user_discord_id ORDER BY received_at_utc) AS next_ts
-                FROM presence_events
-            ) s
-            WHERE s.overall > 0 AND s.next_ts IS NOT NULL
-              AND s.next_ts - s.received_at_utc <= interval '30 minutes'
-              AND NOT EXISTS (
-                  SELECT 1 FROM bot_downtime_intervals d
-                  WHERE s.received_at_utc < COALESCE(d.ended_at_utc, now())
-                    AND s.next_ts > d.started_at_utc
-              )
-            """;
-
         async Task<long> SumAsync(DateTime start, DateTime end) => await ScalarAsync(
             $"""
             SELECT COALESCE(round(SUM(minutes)), 0)::bigint
-            FROM ({segments}) seg
+            FROM ({OnlineSegments(Sql(start))}) seg
             WHERE seg.seg_start BETWEEN {Sql(start)} AND {Sql(end)}
             """, ct);
 
         var value = await SumAsync(curStart, curEnd);
         long? prev = prevStart is null || prevEnd is null ? null : await SumAsync(prevStart.Value, prevEnd.Value);
 
-        var spark = await OnlineSparkAsync(segments, sparkDays, ct);
+        var spark = await OnlineSparkAsync(sparkDays, ct);
         return new CommunityMetricDto(value, prev, spark);
     }
 
-    private async Task<IReadOnlyList<long>> OnlineSparkAsync(
-        string segments, int sparkDays, CancellationToken ct)
+    // Eligible online segments that start at fromSql or later: status non-offline, gap to
+    // the user's next event at most 30 min, and no overlap with any bot_downtime_interval
+    // (open intervals coalesced to now()). The lower bound sits below LEAD() for the same
+    // reason as in VoiceSessions.
+    // Downtime check: a segment overlaps some interval when the latest end among the
+    // intervals that start before the segment end is after the segment start. One pass in
+    // time order over segments (keyed by their end) and intervals (keyed by their start)
+    // carries that latest end as a running maximum. At an equal key the segment sorts
+    // first: an interval that starts exactly at the segment end does not overlap it.
+    // One sort, not one downtime probe per segment (#407).
+    private static string OnlineSegments(string fromSql) =>
+        $"""
+        SELECT m.user_discord_id, m.seg_start, m.seg_end,
+               EXTRACT(EPOCH FROM (m.seg_end - m.seg_start)) / 60.0 AS minutes
+        FROM (
+            SELECT e.*, max(e.downtime_end) OVER (
+                       ORDER BY e.ts, e.is_downtime
+                       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS max_downtime_end
+            FROM (
+                SELECT 0 AS is_downtime, s.next_ts AS ts, s.user_discord_id,
+                       s.received_at_utc AS seg_start, s.next_ts AS seg_end,
+                       NULL::timestamptz AS downtime_end
+                FROM (
+                    SELECT user_discord_id, received_at_utc,
+                           GREATEST(desktop_status_after, mobile_status_after, web_status_after) AS overall,
+                           LEAD(received_at_utc) OVER (PARTITION BY user_discord_id ORDER BY received_at_utc) AS next_ts
+                    FROM presence_events
+                    WHERE received_at_utc >= {fromSql}
+                ) s
+                WHERE s.overall > 0 AND s.next_ts IS NOT NULL
+                  AND s.next_ts - s.received_at_utc <= interval '30 minutes'
+                UNION ALL
+                SELECT 1, d.started_at_utc, NULL, NULL, NULL, COALESCE(d.ended_at_utc, now())
+                FROM bot_downtime_intervals d
+            ) e
+        ) m
+        WHERE m.is_downtime = 0 AND (m.max_downtime_end IS NULL OR m.max_downtime_end <= m.seg_start)
+        """;
+
+    private async Task<IReadOnlyList<long>> OnlineSparkAsync(int sparkDays, CancellationToken ct)
     {
         var sql =
             $"""
             WITH {DaysCte(sparkDays)},
             seg AS (
                 SELECT date_trunc('day', s.seg_start AT TIME ZONE '{Tz}')::date AS d, SUM(s.minutes) AS m
-                FROM ({segments}) s
+                FROM ({OnlineSegments(LocalDayStart(sparkDays - 1))}) s
                 GROUP BY 1
             )
             SELECT COALESCE(round(seg.m), 0)::bigint
