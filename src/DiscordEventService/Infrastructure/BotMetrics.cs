@@ -372,8 +372,8 @@ internal static class BotMetrics
     }
 
     // The first run of a phase wins: a later cold connect of the same process is a reconnect,
-    // not a boot.
-    public static void BootPhaseFinished(string phase, TimeSpan elapsed) =>
+    // not a boot. false = the phase had a value already.
+    public static bool BootPhaseFinished(string phase, TimeSpan elapsed) =>
         BootPhaseSeconds.TryAdd(phase, elapsed.TotalSeconds);
 
     public static void TraceExportFailed() => TraceExportFailures.Add(1);

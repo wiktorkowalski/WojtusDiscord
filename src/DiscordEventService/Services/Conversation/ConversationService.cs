@@ -453,10 +453,16 @@ internal sealed class ConversationService(
                 "Conversation turn {Outcome}: invoker {InvokerId} ({InvokerName}), guild {GuildId}, channel {ChannelId}, "
                 + "rounds {Rounds}, tools [{ToolCalls}], cost ${CostUsd}, {ElapsedMs} ms, trace {TraceId}, "
                 + "question {Question}, answer {Answer}",
-                _outcome, context.InvokerId, context.InvokerDisplayName, context.GuildId, context.ChannelId,
-                Rounds, string.Join("; ", ToolCalls), CostUsd,
+                _outcome, context.InvokerId, SingleLine(context.InvokerDisplayName), context.GuildId, context.ChannelId,
+                Rounds, SingleLine(string.Join("; ", ToolCalls)), CostUsd,
                 (long)Stopwatch.GetElapsedTime(_startedAt).TotalMilliseconds, _traceId,
-                _captureText ? question : Redacted, _captureText ? _answer ?? string.Empty : Redacted);
+                _captureText ? SingleLine(question) : Redacted, _captureText ? SingleLine(_answer) : Redacted);
+
+        // A display name, a tool argument, the question and the answer are text a person or the
+        // model wrote. A line break in one of them would start a new console line, and each
+        // console line is its own entry in Loki: it could pass for a log event of the bot.
+        private static string SingleLine(string? text) =>
+            text is null ? string.Empty : text.ReplaceLineEndings(" ");
     }
 
     // Out-channel for StreamRoundAsync (an iterator cannot return a value): whether the

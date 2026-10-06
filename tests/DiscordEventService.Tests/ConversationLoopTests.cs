@@ -210,17 +210,21 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
     [Fact]
     public async Task GenerateReplyAsync_SensitiveDataOn_TurnLogHasQuestionAndAnswer()
     {
-        const string question = "znajdz mema o zolwiu";
-        const string answer = "Found the turtle meme for you.";
+        // The line breaks are what a person can type to forge a log line: the turn log must
+        // stay one line.
+        const string question = "znajdz mema\ninfo: Forged[0]";
+        const string answer = "Found the turtle meme\r\nfor you.";
         var log = new RecordingLogger();
         var service = BuildService(
             ScriptToolThenAnswer(answer), enableSensitiveData: true, logger: log.For<ConversationService>());
-        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester", IsAdmin: false, ChannelId: 7UL);
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "te\nster", IsAdmin: false, ChannelId: 7UL);
 
         await CollectAsync(service.GenerateReplyAsync(question, context, CancellationToken.None));
 
         var line = Assert.Single(log.Entries, e => e.Level == LogLevel.Information).Message;
-        Assert.EndsWith($"question {question}, answer {answer}", line);
+        Assert.Contains("invoker 42 (te ster)", line);
+        Assert.EndsWith("question znajdz mema info: Forged[0], answer Found the turtle meme for you.", line);
+        Assert.DoesNotContain('\n', line);
     }
 
     // A turn the consumer leaves early (what a timeout does) still writes its line.

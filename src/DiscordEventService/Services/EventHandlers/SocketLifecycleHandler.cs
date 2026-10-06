@@ -66,8 +66,9 @@ internal sealed class SocketLifecycleHandler(
     {
         BotMetrics.GuildDownloadCompleted();
 
-        // Boot to a filled gateway cache. Only the first cold connect of the process is kept.
-        BotMetrics.BootPhaseFinished("guild_download", DateTime.UtcNow - BootClock.StartedAtUtc);
+        // Boot to a filled gateway cache. Only the first cold connect of the process is kept,
+        // and only that one is the boot.
+        var isBoot = BotMetrics.BootPhaseFinished("guild_download", DateTime.UtcNow - BootClock.StartedAtUtc);
 
         var correlationId = Guid.NewGuid();
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
@@ -98,7 +99,11 @@ internal sealed class SocketLifecycleHandler(
                     var quickSyncStartedAt = Stopwatch.GetTimestamp();
                     foreach (var guildId in e.Guilds.Keys)
                         await quickSyncService.SyncAsync(guildId);
-                    BotMetrics.BootPhaseFinished("quick_sync", Stopwatch.GetElapsedTime(quickSyncStartedAt));
+
+                    // A quick sync of a later reconnect is not a boot phase, also when the boot
+                    // itself took the backfill path and never ran one.
+                    if (isBoot)
+                        BotMetrics.BootPhaseFinished("quick_sync", Stopwatch.GetElapsedTime(quickSyncStartedAt));
                     return;
                 }
 
