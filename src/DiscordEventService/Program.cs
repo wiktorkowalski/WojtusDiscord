@@ -89,7 +89,7 @@ AddDiscordDbContext(builder.Services);
 // roster and slash commands live in DiscordClientRegistration.
 builder.Services.AddDiscordClient(builder.Configuration, builder.Environment, AddDiscordDbContext);
 
-// Order is load-bearing: DiscordHostedService.StartAsync runs InferStartupGapAsync
+// Order is load-bearing: DiscordHostedService.StartAsync runs SettlePriorSessionAsync
 // (against the stale last_heartbeat_utc) before HeartbeatBackgroundService can write
 // a fresh tick that would mask the gap. Do not reorder.
 builder.Services.AddHostedService<DiscordHostedService>();

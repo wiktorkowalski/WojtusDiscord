@@ -6,8 +6,6 @@ namespace DiscordEventService.Services;
 
 internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<DowntimeTrackerService> logger)
 {
-    private static readonly TimeSpan StartupGapThreshold = TimeSpan.FromSeconds(30);
-
     public async Task<OpenDowntimeResult> OpenDowntimeAsync(
         BotDowntimeType type,
         BotDowntimeDetectionMethod method,
@@ -159,8 +157,8 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         // #350: only rows closed at or after boot qualify. An older row cannot describe the
         // gap this boot is recovering from, and trusting one did exactly that — when
         // `compose up -d` recreated Postgres first, StopAsync could not write its row, the
-        // sub-threshold startup gap inferred nothing, and this reached back to a row 33 days
-        // old, turning every deploy into a 2-day crawl.
+        // startup gap was under the 30s floor of the time and inferred nothing, and this
+        // reached back to a row 33 days old, turning every deploy into a 2-day crawl.
         var mostRecentGapStart = await db.BotDowntimeIntervals
             .Where(x => x.EndedAtUtc != null && x.EndedAtUtc >= bootStartedAtUtc)
             .OrderByDescending(x => x.EndedAtUtc)
@@ -171,7 +169,8 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
             return mostRecentGapStart;
 
         // No row for this boot: fall back to the last signal from before this process
-        // started. The bound is what makes the fallback safe to reach at all.
+        // started. The bound is what makes the fallback safe to reach at all. Since #400 the
+        // boot leaves a row whenever a prior signal exists, so this runs only if that write failed.
         var lastAlive = (await GetLastAliveAtUtcAsync(beforeUtc: bootStartedAtUtc)).LastAliveUtc;
 
         // Null means first run ever, and the caller already logs that — saying it twice is noise.
@@ -182,16 +181,30 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         return lastAlive;
     }
 
-    public async Task<Guid?> InferStartupGapAsync()
+    // Must run before the gateway connects and before this process's first heartbeat:
+    // fresh signals would mask the gap.
+    public async Task SettlePriorSessionAsync()
+    {
+        // Nothing open means the stop path wrote no row for this restart: a crash, or
+        // Postgres went away first and StopAsync could not write (#400).
+        var closed = await CloseOpenDowntimeAsync(DateTime.UtcNow);
+        if (closed == 0)
+            await InferStartupGapAsync();
+    }
+
+    private async Task InferStartupGapAsync()
     {
         var now = DateTime.UtcNow;
         var result = await GetLastAliveAtUtcAsync();
         if (result.LastAliveUtc is null)
-            return null;
+            return;
 
+        // #400: no minimum gap. The 30s floor that used to sit here left a 20-24s restart
+        // with no row at all. Only a clock step backwards is skipped, so no interval ends
+        // before it starts.
         var gap = now - result.LastAliveUtc.Value;
-        if (gap < StartupGapThreshold)
-            return null;
+        if (gap <= TimeSpan.Zero)
+            return;
 
         var row = new BotDowntimeIntervalEntity
         {
@@ -208,7 +221,6 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         logger.LogInformation(
             "Inferred startup gap of {GapSeconds:F0}s, opened downtime row {DowntimeId}",
             gap.TotalSeconds, row.Id);
-        return row.Id;
     }
 
     private static DateTime? MaxNullable(DateTime? a, DateTime? b)

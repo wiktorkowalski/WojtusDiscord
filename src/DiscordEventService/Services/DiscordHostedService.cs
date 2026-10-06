@@ -14,15 +14,13 @@ internal sealed class DiscordHostedService(
         // Resolve prior-session downtime BEFORE connecting. Once ConnectAsync
         // returns, DSharpPlus begins dispatching events that accumulated during
         // the gap; their handlers write raw_event_logs rows with
-        // ReceivedAtUtc = now, which would pollute InferStartupGapAsync's
-        // maxReceivedAt query and silently mask the real gap.
+        // ReceivedAtUtc = now, which would pollute the tracker's maxReceivedAt
+        // query and silently mask the real gap.
         try
         {
             using var scope = scopeFactory.CreateScope();
             var tracker = scope.ServiceProvider.GetRequiredService<DowntimeTrackerService>();
-            var closed = await tracker.CloseOpenDowntimeAsync(DateTime.UtcNow);
-            if (closed == 0)
-                await tracker.InferStartupGapAsync();
+            await tracker.SettlePriorSessionAsync();
         }
         catch (Exception ex)
         {
