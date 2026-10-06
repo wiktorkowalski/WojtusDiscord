@@ -58,11 +58,13 @@ public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
         if (limit is < 1 or > MaxSearchLimit)
             return BadRequest(new { error = $"limit must be between 1 and {MaxSearchLimit}." });
 
+        // One answer for both caps of the tester (at one time, per minute): the caller does not
+        // learn which one it reached.
         var result = await stats.SearchAsync(query, limit, ct);
         if (result is null)
         {
             Response.Headers.RetryAfter = RetryAfterSeconds;
-            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "Too many searches run right now. Try again." });
+            return StatusCode(StatusCodes.Status429TooManyRequests, new { error = "Too many searches right now. Try again." });
         }
 
         return result;
