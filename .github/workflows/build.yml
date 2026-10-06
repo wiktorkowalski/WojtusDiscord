@@ -43,5 +43,9 @@ jobs:
       # drop linux/amd64 after cutover (#343).
       platforms: linux/amd64,linux/arm64
       deploy-compose-path: /home/ubuntu/docker/wojtusdiscord
+      # #400: only the bot. The compose file also holds Postgres, and a deploy over every
+      # service recreated it (a new image under postgres:18, or an edit of the shared .env).
+      # The name is the compose service on the host. Postgres is updated by hand.
+      deploy-compose-services: discord-event-service
       deploy-runner-labels: '["self-hosted", "homelab"]'
     secrets: inherit
