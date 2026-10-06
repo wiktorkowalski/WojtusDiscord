@@ -110,6 +110,7 @@ internal sealed class MemeAnnotationImportService(
             Rejected = results.Count(r => r.Outcome == MemeAnnotationImportOutcome.Rejected),
             Items = results,
         };
+        BotMetrics.MemeImportFinished(response.Imported, response.Skipped, response.Rejected);
 
         logger.LogInformation(
             "Meme annotation import: {Items} items, {Imported} imported ({Overwritten} overwritten), {Skipped} skipped, {Rejected} rejected",

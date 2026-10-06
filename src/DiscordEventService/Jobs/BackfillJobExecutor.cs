@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace DiscordEventService.Jobs;
@@ -16,6 +18,9 @@ internal sealed class BackfillJobExecutor(
         Func<BackfillContext, Task<BackfillOutcome>> work,
         CancellationToken cancellationToken)
     {
+        var startedAt = Stopwatch.GetTimestamp();
+        var runOutcome = BotMetrics.OutcomeFailed;
+
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
 
@@ -42,11 +47,13 @@ internal sealed class BackfillJobExecutor(
             {
                 logger.LogWarning("{BackfillType} backfill short-circuited for guild {GuildId}: {Reason}",
                     type, guildId, outcome.Reason);
+                runOutcome = "short_circuit";
                 await MarkFailedAsync(db, checkpoint, new InvalidOperationException(outcome.Reason));
                 return;
             }
 
             await MarkCompletedAsync(db, checkpoint);
+            runOutcome = "completed";
             logger.LogInformation("{BackfillType} backfill completed for guild {GuildId}: {ProcessedCount} processed",
                 type, guildId, checkpoint.ProcessedCount);
         }
@@ -54,6 +61,7 @@ internal sealed class BackfillJobExecutor(
         {
             logger.LogWarning("{BackfillType} backfill cancelled for guild {GuildId} (likely deploy restart)",
                 type, guildId);
+            runOutcome = "cancelled";
             await MarkFailedAsync(db, checkpoint, ex);
         }
         catch (Exception ex)
@@ -61,6 +69,11 @@ internal sealed class BackfillJobExecutor(
             logger.LogError(ex, "{BackfillType} backfill failed for guild {GuildId}", type, guildId);
             await MarkFailedAsync(db, checkpoint, ex);
             throw;
+        }
+        finally
+        {
+            // One count per run, also when a checkpoint save above throws.
+            BotMetrics.BackfillRunFinished(type.ToString(), runOutcome, Stopwatch.GetElapsedTime(startedAt));
         }
     }
 

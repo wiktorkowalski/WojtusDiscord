@@ -24,6 +24,7 @@ internal sealed class SocketLifecycleHandler(
 
     public async Task HandleEventAsync(DiscordClient sender, SocketClosedEventArgs e)
     {
+        BotMetrics.SocketClosed(e.CloseCode);
         var correlationId = Guid.NewGuid();
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
@@ -43,6 +44,7 @@ internal sealed class SocketLifecycleHandler(
 
     public async Task HandleEventAsync(DiscordClient sender, SessionResumedEventArgs e)
     {
+        BotMetrics.SessionResumed();
         var correlationId = Guid.NewGuid();
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
@@ -61,6 +63,7 @@ internal sealed class SocketLifecycleHandler(
 
     public async Task HandleEventAsync(DiscordClient sender, GuildDownloadCompletedEventArgs e)
     {
+        BotMetrics.GuildDownloadCompleted();
         var correlationId = Guid.NewGuid();
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {

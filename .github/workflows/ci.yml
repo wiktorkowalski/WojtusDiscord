@@ -88,6 +88,24 @@ jobs:
             sleep 3
           done
 
+          # /metrics must be the Prometheus scrape, not the SPA fallback's index.html, and must
+          # carry the app meter next to the runtime one. Both names are written at boot.
+          metrics_ok=0
+          if [ "$healthy" = "1" ]; then
+            metrics_code=$(curl -s -o /tmp/metrics.txt -w '%{http_code}' --max-time 5 http://127.0.0.1:5099/metrics || true)
+            if [ "$metrics_code" != "200" ]; then
+              echo "::error::/metrics answered HTTP $metrics_code."
+            elif grep -qi '<html' /tmp/metrics.txt; then
+              echo "::error::/metrics answered with HTML — the SPA fallback took the route."
+            elif ! grep -q '^wojtus_build_info' /tmp/metrics.txt; then
+              echo "::error::/metrics has no app meter metric (wojtus_build_info)."
+            elif ! grep -q '^dotnet_gc_collections_total' /tmp/metrics.txt; then
+              echo "::error::/metrics has no runtime metric (dotnet_gc_collections_total)."
+            else
+              metrics_ok=1
+            fi
+          fi
+
           kill -TERM "$app_pid" 2>/dev/null || true
           wait "$app_pid" 2>/dev/null || true
 
@@ -98,4 +116,9 @@ jobs:
             echo "::error::App did not reach a healthy state within the timeout — likely a boot hang or startup failure."
             exit 1
           fi
-          echo "App booted and reported healthy."
+          if [ "$metrics_ok" != "1" ]; then
+            echo "==== /metrics (first 40 lines) ===="
+            head -n 40 /tmp/metrics.txt || true
+            exit 1
+          fi
+          echo "App booted, reported healthy and serves /metrics."

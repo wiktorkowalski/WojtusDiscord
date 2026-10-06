@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using DiscordEventService.Data;
+using DiscordEventService.Infrastructure;
 
 namespace DiscordEventService.Services.Pipeline;
 
@@ -19,9 +21,22 @@ internal sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFa
         using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = correlationId }))
         {
             string? rawJson = null;
+            var startedAt = Stopwatch.GetTimestamp();
+
+            // One outcome per event, whatever number of failures it records. Serialization
+            // runs before the handler, so a later handler failure overwrites it.
+            var outcome = BotMetrics.OutcomeOk;
 
             async Task RecordFailureAsync(Exception ex) => await RecordHandlerFailureAsync(
                 eventType, handlerName, guildId, channelId, userId, rawJson, correlationId, ex);
+
+            // A soft failure does not throw (FkResolver records it and the handler returns),
+            // so the flag is the only way the outcome below learns of it.
+            async Task RecordSoftFailureAsync(Exception ex)
+            {
+                outcome = BotMetrics.OutcomeFailed;
+                await RecordFailureAsync(ex);
+            }
 
             try
             {
@@ -48,6 +63,7 @@ internal sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFa
                     // event args, not the JSON, so structured ingestion is unaffected.
                     if (serialized.Error is not null)
                     {
+                        outcome = "serialization_failed";
                         logger.LogError(serialized.Error,
                             "Failed to serialize {EventType} in {HandlerName}; stored a flagged stub in raw_event_logs (payload unrecoverable)",
                             eventType, handlerName);
@@ -55,13 +71,18 @@ internal sealed class EventPipeline(IServiceScopeFactory scopeFactory, ILoggerFa
                     }
                 }
 
-                var context = new EventContext(db, scope.ServiceProvider, correlationId, rawJson, receivedAt, logger, RecordFailureAsync);
+                var context = new EventContext(db, scope.ServiceProvider, correlationId, rawJson, receivedAt, logger, RecordSoftFailureAsync);
                 await handler(context);
             }
             catch (Exception ex)
             {
+                outcome = BotMetrics.OutcomeFailed;
                 logger.LogError(ex, "Error handling {EventType} in {HandlerName}", eventType, handlerName);
                 await RecordFailureAsync(ex);
+            }
+            finally
+            {
+                BotMetrics.EventHandled(eventType, outcome, Stopwatch.GetElapsedTime(startedAt));
             }
         }
     }

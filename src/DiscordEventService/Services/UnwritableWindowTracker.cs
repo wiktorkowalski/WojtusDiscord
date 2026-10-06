@@ -1,3 +1,5 @@
+using DiscordEventService.Infrastructure;
+
 namespace DiscordEventService.Services;
 
 // The in-memory state machine behind #320: heartbeat writes are the DB-liveness probe
@@ -25,6 +27,7 @@ internal sealed class UnwritableWindowTracker(TimeSpan minRecordableWindow)
             // alternative is losing the first outage entirely.
             _recoveredAtUtc = null;
             _failedWrites++;
+            BotMetrics.UnwritableWriteFailed();
             return;
         }
 
@@ -36,6 +39,7 @@ internal sealed class UnwritableWindowTracker(TimeSpan minRecordableWindow)
 
         _sinceUtc = nowUtc;
         _failedWrites = 1;
+        BotMetrics.UnwritableWriteFailed();
     }
 
     // The window to persist, or null when there is nothing recordable — a streak shorter

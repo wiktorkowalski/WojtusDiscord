@@ -1,3 +1,4 @@
+using DiscordEventService.Infrastructure;
 using DSharpPlus;
 
 namespace DiscordEventService.Services;
@@ -23,6 +24,8 @@ internal sealed class HeartbeatBackgroundService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        BotMetrics.SetUnwritableWindowReader(() => _outage.HasPendingWindow);
+
         using var timer = new PeriodicTimer(Interval);
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -35,6 +38,7 @@ internal sealed class HeartbeatBackgroundService(
                 var tracker = scope.ServiceProvider.GetRequiredService<DowntimeTrackerService>();
                 await tracker.RecordHeartbeatAsync(nowUtc, isConnected, latencyMs);
                 heartbeatWritten = true;
+                BotMetrics.HeartbeatWritten(succeeded: true);
 
                 var hadPendingWindow = _outage.HasPendingWindow;
                 var window = _outage.OnWriteSucceeded(nowUtc);
@@ -58,6 +62,7 @@ internal sealed class HeartbeatBackgroundService(
                 // Only a failure of the heartbeat write itself counts toward the window —
                 // scope/persist failures on a tick whose heartbeat committed must not.
                 _outage.OnWriteFailed(nowUtc, isConnected);
+                BotMetrics.HeartbeatWritten(succeeded: false);
                 logger.LogWarning(ex, "Heartbeat write failed; will retry next tick");
             }
             catch (Exception ex)

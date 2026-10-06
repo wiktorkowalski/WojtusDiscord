@@ -2,6 +2,7 @@ using System.Globalization;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Conversations;
+using DiscordEventService.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -110,6 +111,8 @@ internal sealed class UsageAlertService(
                 cancellationToken);
             if (!inserted)
                 continue;
+
+            BotMetrics.UsageAlertFired(cap.ToString());
 
             logger.LogInformation(
                 "Cost cap {Cap} crossed {Level}% ({Spent:0.00}/{Limit:0.00} USD) for window {WindowStart:yyyy-MM-dd}",

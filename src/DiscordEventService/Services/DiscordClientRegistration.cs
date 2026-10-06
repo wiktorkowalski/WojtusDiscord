@@ -1,5 +1,6 @@
 using DiscordEventService.Commands;
 using DiscordEventService.Configuration;
+using DiscordEventService.Infrastructure;
 using DiscordEventService.Services.Conversation;
 using DiscordEventService.Services.EventHandlers;
 using DiscordEventService.Services.Pipeline;
@@ -69,6 +70,9 @@ internal static class DiscordClientRegistration
             // DI-aware factory which works at any time after Build.
             services.AddSingleton<IBackgroundJobClient>(_ => rootSp.GetRequiredService<IBackgroundJobClient>());
             services.AddMemoryCache();
+            // This container has its own ILoggerFactory, and EventPipeline and the handlers log
+            // through it: without its own copy of the provider their log lines are not counted.
+            services.AddSingleton<ILoggerProvider, LogEventCounterProvider>();
 
             // #238: forward the singleton IChatClient + bind the conversation/OpenRouter
             // options the ConversationEventHandler and ConversationService read.

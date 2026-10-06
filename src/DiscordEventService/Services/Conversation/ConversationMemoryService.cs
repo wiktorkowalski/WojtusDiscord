@@ -2,6 +2,7 @@ using System.Text.Json;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Conversations;
+using DiscordEventService.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
@@ -182,6 +183,11 @@ internal sealed class ConversationMemoryService(
             CreatedAtUtc = DateTime.UtcNow,
         });
         await db.SaveChangesAsync(cancellationToken);
+
+        // After the save, so the metric and the ledger count the same rows.
+        BotMetrics.ConversationRoundRecorded(
+            usage.Model, usage.Attempt, usage.PromptTokens, usage.CompletionTokens,
+            usage.CostUsd, usage.LatencyMs, usage.Failed);
     }
 
     // The exact string MEAI's OpenAI adapter puts on the wire for a tool result: the

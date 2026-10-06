@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using DiscordEventService.Configuration;
+using DiscordEventService.Infrastructure;
 using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.Conversation.Interaction;
@@ -121,12 +123,19 @@ internal sealed class ConversationFlow(
         // buffered, each tool round posts one standalone cue+summary message, and the
         // final answer is posted complete when the round finishes — no edit-in-place.
         var renderer = new TurnRenderer(target);
+        var startedAt = Stopwatch.GetTimestamp();
+
+        // "failed" unless the turn ends on one of the two paths below: an exception that
+        // leaves this method is the caller's to log, but the turn is still counted here.
+        var outcome = BotMetrics.OutcomeFailed;
         try
         {
             await RenderTurnAsync(renderer, content, context, cts.Token);
+            outcome = BotMetrics.OutcomeOk;
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
+            outcome = "timeout";
             logger.LogWarning("Conversation turn timed out after {Timeout}s in channel {ChannelId}",
                 options.Value.RequestTimeoutSeconds, context.ChannelId);
 
@@ -136,6 +145,8 @@ internal sealed class ConversationFlow(
         }
         finally
         {
+            BotMetrics.ConversationTurnFinished(outcome, Stopwatch.GetElapsedTime(startedAt));
+
             // §3 post-turn cost-cap check (#269): the ledger rows exist on every exit
             // path of GenerateReplyAsync (answer, round cap, retry exhaustion, timeout),
             // so this finally covers them all. Never throws, and runs on its own

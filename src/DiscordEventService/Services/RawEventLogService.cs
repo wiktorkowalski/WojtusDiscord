@@ -1,6 +1,7 @@
 using System.Reflection;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Infrastructure;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 
@@ -85,6 +86,7 @@ internal sealed class RawEventLogService(DiscordDbContext dbContext, ILogger<Raw
             };
 
             await dbContext.RawEventLogs.AddAsync(rawEvent);
+            BotMetrics.RawEventLogged(eventType, rawEvent.JsonSizeBytes);
             // Note: SaveChanges is called by the event handler after all entities are added
         }
         catch (Exception ex)

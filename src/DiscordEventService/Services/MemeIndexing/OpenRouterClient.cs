@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
@@ -5,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Infrastructure;
 using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.MemeIndexing;
@@ -114,6 +116,28 @@ internal sealed class OpenRouterClient(
         if (!opts.IsConfigured)
             return MemeAnalysisResult.Failed("OpenRouter:ApiKey is not configured", isTransient: false);
 
+        // Only a call that went to the model is measured. A cancelled one leaves no measurement.
+        var stopwatch = Stopwatch.StartNew();
+        var result = await SendAnalysisAsync(imageBytes, mimeType, model, reasoningEffort, opts, cancellationToken);
+        var outcome = result.Outcome switch
+        {
+            MemeAnalysisOutcome.Success => "success",
+            MemeAnalysisOutcome.Refusal => "refusal",
+            _ => result.IsTransient ? "error_transient" : "error",
+        };
+        BotMetrics.MemeVisionCalled(model, outcome, stopwatch.Elapsed,
+            result.Usage?.PromptTokens ?? 0, result.Usage?.CompletionTokens ?? 0, result.Usage?.CostUsd);
+        return result;
+    }
+
+    private async Task<MemeAnalysisResult> SendAnalysisAsync(
+        byte[] imageBytes,
+        string mimeType,
+        string model,
+        string? reasoningEffort,
+        OpenRouterOptions opts,
+        CancellationToken cancellationToken)
+    {
         var payload = BuildAnalysisPayload(imageBytes, mimeType, model, reasoningEffort, opts);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, "chat/completions");

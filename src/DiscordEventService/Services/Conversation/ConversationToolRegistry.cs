@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Infrastructure;
 using DiscordEventService.Services.MemeIndexing;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
@@ -640,10 +641,14 @@ internal sealed class ConversationToolset
         activity?.SetTag("tool.arguments", argsText);
 
         var stopwatch = Stopwatch.StartNew();
+
+        // The model writes the tool name: one it invented must not become a label value.
+        _functions.TryGetValue(call.Name, out var function);
+        var outcome = function is null ? "unknown_tool" : BotMetrics.OutcomeOk;
         object? result;
         try
         {
-            if (_functions.TryGetValue(call.Name, out var function))
+            if (function is not null)
             {
                 var arguments = new AIFunctionArguments(call.Arguments ?? new Dictionary<string, object?>());
                 result = await function.InvokeAsync(arguments, cancellationToken);
@@ -656,15 +661,21 @@ internal sealed class ConversationToolset
         catch (OperationCanceledException)
         {
             // The whole turn was cancelled (timeout / shutdown) — let it unwind.
+            outcome = "cancelled";
             throw;
         }
         catch (Exception ex)
         {
+            outcome = "error";
             _logger.LogWarning(ex, "Tool {Tool} threw; returning the error to the model", call.Name);
             activity?.SetTag("tool.error", ex.GetType().Name);
             result = $"Error running tool \"{call.Name}\": {ex.Message}";
         }
-        stopwatch.Stop();
+        finally
+        {
+            stopwatch.Stop();
+            BotMetrics.ToolCalled(function?.Name ?? "unknown", outcome, stopwatch.Elapsed);
+        }
 
         var resultText = result?.ToString() ?? string.Empty;
         activity?.SetTag("tool.latency_ms", stopwatch.ElapsedMilliseconds);
