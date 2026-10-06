@@ -614,6 +614,27 @@ public sealed class MemeStatsReaderTests(PostgresFixture fixture) : IClassFixtur
         Assert.Single(free!.Hits);
     }
 
+    // #408: the slots cap how many searches run at one time, not how many a minute.
+    [Fact]
+    public async Task SearchAsync_OverTheSearchesOfTheMinute_ReturnsNullAndRunsNoSearch()
+    {
+        await _data.AddIndexedAsync(1UL, a => a.Tags = ["rakieta"]);
+        using var limits = new MemeDashboardLimits { SearchesPerMinute = 2 };
+
+        var first = await NewReader(limits: limits).SearchAsync("rakieta", 5, CancellationToken.None);
+        var second = await NewReader(limits: limits).SearchAsync("rakieta", 5, CancellationToken.None);
+        // A disposed context: a search that ran would throw, so null means nothing touched the database.
+        var disposed = NewContext();
+        await disposed.DisposeAsync();
+        var overTheLimit = await NewReader(db: disposed, limits: limits).SearchAsync("rakieta", 5, CancellationToken.None);
+
+        Assert.Single(first!.Hits);
+        Assert.Single(second!.Hits);
+        Assert.Null(overTheLimit);
+        // And it took no slot.
+        Assert.Equal(MemeDashboardLimits.MaxConcurrentSearches, limits.SearchGate.CurrentCount);
+    }
+
     // The wait for an answer that another request computes has an end: then "busy", not a longer queue.
     [Fact]
     public async Task GetIndexAsync_AnotherRequestHoldsTheGatePastTheWaitLimit_ReturnsNullAndComputesNothing()

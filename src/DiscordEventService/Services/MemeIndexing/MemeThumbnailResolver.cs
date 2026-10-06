@@ -33,7 +33,9 @@ public interface IMemeThumbnailResolver
 // - The caller sends an attachment id only. The URL comes from the database.
 // - Servable = the row is Indexed, its channel is a meme channel NOW, and the message is not
 //   deleted and still holds the attachment. Everything else is "not found".
-// - The database decides that before any call to Discord.
+// - The database decides that on every request, before the cache is read and before any call
+//   to Discord. The cache holds answers of Discord only, so it cannot serve an image the
+//   database no longer allows (#408).
 // - The only outbound call goes to the Discord API, with a URL of the Discord CDN; the
 //   redirect goes to the Discord CDN only.
 // - Calls to Discord are capped: MemeDashboardLimits.
@@ -52,7 +54,8 @@ internal sealed class MemeThumbnailResolver(
     public static readonly TimeSpan ExpiryMargin = TimeSpan.FromMinutes(15);
     public static readonly TimeSpan BrowserMaxAge = TimeSpan.FromMinutes(10);
 
-    // "Not servable" can change (a channel joins the list): asked again after this.
+    // Discord gave no usable URL (it declined, or the URL is not a Discord CDN URL): Discord is
+    // asked again after this. A "not servable" from the database is not kept at all.
     public static readonly TimeSpan NotServableCacheDuration = TimeSpan.FromMinutes(5);
 
     // Discord failed: no new call for this image for this long.
@@ -65,24 +68,20 @@ internal sealed class MemeThumbnailResolver(
 
     public async Task<MemeThumbnail> ResolveAsync(ulong attachmentDiscordId, CancellationToken cancellationToken)
     {
+        // Before the cache: a kept URL must not outlive the message, the Indexed status or the
+        // channel's place in the list. The cost is two indexed reads per request.
+        var storedUrl = await FindServableStoredUrlAsync(attachmentDiscordId, cancellationToken);
+
+        // Not cached: the next request asks the database again anyway, and ids with no row
+        // have no bound. What Discord answered before is dropped.
+        if (storedUrl is null)
+        {
+            limits.Thumbnails.Remove(attachmentDiscordId);
+            return MemeThumbnail.Gone;
+        }
+
         if (Cached(attachmentDiscordId) is { } cached)
             return cached;
-
-        var row = await db.MemeIndex.AsNoTracking()
-            .Where(m => m.AttachmentDiscordId == attachmentDiscordId)
-            .Select(m => new { m.Status, m.ChannelDiscordId, m.MessageDiscordId })
-            .FirstOrDefaultAsync(cancellationToken);
-
-        // Not cached: an id with no row costs one index lookup, and such ids have no bound.
-        if (row is null)
-            return MemeThumbnail.Gone;
-
-        var storedUrl = row.Status == MemeIndexStatus.Indexed && options.Value.ChannelIds.Contains(row.ChannelDiscordId)
-            ? await FindStoredUrlAsync(attachmentDiscordId, row.MessageDiscordId, cancellationToken)
-            : null;
-
-        if (storedUrl is null)
-            return Keep(attachmentDiscordId, MemeThumbnail.Gone, NotServableCacheDuration);
 
         // One call to Discord at a time. No slot (the queue is full, or the wait was too long): 503.
         using var slot = await WaitForRefreshSlotAsync(cancellationToken);
@@ -114,6 +113,22 @@ internal sealed class MemeThumbnailResolver(
         {
             return null;
         }
+    }
+
+    // Null = not servable: no row, a row that is not Indexed, a channel outside the meme
+    // channels, or no stored URL (FindStoredUrlAsync).
+    private async Task<string?> FindServableStoredUrlAsync(ulong attachmentDiscordId, CancellationToken cancellationToken)
+    {
+        var row = await db.MemeIndex.AsNoTracking()
+            .Where(m => m.AttachmentDiscordId == attachmentDiscordId)
+            .Select(m => new { m.Status, m.ChannelDiscordId, m.MessageDiscordId })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return row is not null
+            && row.Status == MemeIndexStatus.Indexed
+            && options.Value.ChannelIds.Contains(row.ChannelDiscordId)
+                ? await FindStoredUrlAsync(attachmentDiscordId, row.MessageDiscordId, cancellationToken)
+                : null;
     }
 
     // The stored URL, by the same parse as the indexer: nothing comes back for a deleted

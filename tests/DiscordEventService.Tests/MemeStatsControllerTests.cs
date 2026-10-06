@@ -205,6 +205,27 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         Assert.Equal(["error"], json.RootElement.EnumerateObject().Select(p => p.Name));
     }
 
+    // #408: the slots cap how many searches run at one time, not how many a minute.
+    // The searches run one after another, so no slot is ever taken: the 429 is the rate's.
+    [Fact]
+    public async Task Search_OverTheSearchesOfTheMinute_Returns429WithTheErrorShape()
+    {
+        await _data.AddIndexedAsync(AttachmentId, a => a.Tags = ["rakieta"]);
+        await using var host = await StartAsync(searchesPerMinute: 2);
+
+        var first = await host.Client.GetAsync($"{BasePath}/search?q=rakieta");
+        var second = await host.Client.GetAsync($"{BasePath}/search?q=rakieta");
+        var third = await host.Client.GetAsync($"{BasePath}/search?q=rakieta");
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal(HttpStatusCode.TooManyRequests, third.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(5), third.Headers.RetryAfter!.Delta);
+        using var json = JsonDocument.Parse(await third.Content.ReadAsStringAsync());
+        Assert.Equal(["error"], json.RootElement.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(MemeDashboardLimits.MaxConcurrentSearches, host.Limits.SearchGate.CurrentCount);
+    }
+
     // ───────────────────────────── Thumbnails ─────────────────────────────
 
     [Fact]
@@ -290,6 +311,63 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         await using var host = await StartAsync();
 
         await AssertNotServedAsync(host);
+    }
+
+    // #408: the database is asked on every request, so a kept URL does not outlive the meme.
+    // Servable again: Discord is asked again, so the kept URL was dropped, not only skipped.
+    [Fact]
+    public async Task Thumbnail_MessageDeletedAfterACachedRedirect_Returns404AndDropsTheKeptUrl()
+    {
+        await _data.AddIndexedAsync(AttachmentId);
+        await using var host = await StartAsync();
+
+        var cached = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
+        await SetMessageDeletedAsync(true);
+        var afterDelete = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
+        var callsWhileDeleted = host.Discord.Calls;
+        await SetMessageDeletedAsync(false);
+        var restored = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
+
+        Assert.Equal(HttpStatusCode.Redirect, cached.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, afterDelete.StatusCode);
+        Assert.Null(afterDelete.Headers.Location);
+        Assert.Equal(1, callsWhileDeleted);
+        Assert.Equal(HttpStatusCode.Redirect, restored.StatusCode);
+        Assert.Equal(2, host.Discord.Calls);
+    }
+
+    [Fact]
+    public async Task Thumbnail_RowLeavesIndexedAfterACachedRedirect_Returns404WithoutACallToDiscord()
+    {
+        await _data.AddIndexedAsync(AttachmentId);
+        await using var host = await StartAsync();
+
+        var cached = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
+        await _db.MemeIndex
+            .Where(m => m.AttachmentDiscordId == AttachmentId)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.Status, MemeIndexStatus.Pending));
+        var afterChange = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
+
+        Assert.Equal(HttpStatusCode.Redirect, cached.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, afterChange.StatusCode);
+        Assert.Equal(1, host.Discord.Calls);
+    }
+
+    [Fact]
+    public async Task Thumbnail_ChannelLeavesTheMemeChannelsAfterACachedRedirect_Returns404WithoutACallToDiscord()
+    {
+        await _data.AddIndexedAsync(AttachmentId);
+        // The host keeps this array as MemeIndex:ChannelIds: a write to it is a changed list.
+        ulong[] channelIds = [MemeStatsTestData.ChannelDiscordId];
+        await using var host = await StartAsync(channelIds: channelIds);
+
+        var cached = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
+        channelIds[0] = 12345UL;
+        var afterChange = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
+
+        Assert.Equal(HttpStatusCode.Redirect, cached.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, afterChange.StatusCode);
+        Assert.Equal(1, host.Discord.Calls);
     }
 
     [Fact]
@@ -443,6 +521,14 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
             .Where(m => m.DiscordId == MemeStatsTestData.MessageIdOf(AttachmentId))
             .ExecuteUpdateAsync(s => s.SetProperty(m => m.AttachmentsJson, attachmentsJson));
 
+    // ck_messages_soft_delete: a deleted message has its deletion time, and no other message has one.
+    private Task<int> SetMessageDeletedAsync(bool isDeleted) =>
+        _db.Messages
+            .Where(m => m.DiscordId == MemeStatsTestData.MessageIdOf(AttachmentId))
+            .ExecuteUpdateAsync(s => s
+                .SetProperty(m => m.IsDeleted, isDeleted)
+                .SetProperty(m => m.DeletedAtUtc, isDeleted ? DateTime.UtcNow : null));
+
     private static async Task<JsonDocument> GetJsonAsync(TestHost host, string path) =>
         JsonDocument.Parse(await host.Client.GetStringAsync(path));
 
@@ -460,7 +546,8 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         HttpStatusCode? failWith = null,
         ulong[]? channelIds = null,
         TimeSpan? delay = null,
-        TimeSpan? answerWaitTimeout = null)
+        TimeSpan? answerWaitTimeout = null,
+        int searchesPerMinute = MemeDashboardLimits.MaxSearchesPerMinute)
     {
         var discord = new StubDiscordApi(refresh ?? (urls => urls.Select(u => (u, (string?)(u + FreshSignature)))), failWith, delay);
 
@@ -478,8 +565,8 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         builder.Services.AddSingleton<IHttpClientFactory>(new FakeHttpClientFactory(discord));
         builder.Services.AddSingleton<MemeSearchLogWriter>();
         builder.Services.AddSingleton(_ => answerWaitTimeout is { } wait
-            ? new MemeDashboardLimits { AnswerWaitTimeout = wait }
-            : new MemeDashboardLimits());
+            ? new MemeDashboardLimits { AnswerWaitTimeout = wait, SearchesPerMinute = searchesPerMinute }
+            : new MemeDashboardLimits { SearchesPerMinute = searchesPerMinute });
         builder.Services.AddScoped<MemeSearchService>();
         builder.Services.AddScoped<MemeSampleService>();
         builder.Services.AddScoped<IMemeIndexSummaryReader, MemeIndexSummaryReader>();
