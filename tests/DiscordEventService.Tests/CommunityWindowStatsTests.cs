@@ -11,7 +11,6 @@ namespace DiscordEventService.Tests;
 
 // #393: the range-scoped lists on GET /api/stats/community (top emotes, reactions given,
 // channels, top activities) and the fixed 30-day heatmap.
-// #407: the window edges of voice and online minutes, and the online downtime check.
 public sealed class CommunityWindowStatsTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private const ulong GuildSf = 742554855180206203UL;
