@@ -219,8 +219,8 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         db.BotDowntimeIntervals.Add(row);
         await db.SaveChangesAsync();
         logger.LogInformation(
-            "Inferred startup gap of {GapSeconds:F0}s, opened downtime row {DowntimeId}",
-            gap.TotalSeconds, row.Id);
+            "Recorded closed inferred downtime row {DowntimeId} for a gap the stop path did not record: {StartedAtUtc:O} to {EndedAtUtc:O} ({GapSeconds:F0}s)",
+            row.Id, row.StartedAtUtc, now, gap.TotalSeconds);
     }
 
     private static DateTime? MaxNullable(DateTime? a, DateTime? b)
