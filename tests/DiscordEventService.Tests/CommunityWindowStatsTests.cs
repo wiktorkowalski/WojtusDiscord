@@ -11,6 +11,7 @@ namespace DiscordEventService.Tests;
 
 // #393: the range-scoped lists on GET /api/stats/community (top emotes, reactions given,
 // channels, top activities) and the fixed 30-day heatmap.
+// #407: the window edges of voice and online minutes, and the online downtime check.
 public sealed class CommunityWindowStatsTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private const ulong GuildSf = 742554855180206203UL;
@@ -50,6 +51,7 @@ public sealed class CommunityWindowStatsTests(PostgresFixture fixture) : IClassF
         await _db.Database.MigrateAsync();
         await _db.BotDowntimeIntervals.ExecuteDeleteAsync();
         await _db.PresenceEvents.ExecuteDeleteAsync();
+        await _db.VoiceStateEvents.ExecuteDeleteAsync();
         await _db.ReactionEvents.ExecuteDeleteAsync();
         await _db.RawEventLogs.ExecuteDeleteAsync();
         await _db.Messages.ExecuteDeleteAsync();
@@ -199,6 +201,113 @@ public sealed class CommunityWindowStatsTests(PostgresFixture fixture) : IClassF
         var week = await CommunityAsync("week");
 
         Assert.Equal(new CommunityActivityDto("Hades", 60, 1), Assert.Single(week.TopActivities));
+    }
+
+    [Fact]
+    public async Task TopActivities_Week_ClipsASegmentThatStartsLongBeforeTheWindow()
+    {
+        _db.PresenceEvents.AddRange(
+            // Older events of the same user: only the last one before the window opens the segment.
+            Presence(Alice, _now.AddDays(-30), ("Old Game", Playing)),
+            Presence(Alice, _now.AddDays(-25)),
+            Presence(Alice, _now.AddDays(-20), ("Factorio", Playing)),
+            Presence(Alice, _now.AddDays(-7).AddHours(2)),
+            // Bob has no event in the window: his last segment before it is open, not counted.
+            Presence(Bob, _now.AddDays(-21)),
+            Presence(Bob, _now.AddDays(-20), ("Quake", Playing)));
+        await _db.SaveChangesAsync();
+
+        var week = await CommunityAsync("week");
+
+        // 13 days of Factorio, of which the last 2 h are inside the window.
+        var factorio = Assert.Single(week.TopActivities);
+        Assert.Equal("Factorio", factorio.Name);
+        Assert.InRange(factorio.Minutes, 115, 120);
+        Assert.Equal(1, factorio.Players);
+    }
+
+    [Fact]
+    public async Task VoiceMinutes_Week_CountASegmentInTheWindowOfItsStart()
+    {
+        _db.VoiceStateEvents.AddRange(
+            // Starts 10 min before the window, ends 50 min into it: all 60 min belong to prev.
+            Voice(Alice, General, _now.AddDays(-7).AddMinutes(-10)),
+            Voice(Alice, null, _now.AddDays(-7).AddMinutes(50)),
+            // Starts in the window, ends after its end: counted in full.
+            Voice(Alice, General, _now.AddMinutes(-20)),
+            Voice(Alice, null, _now.AddMinutes(15)));
+        await _db.SaveChangesAsync();
+
+        var week = await CommunityAsync("week");
+
+        Assert.Equal(35, week.Metrics.VoiceMinutes.Value);
+        Assert.Equal(60, week.Metrics.VoiceMinutes.Prev);
+        Assert.Equal(7, week.Metrics.VoiceMinutes.Spark.Count);
+        Assert.Equal(35, week.Metrics.VoiceMinutes.Spark.Sum());
+        var leader = Assert.Single(week.Leaderboards.Voice);
+        Assert.Equal(Alice, leader.UserDiscordId);
+        Assert.Equal(35, leader.Value);
+
+        var all = await CommunityAsync("all");
+        Assert.Equal(95, all.Metrics.VoiceMinutes.Value);
+        Assert.Null(all.Metrics.VoiceMinutes.Prev);
+        Assert.Equal(95, all.Metrics.VoiceMinutes.Spark.Sum());
+        Assert.Equal(95, Assert.Single(all.Leaderboards.Voice).Value);
+    }
+
+    [Fact]
+    public async Task OnlineMinutes_Week_CountASegmentInTheWindowOfItsStart()
+    {
+        _db.PresenceEvents.AddRange(
+            // Starts 10 min before the window, ends 10 min into it: all 20 min belong to prev.
+            Status(Alice, _now.AddDays(-7).AddMinutes(-10), online: true),
+            Status(Alice, _now.AddDays(-7).AddMinutes(10), online: false),
+            // Starts in the window, ends after its end: counted in full.
+            Status(Alice, _now.AddMinutes(-10), online: true),
+            Status(Alice, _now.AddMinutes(15), online: false));
+        await _db.SaveChangesAsync();
+
+        var week = await CommunityAsync("week");
+
+        Assert.Equal(25, week.Metrics.OnlineMinutes.Value);
+        Assert.Equal(20, week.Metrics.OnlineMinutes.Prev);
+        Assert.Equal(7, week.Metrics.OnlineMinutes.Spark.Count);
+        Assert.Equal(25, week.Metrics.OnlineMinutes.Spark.Sum());
+
+        var all = await CommunityAsync("all");
+        Assert.Equal(45, all.Metrics.OnlineMinutes.Value);
+        Assert.Null(all.Metrics.OnlineMinutes.Prev);
+        Assert.Equal(45, all.Metrics.OnlineMinutes.Spark.Sum());
+    }
+
+    [Fact]
+    public async Task OnlineMinutes_OverlappingDowntime_DropsASegmentOnlyTheEarlierIntervalCovers()
+    {
+        var t = _now.AddDays(-1);
+        _db.BotDowntimeIntervals.AddRange(
+            Downtime(t, t.AddHours(3)),
+            // Starts later and ends sooner: the last interval before the 2 h segment, and it
+            // does not cover it. Only the longer, earlier one does.
+            Downtime(t.AddHours(1), t.AddHours(1).AddMinutes(30)));
+        _db.PresenceEvents.AddRange(
+            // Ends exactly where the downtime starts: no overlap, kept (20 min).
+            Status(Alice, t.AddMinutes(-20), online: true),
+            Status(Alice, t, online: false),
+            // Inside the long interval, after the short one: dropped.
+            Status(Alice, t.AddHours(2), online: true),
+            Status(Alice, t.AddHours(2).AddMinutes(20), online: false),
+            // Starts exactly where the downtime ends: no overlap, kept (10 min).
+            Status(Alice, t.AddHours(3), online: true),
+            Status(Alice, t.AddHours(3).AddMinutes(10), online: false),
+            // Clear of every interval: kept (10 min).
+            Status(Alice, t.AddHours(4), online: true),
+            Status(Alice, t.AddHours(4).AddMinutes(10), online: false));
+        await _db.SaveChangesAsync();
+
+        var week = await CommunityAsync("week");
+
+        Assert.Equal(40, week.Metrics.OnlineMinutes.Value);
+        Assert.Equal(40, week.Metrics.OnlineMinutes.Spark.Sum());
     }
 
     [Theory]
@@ -361,6 +470,28 @@ public sealed class CommunityWindowStatsTests(PostgresFixture fixture) : IClassF
             EventTimestampUtc = at,
             ReceivedAtUtc = at,
         };
+
+    // A presence event that only carries the overall status (1 = online, 0 = offline).
+    private static PresenceEventEntity Status(ulong user, DateTime at, bool online) => new PresenceEventEntity
+    {
+        UserDiscordId = user,
+        GuildDiscordId = GuildSf,
+        DesktopStatusAfter = online ? 1 : 0,
+        EventTimestampUtc = at,
+        ReceivedAtUtc = at,
+    };
+
+    // channelAfter = null is a leave.
+    private static VoiceStateEventEntity Voice(ulong user, ulong? channelAfter, DateTime at) => new VoiceStateEventEntity
+    {
+        UserDiscordId = user,
+        GuildDiscordId = GuildSf,
+        ChannelDiscordIdBefore = channelAfter is null ? General : null,
+        ChannelDiscordIdAfter = channelAfter,
+        EventType = channelAfter is null ? VoiceEventType.Left : VoiceEventType.Joined,
+        EventTimestampUtc = at,
+        ReceivedAtUtc = at,
+    };
 
     private static BotDowntimeIntervalEntity Downtime(DateTime start, DateTime? end) => new BotDowntimeIntervalEntity
     {
