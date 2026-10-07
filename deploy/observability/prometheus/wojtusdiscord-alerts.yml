@@ -141,19 +141,23 @@ groups:
           summary: "{{ $value | printf \"%.0f\" }} event handler failures in 30 minutes"
           description: "Normal is 0 to a few per day. Open the Events & Ingest dashboard, row 'Failures', for the event type and handler; then read failed_events in the database."
 
-      # Share of events with a failed handler. The 100-event floor keeps a quiet night out.
+      # Share of events with a failed handler. The floor is 20 events in 30 minutes: on this server (12 members)
+      # that is reached in about a third of the windows that have any event (14 days of raw_event_logs,
+      # 2026-10-07: median 15, p75 27, p99 92). The first floor of 100 was reached in 0.6% of windows, so the
+      # rule could not fire. Below 20 events one failure is already above 5%; WojtusEventHandlerFailures
+      # covers that by count.
       - alert: WojtusEventFailureRatioHigh
         expr: |
           sum(sum_over_time(((wojtus_events_total{job="wojtusdiscord",outcome="failed"} - (((last_over_time(wojtus_events_total{job="wojtusdiscord",outcome="failed"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (wojtus_events_total{job="wojtusdiscord",outcome="failed"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (wojtus_events_total{job="wojtusdiscord",outcome="failed"} + 0))[30m:1m]))
             / sum(sum_over_time(((wojtus_events_total{job="wojtusdiscord"} - (((last_over_time(wojtus_events_total{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (wojtus_events_total{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (wojtus_events_total{job="wojtusdiscord"} + 0))[30m:1m])) > 0.05
-          and sum(sum_over_time(((wojtus_events_total{job="wojtusdiscord"} - (((last_over_time(wojtus_events_total{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (wojtus_events_total{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (wojtus_events_total{job="wojtusdiscord"} + 0))[30m:1m])) >= 100
+          and sum(sum_over_time(((wojtus_events_total{job="wojtusdiscord"} - (((last_over_time(wojtus_events_total{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (wojtus_events_total{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (wojtus_events_total{job="wojtusdiscord"} + 0))[30m:1m])) >= 20
         for: 10m
         labels:
           severity: warning
           service: wojtusdiscord
         annotations:
           summary: "{{ $value | humanizePercentage }} of gateway events fail"
-          description: "More than 5% of at least 100 events in 30 minutes had a failed handler. Check the bot log for 'Error handling' and whether Postgres accepts writes."
+          description: "More than 5% of at least 20 events in 30 minutes had a failed handler (2 of 20, 3 of 40). Check the bot log for 'Error handling' and whether Postgres accepts writes."
 
       # Any dead letter. The alert stays for 30 minutes after the last one.
       - alert: WojtusEventDeadLetter
@@ -331,20 +335,22 @@ groups:
           description: "Anonymous memory of the discord-event-service container is above 1 GiB for 30 minutes. Normal is about 160 MiB. Look for a leak: GC heap by generation on the Runtime & HTTP dashboard."
 
       # Normal p95 is about 90 ms; the guild replay at a start (GuildCreated) takes 250 to 500 ms and is
-      # a few events, well under 5% of 50. The buckets near the threshold end at 1, 2.5 and
+      # far below the threshold. The floor is 20 events in 30 minutes (reached in about a third of the windows
+      # with any event on this 12-member server; the first floor of 50 in 15 minutes was reached in 0.8%,
+      # so the rule could not fire). The buckets near the threshold end at 1, 2.5 and
       # 5 s (PR #420 kept them): the p95 reads above 2 s when more than 5% of the events take over
-      # 2.5 s, or more than about 15% take over 1 s. rate() is enough: 50 events need series that exist.
+      # 2.5 s (2 of 20), or more than about 15% take over 1 s. rate() is enough: 20 events need series that exist.
       - alert: WojtusEventHandlerSlow
         expr: |
-          histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord"}[15m]))) > 2
-          and sum(increase(wojtus_event_handler_duration_seconds_count{job="wojtusdiscord"}[15m])) >= 50
+          histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord"}[30m]))) > 2
+          and sum(increase(wojtus_event_handler_duration_seconds_count{job="wojtusdiscord"}[30m])) >= 20
         for: 15m
         labels:
           severity: warning
           service: wojtusdiscord
         annotations:
           summary: "Event handler p95 is {{ $value | humanizeDuration }}"
-          description: "The p95 of at least 50 events in 15 minutes is above 2 s. Normal is about 90 ms. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard."
+          description: "The p95 of at least 20 events in 30 minutes is above 2 s. Normal is about 90 ms. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard."
 
       - alert: WojtusHealthCheckWebhookFailed
         expr: |
