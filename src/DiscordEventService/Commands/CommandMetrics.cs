@@ -28,10 +28,12 @@ internal static class CommandMetrics
     // the command name only: no argument, no id. Null when no trace target is configured.
     //
     // The command starts it in its own body. The extension counts the command after the body
-    // returned (RecordAsync), outside the span: wojtus_command_duration carries no exemplar,
-    // and what the command measures inside its body does.
-    public static Activity? StartSpan(CommandContext context) =>
-        ActivitySource.StartActivity($"command {context.Command.FullName}");
+    // returned (RecordAsync), outside the span: for a slash command wojtus_command_duration
+    // carries no exemplar, and what the command measures inside its body does.
+    public static Activity? StartSpan(CommandContext context) => StartSpan(context.Command.FullName);
+
+    // For what the extension does not run: a press of a /meme paging button.
+    public static Activity? StartSpan(string command) => ActivitySource.StartActivity($"command {command}");
 
     // For a command that caught its own exception: the execution then counts as "failed".
     public static void MarkFailed(CommandContext context)
@@ -51,6 +53,17 @@ internal static class CommandMetrics
         return Task.CompletedTask;
     }
 
+    // A button press is no command of the extension: its handler counts it here, under a
+    // command name of its own, with the same two instruments. A failed press then reaches the
+    // same panels and the same rule as a failed command. Called inside the span of the press,
+    // so this duration carries an exemplar.
+    public static void RecordInteraction(string command, bool failed, DateTimeOffset createdAt)
+    {
+        if (failed)
+            Activity.Current?.SetStatus(ActivityStatusCode.Error);
+        BotMetrics.CommandFinished(command, failed ? BotMetrics.OutcomeFailed : BotMetrics.OutcomeOk, ElapsedSince(createdAt));
+    }
+
     // A fixed set of outcomes from the exception type. Never the message: it is free text.
     internal static string Classify(Exception? exception) => exception switch
     {
@@ -63,14 +76,14 @@ internal static class CommandMetrics
     };
 
     // The extension gives no start time. For a slash command the interaction id holds the
-    // instant Discord made it, so the time includes the way from Discord to the bot. A clock
-    // that runs behind Discord's must not give a negative time.
-    private static TimeSpan ElapsedSince(CommandContext? context)
-    {
-        if (context is not SlashCommandContext slash)
-            return TimeSpan.Zero;
+    // instant Discord made it, so the time includes the way from Discord to the bot.
+    private static TimeSpan ElapsedSince(CommandContext? context) =>
+        context is SlashCommandContext slash ? ElapsedSince(slash.Interaction.CreationTimestamp) : TimeSpan.Zero;
 
-        var elapsed = DateTimeOffset.UtcNow - slash.Interaction.CreationTimestamp;
+    // A clock that runs behind Discord's must not give a negative time.
+    private static TimeSpan ElapsedSince(DateTimeOffset createdAt)
+    {
+        var elapsed = DateTimeOffset.UtcNow - createdAt;
         return elapsed > TimeSpan.Zero ? elapsed : TimeSpan.Zero;
     }
 }

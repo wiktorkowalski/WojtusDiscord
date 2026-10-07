@@ -25,6 +25,14 @@ internal static partial class TelemetryRegistration
     // The runtime's own source for HttpClient spans; AddHttpClientInstrumentation listens to it.
     private const string HttpClientSourceName = "System.Net.Http";
 
+    // The request histogram of ASP.NET Core ("http_server_request_duration_seconds").
+    private const string HttpServerRequestDuration = "http.server.request.duration";
+
+    // An API call here takes 50 ms to 2 s. The default boundaries of the framework step from
+    // 1 s to 2.5 s, so a quantile in that range was a guess inside one bucket.
+    private static readonly double[] HttpServerRequestSeconds =
+        [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10];
+
     public static IServiceCollection AddBotTelemetry(
         this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
@@ -56,6 +64,10 @@ internal static partial class TelemetryRegistration
             .AddProcessInstrumentation()
             .AddMeter(NpgsqlSourceName)
             .AddMeter(BotMetrics.MeterName)
+            // A view only for the one histogram of a meter the bot does not own. The bot's own
+            // histograms carry their boundaries themselves (BotMetrics).
+            .AddView(HttpServerRequestDuration,
+                new ExplicitBucketHistogramConfiguration { Boundaries = HttpServerRequestSeconds })
             .SetExemplarFilter(ExemplarFilterType.TraceBased)
             .AddPrometheusExporter());
 

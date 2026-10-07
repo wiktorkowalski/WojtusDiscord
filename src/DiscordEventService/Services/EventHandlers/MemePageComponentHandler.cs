@@ -1,3 +1,4 @@
+using DiscordEventService.Commands;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services.MemeIndexing;
 using DSharpPlus;
@@ -11,6 +12,9 @@ namespace DiscordEventService.Services.EventHandlers;
 internal sealed class MemePageComponentHandler(MemeSearchService searchService, ILogger<MemePageComponentHandler> logger)
     : IEventHandler<ComponentInteractionCreatedEventArgs>
 {
+    // The "command" label of a press: see CommandMetrics.RecordInteraction.
+    internal const string MetricCommand = "meme_page";
+
     public async Task HandleEventAsync(DiscordClient sender, ComponentInteractionCreatedEventArgs e)
     {
         // Every component interaction in the guild reaches this — only act on our own buttons.
@@ -21,6 +25,11 @@ internal sealed class MemePageComponentHandler(MemeSearchService searchService, 
         // /meme answers only in a guild, so its buttons exist only there.
         if (e.Interaction.GuildId is not { } guildId)
             return;
+
+        // The root of the trace of the press, as in MemeCommand: the search SQL and the Discord
+        // calls are its children. Only for our own button, after the two returns above.
+        using var span = CommandMetrics.StartSpan(MetricCommand);
+        var failed = false;
 
         try
         {
@@ -41,9 +50,12 @@ internal sealed class MemePageComponentHandler(MemeSearchService searchService, 
         }
         catch (Exception ex)
         {
+            failed = true;
             logger.LogError(ex, "/meme page failed at offset {Offset} in guild {GuildId}", offset, guildId);
             await TellClickerAsync(e);
         }
+
+        CommandMetrics.RecordInteraction(MetricCommand, failed, e.Interaction.CreationTimestamp);
     }
 
     // Only the clicker sees it, and the page under the button stays as it was.

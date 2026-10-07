@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using DiscordEventService.Commands;
 using DiscordEventService.Infrastructure;
+using DiscordEventService.Services.EventHandlers;
 using DSharpPlus.Commands.Processors.TextCommands;
 using Xunit;
 
@@ -41,6 +43,56 @@ public sealed class CommandMetricsTests
 
         var outcomes = metrics.Of("wojtus.command.executions", "command", "unknown").Select(m => m.Tags["outcome"]).ToList();
         Assert.Equal(["failed", "ok"], outcomes);
+    }
+
+    // A press of a /meme paging button: counted with the command instruments under its own
+    // command name, so a failed press is visible where a failed command is.
+    [Fact]
+    public void RecordInteraction_CountsThePressWithItsOutcomeAndTheTimeSinceTheInteraction()
+    {
+        var command = $"press-{Guid.NewGuid():N}";
+        using var metrics = new MetricsCapture();
+
+        CommandMetrics.RecordInteraction(command, failed: false, DateTimeOffset.UtcNow.AddSeconds(-2));
+        CommandMetrics.RecordInteraction(command, failed: true, DateTimeOffset.UtcNow.AddSeconds(-2));
+        // A clock behind Discord's must not give a negative time.
+        CommandMetrics.RecordInteraction(command, failed: false, DateTimeOffset.UtcNow.AddMinutes(1));
+
+        var outcomes = metrics.Of("wojtus.command.executions", "command", command).Select(m => m.Tags["outcome"]).ToList();
+        Assert.Equal(["ok", "failed", "ok"], outcomes);
+        var durations = metrics.Of("wojtus.command.duration", "command", command).Select(m => m.Value).ToList();
+        Assert.InRange(durations[0], 2, 30);
+        Assert.InRange(durations[1], 2, 30);
+        Assert.Equal(0, durations[2]);
+    }
+
+    // The span of a press is a root Tempo keeps, with the database span under it, and a failed
+    // press marks it.
+    [Fact]
+    public void StartSpan_ByName_IsARootThatKeepsItsDatabaseSpanAndCarriesTheFailure()
+    {
+        using var npgsql = new ActivitySource("Npgsql");
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == CommandMetrics.SourceName || ReferenceEquals(source, npgsql),
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+        };
+        ActivitySource.AddActivityListener(listener);
+        Activity.Current = null;
+
+        using var span = CommandMetrics.StartSpan(MemePageComponentHandler.MetricCommand);
+
+        Assert.NotNull(span);
+        Assert.Equal("command meme_page", span.DisplayName);
+        Assert.True(TelemetryRegistration.IsForTempo(span));
+        using (var sql = npgsql.StartActivity("select"))
+        {
+            Assert.Equal(span.SpanId, sql!.ParentSpanId);
+            Assert.True(TelemetryRegistration.IsForTempo(sql));
+        }
+
+        CommandMetrics.RecordInteraction($"press-{Guid.NewGuid():N}", failed: true, DateTimeOffset.UtcNow);
+        Assert.Equal(ActivityStatusCode.Error, span.Status);
     }
 
     [Fact]

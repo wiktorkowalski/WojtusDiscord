@@ -16,6 +16,7 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
 {
     private const ulong GuildDiscordId = 1UL;
     private const ulong ChannelDiscordId = 2UL;
+    private const string SearchLogWrites = "wojtus.meme.search_log.writes";
     private const string DefaultModel = "google/gemini-3-flash-preview";
     private const ulong CutoutAttachmentId = 161UL;
     private const ulong ControlAttachmentId = 162UL;
@@ -522,6 +523,7 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         var deadDatabase = new NpgsqlConnectionStringBuilder(fixture.ConnectionString) { Port = 1, Timeout = 2 }.ConnectionString;
         var logger = new RecordingLogger();
         var log = MemeSearchTestServices.NewLogWriter(deadDatabase, logger.For<MemeSearchLogWriter>());
+        using var metrics = new MetricsCapture();
 
         await using var db = NewContext();
         var caller = new MemeSearchCaller(MemeSearchSource.SlashCommand, ChannelDiscordId: 77UL, UserDiscordId: 424242UL);
@@ -537,6 +539,20 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         Assert.DoesNotContain("postgres", entry.Message);
         Assert.DoesNotContain("424242", entry.Message);
         Assert.Empty(await ReadSearchLogAsync());
+        // The lost row is counted. The counter has no label a test can own: at least this one.
+        Assert.NotEmpty(metrics.Of(SearchLogWrites, "outcome", "failed"));
+    }
+
+    // Other classes write rows in parallel: at least one "written" for the one row of this test.
+    [Fact]
+    public async Task SearchAsync_LogRowWritten_CountsAWrittenRow()
+    {
+        using var metrics = new MetricsCapture();
+
+        await RunSearchAsync("cokolwiek");
+
+        Assert.Single(await ReadSearchLogAsync());
+        Assert.NotEmpty(metrics.Of(SearchLogWrites, "outcome", "written"));
     }
 
     [Fact]

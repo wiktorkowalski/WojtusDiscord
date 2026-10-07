@@ -25,13 +25,36 @@ internal static class BotMetrics
     private static readonly Meter Meter = new(MeterName);
 
     // The SDK default boundaries are for milliseconds: every value in seconds would fall into
-    // the first bucket. A static Meter cannot take an SDK view, so the boundaries ride on the
-    // instrument as advice.
-    private static readonly double[] FastSeconds = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30];
-    // From 0.1 ms: two of the three meme search phases run in memory.
-    private static readonly double[] PhaseSeconds = [0.0001, 0.0005, 0.001, 0.005, 0.025, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
-    private static readonly double[] ModelSeconds = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120, 300];
-    private static readonly double[] JobSeconds = [1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200, 14400];
+    // the first bucket. The boundaries ride on the instrument as advice, so they stay next to
+    // the instrument (an SDK view would live in TelemetryRegistration).
+    //
+    // One list per family, dense where its real values are: a quantile is a linear guess
+    // inside one bucket, and a 1.6 s meme search read as p95 = 2.4 s from a (1, 2.5] bucket.
+    // A change here changes the "le" values of a scrape, never a name or a label. At most 18
+    // boundaries: each one is a series per label set in every scrape.
+    //
+    // A gateway event: 1 ms to 5 s, dense from 5 to 250 ms (presence ~90 ms, GuildCreated ~250 ms).
+    private static readonly double[] EventSeconds =
+        [0.001, 0.0025, 0.005, 0.01, 0.015, 0.025, 0.035, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25, 0.35, 0.5, 1, 2.5, 5];
+    // A slash command, from the creation of the interaction: 50 ms to 10 s.
+    private static readonly double[] CommandSeconds =
+        [0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 7.5, 10];
+    // A meme search: 1.5 to 1.9 s on prod, so dense from 0.1 to 5 s.
+    private static readonly double[] MemeSearchSeconds =
+        [0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 7.5, 10];
+    // One histogram for three phases: tokenize and map run in memory (from 0.1 ms), sql takes
+    // most of the search (dense from 0.5 to 3 s).
+    private static readonly double[] MemeSearchPhaseSeconds =
+        [0.0001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 5, 10];
+    // A model call, and a conversation turn made of them: dense from 0.25 to 60 s.
+    private static readonly double[] ModelSeconds =
+        [0.25, 0.5, 1, 1.5, 2, 3, 4, 5, 7.5, 10, 15, 20, 30, 45, 60, 90, 120, 300];
+    // A conversation tool: a memory read in milliseconds, a SQL query or a web call in seconds.
+    private static readonly double[] ToolSeconds =
+        [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 7.5, 10, 20, 30, 60];
+    // A backfill run: 1 s to 1 h, and one bucket above for a run that takes longer.
+    private static readonly double[] BackfillSeconds =
+        [1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200];
     private static readonly double[] SizeBytes = [256, 1024, 4096, 16384, 65536, 262144, 1048576];
     private static readonly double[] ResultCounts = [0, 1, 2, 5, 10, 25, 50, 100];
     private static readonly double[] MessageCharacters = [0, 1, 10, 25, 50, 100, 200, 500, 1000, 2000, 4000];
@@ -41,7 +64,7 @@ internal static class BotMetrics
     private static readonly Counter<long> Events = Meter.CreateCounter<long>(
         "wojtus.events", description: "Gateway events through the event pipeline, by outcome.");
     private static readonly Histogram<double> EventHandlerDuration = Seconds(
-        "wojtus.event.handler.duration", "Time one gateway event spends in the event pipeline.", FastSeconds);
+        "wojtus.event.handler.duration", "Time one gateway event spends in the event pipeline.", EventSeconds);
     private static readonly Histogram<double> RawEventSize = Meter.CreateHistogram(
         "wojtus.event.raw.size", unit: "By", description: "Size of the JSON stored in raw_event_logs.",
         advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = SizeBytes });
@@ -101,7 +124,7 @@ internal static class BotMetrics
     private static readonly Counter<long> ToolCalls = Meter.CreateCounter<long>(
         "wojtus.conversation.tool.calls", description: "Conversation tool calls, by tool and outcome.");
     private static readonly Histogram<double> ToolDuration = Seconds(
-        "wojtus.conversation.tool.duration", "Time one conversation tool call takes.", FastSeconds);
+        "wojtus.conversation.tool.duration", "Time one conversation tool call takes.", ToolSeconds);
     private static readonly Histogram<double> ConversationFirstToken = Seconds(
         "wojtus.conversation.first_token", "Time from the start of a model call to its first visible text.", ModelSeconds);
     private static readonly Histogram<double> ConversationContextMessages = Counts(
@@ -116,15 +139,15 @@ internal static class BotMetrics
 
     // Slash commands (CommandMetrics).
     private static readonly Counter<long> CommandExecutions = Meter.CreateCounter<long>(
-        "wojtus.command.executions", description: "Slash command executions, by command and outcome.");
+        "wojtus.command.executions", description: "Slash command executions and /meme paging button presses (command=\"meme_page\"), by command and outcome.");
     private static readonly Histogram<double> CommandDuration = Seconds(
-        "wojtus.command.duration", "Time from the creation of the interaction to the end of the command.", FastSeconds);
+        "wojtus.command.duration", "Time from the creation of the interaction to the end of the command.", CommandSeconds);
 
     // Meme search and indexing.
     private static readonly Counter<long> MemeSearches = Meter.CreateCounter<long>(
         "wojtus.meme.searches", description: "Meme searches, by caller kind.");
     private static readonly Histogram<double> MemeSearchDuration = Seconds(
-        "wojtus.meme.search.duration", "Time one meme search takes.", FastSeconds);
+        "wojtus.meme.search.duration", "Time one meme search takes.", MemeSearchSeconds);
     private static readonly Histogram<double> MemeSearchResults = Counts(
         "wojtus.meme.search.results", "Hits one meme search page returns.", ResultCounts);
     private static readonly Counter<long> MemeIndexOutcomes = Meter.CreateCounter<long>(
@@ -144,14 +167,16 @@ internal static class BotMetrics
         "wojtus.meme.dashboard.rejections", description: "Dashboard meme searches answered 429, by the cap they reached.");
     private static readonly Counter<long> MemeDashboardUnavailable = Meter.CreateCounter<long>(
         "wojtus.meme.dashboard.unavailable", description: "Dashboard meme requests answered 503, by endpoint and reason.");
+    private static readonly Counter<long> MemeSearchLogWrites = Meter.CreateCounter<long>(
+        "wojtus.meme.search_log.writes", description: "Rows for meme_search_log, by outcome (written, failed = the row is lost).");
     private static readonly Histogram<double> MemeSearchPhaseDuration = Seconds(
-        "wojtus.meme.search.phase.duration", "Time one phase of a meme search takes (tokenize, sql, map).", PhaseSeconds);
+        "wojtus.meme.search.phase.duration", "Time one phase of a meme search takes (tokenize, sql, map).", MemeSearchPhaseSeconds);
 
     // Backfill and jobs.
     private static readonly Counter<long> BackfillRuns = Meter.CreateCounter<long>(
         "wojtus.backfill.runs", description: "Backfill job runs, by type and outcome.");
     private static readonly Histogram<double> BackfillRunDuration = Seconds(
-        "wojtus.backfill.run.duration", "Time one backfill job run takes.", JobSeconds);
+        "wojtus.backfill.run.duration", "Time one backfill job run takes.", BackfillSeconds);
     private static readonly Counter<long> BackfillItems = Meter.CreateCounter<long>(
         "wojtus.backfill.items", description: "Items (channels) a cursor backfill finished.");
     private static readonly Counter<long> BackfillItemErrors = Meter.CreateCounter<long>(
@@ -357,6 +382,10 @@ internal static class BotMetrics
     // phase: tokenize, sql or map.
     public static void MemeSearchPhaseFinished(string phase, TimeSpan elapsed) =>
         MemeSearchPhaseDuration.Record(elapsed.TotalSeconds, Tag("phase", phase));
+
+    // failed = the one attempt threw and the row is lost (MemeSearchLogWriter).
+    public static void MemeSearchLogWritten(bool succeeded) =>
+        MemeSearchLogWrites.Add(1, Tag("outcome", succeeded ? "written" : OutcomeFailed));
 
     public static void CommandFinished(string command, string outcome, TimeSpan elapsed)
     {
