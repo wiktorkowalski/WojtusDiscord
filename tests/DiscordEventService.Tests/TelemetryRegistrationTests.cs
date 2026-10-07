@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using DiscordEventService.Configuration;
 using DiscordEventService.Infrastructure;
 using DiscordEventService.Services.Conversation;
@@ -16,7 +18,7 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
-public sealed class TelemetryRegistrationTests
+public sealed partial class TelemetryRegistrationTests
 {
     [Fact]
     public void LangfuseProcessor_ExportsOnlyConversationSpans_WithTheProviderResource()
@@ -236,6 +238,81 @@ public sealed class TelemetryRegistrationTests
         Assert.DoesNotContain(" # {", plain);
         Assert.Contains($"phase=\"{phase}\"", plain);
     }
+
+    // The bucket boundaries are a contract with the dashboards and the alert rules: a quantile
+    // is only as exact as the bucket it falls into. Read from a real scrape, so this also
+    // proves the advice of an instrument and the view of the request histogram reach the exporter.
+    [Fact]
+    public async Task MetricsEndpoint_WritesTheBoundariesOfEachDurationFamily()
+    {
+        var builder = WebApplication.CreateSlimBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddBotTelemetry(builder.Configuration, new TestHostEnvironment());
+
+        await using var app = builder.Build();
+        app.MapPrometheusScrapingEndpoint();
+        var id = $"buckets-{Guid.NewGuid():N}";
+        app.MapGet($"/api/{id}", () => Results.Ok());
+        await app.StartAsync();
+
+        var elapsed = TimeSpan.FromMilliseconds(3);
+        BotMetrics.EventHandled(id, BotMetrics.OutcomeOk, elapsed);
+        BotMetrics.CommandFinished(id, BotMetrics.OutcomeOk, elapsed);
+        BotMetrics.MemeSearched(id, hitCount: 0, elapsed);
+        BotMetrics.MemeSearchPhaseFinished(id, elapsed);
+        BotMetrics.ConversationTurnFinished(id, elapsed);
+        BotMetrics.ConversationRoundRecorded(id, attempt: 1, promptTokens: null, completionTokens: null, costUsd: null, latencyMs: 3, failed: false);
+        BotMetrics.ConversationFirstTokenReceived(id, elapsed);
+        BotMetrics.ToolCalled(id, BotMetrics.OutcomeOk, elapsed);
+        BotMetrics.MemeVisionCalled(id, BotMetrics.OutcomeOk, elapsed, promptTokens: 0, completionTokens: 0, costUsd: null);
+        BotMetrics.BackfillRunFinished(id, BotMetrics.OutcomeOk, elapsed);
+
+        var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+        using var client = new HttpClient { BaseAddress = new Uri(address) };
+        (await client.GetAsync($"/api/{id}")).EnsureSuccessStatusCode();
+        var body = await client.GetStringAsync("/metrics");
+
+        double[] model = [0.25, 0.5, 1, 1.5, 2, 3, 4, 5, 7.5, 10, 15, 20, 30, 45, 60, 90, 120, 300];
+        Assert.Equal(
+            [0.001, 0.0025, 0.005, 0.01, 0.015, 0.025, 0.035, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25, 0.35, 0.5, 1, 2.5, 5],
+            BoundariesOf(body, "wojtus_event_handler_duration_seconds", id));
+        Assert.Equal(
+            [0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 7.5, 10],
+            BoundariesOf(body, "wojtus_command_duration_seconds", id));
+        Assert.Equal(
+            [0.05, 0.1, 0.2, 0.3, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 7.5, 10],
+            BoundariesOf(body, "wojtus_meme_search_duration_seconds", id));
+        Assert.Equal(
+            [0.0001, 0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 5, 10],
+            BoundariesOf(body, "wojtus_meme_search_phase_duration_seconds", id));
+        Assert.Equal(model, BoundariesOf(body, "wojtus_conversation_turn_duration_seconds", id));
+        Assert.Equal(model, BoundariesOf(body, "wojtus_conversation_round_duration_seconds", id));
+        Assert.Equal(model, BoundariesOf(body, "wojtus_conversation_first_token_seconds", id));
+        Assert.Equal(model, BoundariesOf(body, "wojtus_meme_vision_duration_seconds", id));
+        Assert.Equal(
+            [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 7.5, 10, 20, 30, 60],
+            BoundariesOf(body, "wojtus_conversation_tool_duration_seconds", id));
+        Assert.Equal(
+            [1, 2, 5, 10, 20, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200],
+            BoundariesOf(body, "wojtus_backfill_run_duration_seconds", id));
+        // The framework's own list has no 0.15, 0.2, 0.3, 1.5, 2 or 3: this is the view.
+        Assert.Equal(
+            [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10],
+            BoundariesOf(body, "http_server_request_duration_seconds", id));
+    }
+
+    // The finite "le" values of the bucket lines of one histogram that carry the given text
+    // (a label value only this test uses), in the order of the scrape.
+    private static double[] BoundariesOf(string scrape, string histogram, string labelValue) =>
+        [.. scrape.Split('\n')
+            .Where(line => line.StartsWith(histogram + "_bucket{", StringComparison.Ordinal)
+                && line.Contains(labelValue, StringComparison.Ordinal))
+            .Select(line => LeLabel().Match(line).Groups[1].Value)
+            .Where(le => le != "+Inf")
+            .Select(le => double.Parse(le, CultureInfo.InvariantCulture))];
+
+    [GeneratedRegex("le=\"([^\"]+)\"")]
+    private static partial Regex LeLabel();
 
     private sealed class CapturingExporter : BaseExporter<Activity>
     {

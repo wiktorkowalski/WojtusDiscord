@@ -1,5 +1,6 @@
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Infrastructure;
 
 namespace DiscordEventService.Services.MemeIndexing;
 
@@ -25,9 +26,12 @@ public sealed class MemeSearchLogWriter(IServiceScopeFactory scopeFactory, ILogg
             // Not the caller's token: a conversation turn can cancel it right after the tool
             // returns. The command timeout bounds the write.
             await db.SaveChangesAsync(CancellationToken.None);
+            BotMetrics.MemeSearchLogWritten(succeeded: true);
         }
         catch (Exception ex)
         {
+            BotMetrics.MemeSearchLogWritten(succeeded: false);
+
             // Warning, not Error: the search itself answered. No query text and no user id: what
             // a person typed stays out of the application log, also when its row is lost.
             logger.LogWarning(
