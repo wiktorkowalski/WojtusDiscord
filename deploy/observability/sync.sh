@@ -18,7 +18,9 @@
 #   prometheus/scrape-configs.yml   block at the end of scrape_configs in prometheus.yml,
 #                                   plus `- 'wojtusdiscord-alerts.yml'` under rule_files
 #   blackbox/http_2xx.yml           module in blackbox.yml
-#   host/prometheus-compose.patch   --web.enable-remote-write-receiver (Tempo span metrics)
+#   host/prometheus-compose.patch   --web.enable-remote-write-receiver (Tempo span metrics),
+#                                   --enable-feature=exemplar-storage (histogram -> trace links)
+#   host/grafana-prometheus-datasource.patch   exemplarTraceIdDestinations -> Tempo
 #   host/wojtusdiscord-compose.patch   pg_stat_statements preload + Telemetry__OtlpTracesEndpoint
 #       After that patch: `docker compose up -d --no-deps discord-event-service` for the bot.
 #       A plain `up -d` also recreates Postgres.

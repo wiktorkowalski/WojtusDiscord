@@ -165,7 +165,7 @@
       "gridPos": {
         "x": 0,
         "y": 3,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "targets": [
@@ -231,9 +231,9 @@
         "uid": "PBFA97CFB590B2093"
       },
       "gridPos": {
-        "x": 4,
+        "x": 3,
         "y": 3,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "targets": [
@@ -303,9 +303,9 @@
         "uid": "PBFA97CFB590B2093"
       },
       "gridPos": {
-        "x": 8,
+        "x": 6,
         "y": 3,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "targets": [
@@ -368,7 +368,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Cost of conversation model calls, last 24 hours."
+      "description": "Cost of conversation model calls, last 24 hours. The cost is what the provider billed for the call: it holds the web search fee already, so the fee is not added a second time."
     },
     {
       "type": "stat",
@@ -379,9 +379,9 @@
         "uid": "PBFA97CFB590B2093"
       },
       "gridPos": {
-        "x": 12,
+        "x": 9,
         "y": 3,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "targets": [
@@ -436,7 +436,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Cost of conversation model calls, last 7 days."
+      "description": "Cost of conversation model calls, last 7 days. The cost is what the provider billed for the call: it holds the web search fee already, so the fee is not added a second time."
     },
     {
       "type": "stat",
@@ -447,9 +447,9 @@
         "uid": "PBFA97CFB590B2093"
       },
       "gridPos": {
-        "x": 16,
+        "x": 12,
         "y": 3,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "targets": [
@@ -504,20 +504,156 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Cost of conversation model calls, last 30 days."
+      "description": "Cost of conversation model calls, last 30 days. The cost is what the provider billed for the call: it holds the web search fee already, so the fee is not added a second time."
     },
     {
       "type": "stat",
       "id": 8,
+      "title": "Web fee, 30 d",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 15,
+        "y": 3,
+        "w": 3,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(sum_over_time(((wojtus_conversation_web_search_cost_usd_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_conversation_web_search_cost_usd_total{job=\"wojtusdiscord\"}[10m] offset 5m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 900)) or (wojtus_conversation_web_search_cost_usd_total{job=\"wojtusdiscord\"} offset 5m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 900))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 5m))) >= 0) or (wojtus_conversation_web_search_cost_usd_total{job=\"wojtusdiscord\"} + 0))[30d:5m]))",
+          "refId": "A",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 2,
+          "noValue": "$0.00"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "description": "The part of 'Cost, 30 d' that is the web search fee: the cost of a call less the cost of the model itself. Zero when the provider did not report both costs."
+    },
+    {
+      "type": "stat",
+      "id": 9,
+      "title": "Web search",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 3,
+        "w": 3,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(sum_over_time(((wojtus_conversation_web_search_requests_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_conversation_web_search_requests_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_conversation_web_search_requests_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_conversation_web_search_requests_total{job=\"wojtusdiscord\"} + 0))[$__range:1m]))",
+          "refId": "A",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 0,
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "description": "Web searches the provider ran for conversation model calls in the range."
+    },
+    {
+      "type": "stat",
+      "id": 10,
       "title": "Retries",
       "datasource": {
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
       "gridPos": {
-        "x": 20,
+        "x": 21,
         "y": 3,
-        "w": 4,
+        "w": 3,
         "h": 4
       },
       "targets": [
@@ -580,7 +716,7 @@
     },
     {
       "type": "timeseries",
-      "id": 9,
+      "id": 11,
       "title": "Turns by outcome",
       "datasource": {
         "type": "prometheus",
@@ -679,7 +815,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/(cancelled|skipped|debug|trace)/"
+              "options": "/(cancelled|skipped|debug|trace|existing)/"
             },
             "properties": [
               {
@@ -741,7 +877,7 @@
     },
     {
       "type": "timeseries",
-      "id": 10,
+      "id": 12,
       "title": "Turn duration",
       "datasource": {
         "type": "prometheus",
@@ -776,7 +912,8 @@
           "legendFormat": "p95",
           "editorMode": "code",
           "instant": false,
-          "range": true
+          "range": true,
+          "exemplar": true
         }
       ],
       "fieldConfig": {
@@ -876,12 +1013,12 @@
           "hideZeros": false
         }
       },
-      "description": "Time from the start of a turn to its last message, for the turns that ended in each interval. One point per interval with a turn.",
+      "description": "Time from the start of a turn to its last message, for the turns that ended in each interval. One point per interval with a turn. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one.",
       "interval": "1m"
     },
     {
       "type": "timeseries",
-      "id": 11,
+      "id": 13,
       "title": "Cost by model",
       "datasource": {
         "type": "prometheus",
@@ -981,7 +1118,7 @@
     },
     {
       "type": "timeseries",
-      "id": 12,
+      "id": 14,
       "title": "Tokens by model and direction",
       "datasource": {
         "type": "prometheus",
@@ -1081,7 +1218,7 @@
     },
     {
       "type": "timeseries",
-      "id": 13,
+      "id": 15,
       "title": "Rounds and retries",
       "datasource": {
         "type": "prometheus",
@@ -1192,7 +1329,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/(cancelled|skipped|debug|trace)/"
+              "options": "/(cancelled|skipped|debug|trace|existing)/"
             },
             "properties": [
               {
@@ -1254,7 +1391,7 @@
     },
     {
       "type": "timeseries",
-      "id": 14,
+      "id": 16,
       "title": "Round latency by model",
       "datasource": {
         "type": "prometheus",
@@ -1289,7 +1426,8 @@
           "legendFormat": "{{model}} p95",
           "editorMode": "code",
           "instant": false,
-          "range": true
+          "range": true,
+          "exemplar": true
         }
       ],
       "fieldConfig": {
@@ -1358,13 +1496,13 @@
           "hideZeros": false
         }
       },
-      "description": "Latency of one conversation model call, for the calls in each interval.",
+      "description": "Latency of one conversation model call, for the calls in each interval. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one.",
       "interval": "1m"
     },
     {
-      "type": "bargauge",
-      "id": 15,
-      "title": "Tool calls by tool",
+      "type": "timeseries",
+      "id": 17,
+      "title": "First token latency by model",
       "datasource": {
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
@@ -1372,7 +1510,429 @@
       "gridPos": {
         "x": 0,
         "y": 23,
-        "w": 6,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (model)(sum_over_time(((wojtus_conversation_first_token_seconds_sum{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_conversation_first_token_seconds_sum{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_conversation_first_token_seconds_sum{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_conversation_first_token_seconds_sum{job=\"wojtusdiscord\"} + 0))[$__interval:1m])) / (sum by (model)(sum_over_time(((wojtus_conversation_first_token_seconds_count{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_conversation_first_token_seconds_count{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_conversation_first_token_seconds_count{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_conversation_first_token_seconds_count{job=\"wojtusdiscord\"} + 0))[$__interval:1m])) > 0)",
+          "refId": "A",
+          "legendFormat": "{{model}} mean",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, model)(sum_over_time(((wojtus_conversation_first_token_seconds_bucket{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_conversation_first_token_seconds_bucket{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_conversation_first_token_seconds_bucket{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_conversation_first_token_seconds_bucket{job=\"wojtusdiscord\"} + 0))[$__interval:1m])))",
+          "refId": "B",
+          "legendFormat": "{{model}} p95",
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 14,
+            "showPoints": "always",
+            "pointSize": 6,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "gradientMode": "opacity",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "noValue": "No conversation turns yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "Time from the start of a model call to its first visible text: what the person waits before the answer starts. Reasoning and tool-call chunks come before it. A call that ends with tool calls only records nothing. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one.",
+      "interval": "1m"
+    },
+    {
+      "type": "timeseries",
+      "id": 18,
+      "title": "Context size by model",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 23,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (model)(sum_over_time(((wojtus_conversation_context_messages_sum{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_conversation_context_messages_sum{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_conversation_context_messages_sum{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_conversation_context_messages_sum{job=\"wojtusdiscord\"} + 0))[$__interval:1m])) / (sum by (model)(sum_over_time(((wojtus_conversation_context_messages_count{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_conversation_context_messages_count{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_conversation_context_messages_count{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_conversation_context_messages_count{job=\"wojtusdiscord\"} + 0))[$__interval:1m])) > 0)",
+          "refId": "A",
+          "legendFormat": "{{model}} mean",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, model)(sum_over_time(((wojtus_conversation_context_messages_bucket{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_conversation_context_messages_bucket{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_conversation_context_messages_bucket{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_conversation_context_messages_bucket{job=\"wojtusdiscord\"} + 0))[$__interval:1m])))",
+          "refId": "B",
+          "legendFormat": "{{model}} p95",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 14,
+            "showPoints": "always",
+            "pointSize": 6,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "gradientMode": "opacity",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "axisSoftMin": 0,
+            "axisSoftMax": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "decimals": 0,
+          "noValue": "No conversation turns yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "Messages sent to the model in one call: system prompt, memory window and tool results. The p95 is an estimate from the buckets 0, 1, 2, 5, 10, 25, 50, 100: above 100 it reads 100. A larger context costs more input tokens.",
+      "interval": "1m"
+    },
+    {
+      "type": "timeseries",
+      "id": 19,
+      "title": "Web searches",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 23,
+        "w": 4,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (model)(sum_over_time(((wojtus_conversation_web_search_requests_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_conversation_web_search_requests_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_conversation_web_search_requests_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_conversation_web_search_requests_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
+          "refId": "A",
+          "legendFormat": "{{model}} searches",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 85,
+            "showPoints": "never",
+            "pointSize": 5,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "axisSoftMin": 0,
+            "axisSoftMax": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "decimals": 0,
+          "noValue": "No web search yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "Web searches the provider ran for conversation model calls, per interval and model. The fee is on the 'Web search fee' panel: a count and a cost do not share one axis.",
+      "interval": "1m"
+    },
+    {
+      "type": "timeseries",
+      "id": 20,
+      "title": "Web search fee",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 23,
+        "w": 4,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (model)(sum_over_time(((wojtus_conversation_web_search_cost_usd_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_conversation_web_search_cost_usd_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_conversation_web_search_cost_usd_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_conversation_web_search_cost_usd_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
+          "refId": "A",
+          "legendFormat": "{{model}}",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 85,
+            "showPoints": "never",
+            "pointSize": 5,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "axisSoftMin": 0,
+            "axisSoftMax": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "decimals": 3,
+          "noValue": "No web search yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "Web search fee per interval and model: the cost of a call less the cost of the model itself. It is a part of 'Cost by model', not an addition to it.",
+      "interval": "1m"
+    },
+    {
+      "type": "bargauge",
+      "id": 21,
+      "title": "Tool calls by tool",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 5,
         "h": 8
       },
       "targets": [
@@ -1441,16 +2001,16 @@
     },
     {
       "type": "timeseries",
-      "id": 16,
+      "id": 22,
       "title": "Tool calls by outcome",
       "datasource": {
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
       "gridPos": {
-        "x": 6,
-        "y": 23,
-        "w": 6,
+        "x": 5,
+        "y": 31,
+        "w": 5,
         "h": 8
       },
       "targets": [
@@ -1540,7 +2100,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/(cancelled|skipped|debug|trace)/"
+              "options": "/(cancelled|skipped|debug|trace|existing)/"
             },
             "properties": [
               {
@@ -1602,16 +2162,16 @@
     },
     {
       "type": "bargauge",
-      "id": 17,
-      "title": "Tool duration p95 by tool",
+      "id": 23,
+      "title": "Tool p95 by tool",
       "datasource": {
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
       "gridPos": {
-        "x": 12,
-        "y": 23,
-        "w": 6,
+        "x": 10,
+        "y": 31,
+        "w": 4,
         "h": 8
       },
       "targets": [
@@ -1679,16 +2239,114 @@
     },
     {
       "type": "timeseries",
-      "id": 18,
+      "id": 24,
+      "title": "Tool duration p95 over time",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 31,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, tool)(sum_over_time(((wojtus_conversation_tool_duration_seconds_bucket{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_conversation_tool_duration_seconds_bucket{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_conversation_tool_duration_seconds_bucket{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_conversation_tool_duration_seconds_bucket{job=\"wojtusdiscord\"} + 0))[$__interval:1m])))",
+          "refId": "A",
+          "legendFormat": "{{tool}}",
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 14,
+            "showPoints": "always",
+            "pointSize": 6,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "gradientMode": "opacity",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "noValue": "No tool calls yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "95th percentile of the time one tool call takes, for the calls in each interval, by tool. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one.",
+      "interval": "1m"
+    },
+    {
+      "type": "timeseries",
+      "id": 25,
       "title": "Usage alerts by cap",
       "datasource": {
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
       "gridPos": {
-        "x": 18,
-        "y": 23,
-        "w": 6,
+        "x": 20,
+        "y": 31,
+        "w": 4,
         "h": 8
       },
       "targets": [
@@ -1779,7 +2437,7 @@
     },
     {
       "type": "logs",
-      "id": 19,
+      "id": 26,
       "title": "Conversation turns (log)",
       "datasource": {
         "type": "loki",
@@ -1787,7 +2445,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 31,
+        "y": 39,
         "w": 24,
         "h": 8
       },
@@ -1826,20 +2484,20 @@
     },
     {
       "type": "row",
-      "id": 20,
+      "id": 27,
       "title": "Slash commands",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 39
+        "y": 47
       },
       "panels": []
     },
     {
       "type": "timeseries",
-      "id": 21,
+      "id": 28,
       "title": "Command executions by command",
       "datasource": {
         "type": "prometheus",
@@ -1847,7 +2505,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 48,
         "w": 8,
         "h": 8
       },
@@ -1939,7 +2597,7 @@
     },
     {
       "type": "timeseries",
-      "id": 22,
+      "id": 29,
       "title": "Command executions by outcome",
       "datasource": {
         "type": "prometheus",
@@ -1947,7 +2605,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 40,
+        "y": 48,
         "w": 6,
         "h": 8
       },
@@ -2038,7 +2696,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/(cancelled|skipped|debug|trace)/"
+              "options": "/(cancelled|skipped|debug|trace|existing)/"
             },
             "properties": [
               {
@@ -2095,12 +2753,12 @@
           "hideZeros": false
         }
       },
-      "description": "ok, failed (an exception left the command), check_failed, bad_argument, not_executable or cancelled. A command that catches its own error counts as ok.",
+      "description": "ok, failed, check_failed, bad_argument, not_executable or cancelled. 'failed' is an exception that left the command, or an error the command caught and answered itself (/meme does that when its search fails).",
       "interval": "1m"
     },
     {
       "type": "bargauge",
-      "id": 23,
+      "id": 30,
       "title": "Command p95",
       "datasource": {
         "type": "prometheus",
@@ -2108,7 +2766,7 @@
       },
       "gridPos": {
         "x": 14,
-        "y": 40,
+        "y": 48,
         "w": 5,
         "h": 8
       },
@@ -2184,7 +2842,7 @@
     },
     {
       "type": "timeseries",
-      "id": 24,
+      "id": 31,
       "title": "Searches rejected (429)",
       "datasource": {
         "type": "prometheus",
@@ -2192,7 +2850,7 @@
       },
       "gridPos": {
         "x": 19,
-        "y": 40,
+        "y": 48,
         "w": 5,
         "h": 8
       },
@@ -2315,20 +2973,20 @@
     },
     {
       "type": "row",
-      "id": 25,
+      "id": 32,
       "title": "Meme search",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 48
+        "y": 56
       },
       "panels": []
     },
     {
       "type": "stat",
-      "id": 26,
+      "id": 33,
       "title": "Searches",
       "datasource": {
         "type": "prometheus",
@@ -2336,7 +2994,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 49,
+        "y": 57,
         "w": 6,
         "h": 4
       },
@@ -2396,7 +3054,7 @@
     },
     {
       "type": "stat",
-      "id": 27,
+      "id": 34,
       "title": "Mean search latency",
       "datasource": {
         "type": "prometheus",
@@ -2404,7 +3062,7 @@
       },
       "gridPos": {
         "x": 6,
-        "y": 49,
+        "y": 57,
         "w": 6,
         "h": 4
       },
@@ -2437,11 +3095,11 @@
               },
               {
                 "color": "#fab219",
-                "value": 0.8
+                "value": 2.5
               },
               {
                 "color": "#d03b3b",
-                "value": 2
+                "value": 3
               }
             ]
           },
@@ -2467,11 +3125,11 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Mean time of one meme search over the range. This value is exact; the percentiles are estimates from buckets."
+      "description": "Mean time of one meme search over the range. This value is exact; the percentiles are estimates from buckets. Measured on prod: 1.5 to 1.9 s (issue #401 expected 0.8 s). Yellow from 2.5 s, red from 3 s (the alert)."
     },
     {
       "type": "stat",
-      "id": 28,
+      "id": 35,
       "title": "Search latency p95",
       "datasource": {
         "type": "prometheus",
@@ -2479,7 +3137,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 49,
+        "y": 57,
         "w": 6,
         "h": 4
       },
@@ -2512,11 +3170,11 @@
               },
               {
                 "color": "#fab219",
-                "value": 0.8
+                "value": 2.5
               },
               {
                 "color": "#d03b3b",
-                "value": 2
+                "value": 3
               }
             ]
           },
@@ -2542,11 +3200,11 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "95th percentile over the range. Bucket bounds near the target are 0.5 s, 1 s and 2.5 s, so the value is coarse between them."
+      "description": "95th percentile over the range, an estimate from buckets that end at 1 s and 2.5 s: searches of 1.5 to 1.9 s read as up to 2.4 s. Above 2.5 s means more than 5% of the searches took longer than 2.5 s."
     },
     {
       "type": "stat",
-      "id": 29,
+      "id": 36,
       "title": "Searches with no hit",
       "datasource": {
         "type": "prometheus",
@@ -2554,7 +3212,7 @@
       },
       "gridPos": {
         "x": 18,
-        "y": 49,
+        "y": 57,
         "w": 6,
         "h": 4
       },
@@ -2564,7 +3222,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum(sum_over_time(((wojtus_meme_search_results_bucket{job=\"wojtusdiscord\",le=\"0\"} - (((last_over_time(wojtus_meme_search_results_bucket{job=\"wojtusdiscord\",le=\"0\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_search_results_bucket{job=\"wojtusdiscord\",le=\"0\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_results_bucket{job=\"wojtusdiscord\",le=\"0\"} + 0))[$__range:1m])) / sum(sum_over_time(((wojtus_meme_search_results_count{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_search_results_count{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_search_results_count{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_results_count{job=\"wojtusdiscord\"} + 0))[$__range:1m]))",
+          "expr": "sum(sum_over_time(((wojtus_meme_search_results_bucket{job=\"wojtusdiscord\",le=~\"0(.0)?\"} - (((last_over_time(wojtus_meme_search_results_bucket{job=\"wojtusdiscord\",le=~\"0(.0)?\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_search_results_bucket{job=\"wojtusdiscord\",le=~\"0(.0)?\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_results_bucket{job=\"wojtusdiscord\",le=~\"0(.0)?\"} + 0))[$__range:1m])) / sum(sum_over_time(((wojtus_meme_search_results_count{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_search_results_count{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_search_results_count{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_results_count{job=\"wojtusdiscord\"} + 0))[$__range:1m]))",
           "refId": "A",
           "legendFormat": "",
           "editorMode": "code",
@@ -2614,7 +3272,7 @@
     },
     {
       "type": "timeseries",
-      "id": 30,
+      "id": 37,
       "title": "Meme search latency",
       "datasource": {
         "type": "prometheus",
@@ -2622,8 +3280,8 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 53,
-        "w": 16,
+        "y": 61,
+        "w": 8,
         "h": 10
       },
       "targets": [
@@ -2649,7 +3307,8 @@
           "legendFormat": "p95",
           "editorMode": "code",
           "instant": false,
-          "range": true
+          "range": true,
+          "exemplar": true
         },
         {
           "datasource": {
@@ -2723,11 +3382,11 @@
               },
               {
                 "color": "#fab219",
-                "value": 0.8
+                "value": 2.5
               },
               {
                 "color": "#d03b3b",
-                "value": 2
+                "value": 3
               }
             ]
           },
@@ -2811,22 +3470,467 @@
           "hideZeros": false
         }
       },
-      "description": "Time one meme search takes, for the searches in each interval. The lines mark 0.8 s (the known time per page on the full corpus) and 2 s (the alert). One point per interval with a search.",
+      "description": "Time one meme search takes (tokenize and SQL; the map phase runs after it), for the searches in each interval. The lines mark 2.5 s and 3 s (the alert on the mean). The mean is exact; the percentiles are estimates from buckets that end at 1 s and 2.5 s. One point per interval with a search. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one.",
       "interval": "1m"
     },
     {
-      "type": "bargauge",
-      "id": 31,
-      "title": "Hits per search page",
+      "type": "timeseries",
+      "id": 38,
+      "title": "Mean search time by phase",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 61,
+        "w": 8,
+        "h": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (phase)(sum_over_time(((wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} + 0))[$__interval:1m])) / (sum by (phase)(sum_over_time(((wojtus_meme_search_phase_duration_seconds_count{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_search_phase_duration_seconds_count{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_search_phase_duration_seconds_count{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_phase_duration_seconds_count{job=\"wojtusdiscord\"} + 0))[$__interval:1m])) > 0)",
+          "refId": "A",
+          "legendFormat": "{{phase}}",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 85,
+            "showPoints": "never",
+            "pointSize": 5,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "axisSoftMin": 0,
+            "axisSoftMax": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "noValue": "No meme searches yet"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tokenize"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#9085e9"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sql"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "map"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "Where the time of a search goes: mean time of each phase per interval, stacked. A bar is one interval wide: zoom in, or read the two bar gauges below for the whole range. tokenize = split the query in memory, sql = the Postgres query, map = build the hits in memory. tokenize plus sql is the search latency on the left; if sql is the tall part, the time is in Postgres (issue #401).",
+      "interval": "1m"
+    },
+    {
+      "type": "timeseries",
+      "id": 39,
+      "title": "Search phase p95",
       "datasource": {
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
       "gridPos": {
         "x": 16,
-        "y": 53,
+        "y": 61,
         "w": 8,
         "h": 10
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, phase)(sum_over_time(((wojtus_meme_search_phase_duration_seconds_bucket{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_search_phase_duration_seconds_bucket{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_search_phase_duration_seconds_bucket{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_phase_duration_seconds_bucket{job=\"wojtusdiscord\"} + 0))[$__interval:1m])))",
+          "refId": "A",
+          "legendFormat": "{{phase}}",
+          "editorMode": "code",
+          "instant": false,
+          "range": true,
+          "exemplar": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 14,
+            "showPoints": "always",
+            "pointSize": 6,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "gradientMode": "opacity",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "log",
+              "log": 10
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "noValue": "No meme searches yet"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tokenize"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#9085e9"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sql"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "map"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "95th percentile of each phase, for the searches in each interval, on a log axis: the phases differ by a factor of 1000 and more. An estimate from buckets: 0.1 ms to 10 s, near the SQL time they end at 1 s and 2.5 s. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one.",
+      "interval": "1m"
+    },
+    {
+      "type": "bargauge",
+      "id": 40,
+      "title": "Phase share of search time",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 71,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (phase)(sum_over_time(((wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} + 0))[$__range:1m])) / scalar(sum(sum_over_time(((wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} + 0))[$__range:1m])))",
+          "refId": "A",
+          "legendFormat": "{{phase}}",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "mappings": [],
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3987e5"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "max": 1,
+          "decimals": 1,
+          "displayName": "${__field.labels.phase}",
+          "noValue": "No meme searches yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "basic",
+        "orientation": "horizontal",
+        "valueMode": "text",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 28,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "description": "Each phase as a share of the total phase time of the searches in the range."
+    },
+    {
+      "type": "bargauge",
+      "id": 41,
+      "title": "Search phase mean",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 71,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (phase)(sum_over_time(((wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_phase_duration_seconds_sum{job=\"wojtusdiscord\"} + 0))[$__range:1m])) / (sum by (phase)(sum_over_time(((wojtus_meme_search_phase_duration_seconds_count{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_search_phase_duration_seconds_count{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_search_phase_duration_seconds_count{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_phase_duration_seconds_count{job=\"wojtusdiscord\"} + 0))[$__range:1m])) > 0)",
+          "refId": "A",
+          "legendFormat": "{{phase}}",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "mappings": [],
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3987e5"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "displayName": "${__field.labels.phase}",
+          "noValue": "No meme searches yet"
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "basic",
+        "orientation": "horizontal",
+        "valueMode": "text",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 28,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "description": "Mean time of each phase over the range. Exact: sum divided by count."
+    },
+    {
+      "type": "bargauge",
+      "id": 42,
+      "title": "Hits per search page",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 71,
+        "w": 6,
+        "h": 8
       },
       "targets": [
         {
@@ -2895,7 +3999,107 @@
     },
     {
       "type": "timeseries",
-      "id": 32,
+      "id": 43,
+      "title": "Dashboard requests unavailable (503)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 71,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (endpoint, reason)(sum_over_time(((wojtus_meme_dashboard_unavailable_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_dashboard_unavailable_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_dashboard_unavailable_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_dashboard_unavailable_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
+          "refId": "A",
+          "legendFormat": "{{endpoint}} {{reason}}",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 85,
+            "showPoints": "never",
+            "pointSize": 5,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "axisSoftMin": 0,
+            "axisSoftMax": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "decimals": 0,
+          "noValue": "No dashboard request answered 503"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "Meme dashboard requests answered 503, per interval. endpoint: index, search_usage or thumbnail. reason: busy (the answer is being computed for another request), and for a thumbnail wait_timeout, queue_full, budget (the caps), refresh_timeout, refresh_failed (Discord gave no fresh URL) or recent_failure (a failure of the last minutes, answered from memory). The browser retries a 503. Counts include the first sample of a new series, which increase() and rate() miss: the bot creates a counter series on its first increment.",
+      "interval": "1m"
+    },
+    {
+      "type": "timeseries",
+      "id": 44,
       "title": "Searches by caller",
       "datasource": {
         "type": "prometheus",
@@ -2903,7 +4107,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 63,
+        "y": 79,
         "w": 12,
         "h": 8
       },
@@ -2990,12 +4194,12 @@
           "hideZeros": false
         }
       },
-      "description": "Meme searches per interval, by the kind of caller.",
+      "description": "Meme searches per interval, by the kind of caller. 'Tester' is the dashboard.",
       "interval": "1m"
     },
     {
       "type": "timeseries",
-      "id": 33,
+      "id": 45,
       "title": "Mean search latency by caller",
       "datasource": {
         "type": "prometheus",
@@ -3003,7 +4207,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 63,
+        "y": 79,
         "w": 12,
         "h": 8
       },
@@ -3068,11 +4272,11 @@
               },
               {
                 "color": "#fab219",
-                "value": 0.8
+                "value": 2.5
               },
               {
                 "color": "#d03b3b",
-                "value": 2
+                "value": 3
               }
             ]
           },
@@ -3100,808 +4304,809 @@
     },
     {
       "type": "row",
-      "id": 34,
-      "title": "Meme indexing",
-      "collapsed": false,
+      "id": 46,
+      "title": "Meme indexing (empty outside a catch-up or an import)",
+      "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 71
+        "y": 87
       },
-      "panels": []
-    },
-    {
-      "type": "timeseries",
-      "id": 35,
-      "title": "Index outcomes",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 72,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
+      "panels": [
         {
+          "type": "timeseries",
+          "id": 47,
+          "title": "Index outcomes",
           "datasource": {
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by (outcome)(sum_over_time(((wojtus_meme_index_outcomes_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_index_outcomes_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_index_outcomes_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_index_outcomes_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
-          "refId": "A",
-          "legendFormat": "{{outcome}}",
-          "editorMode": "code",
-          "instant": false,
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "bars",
-            "lineWidth": 0,
-            "fillOpacity": 85,
-            "showPoints": "never",
-            "pointSize": 5,
-            "lineInterpolation": "linear",
-            "spanNulls": false,
-            "gradientMode": "none",
-            "barAlignment": 0,
-            "barWidthFactor": 0.8,
-            "axisBorderShow": false,
-            "axisPlacement": "auto",
-            "axisLabel": "",
-            "axisColorMode": "text",
-            "axisCenteredZero": false,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            },
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "axisSoftMin": 0,
-            "axisSoftMax": 1
+          "gridPos": {
+            "x": 0,
+            "y": 88,
+            "w": 8,
+            "h": 8
           },
-          "color": {
-            "mode": "palette-classic"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "sum by (outcome)(sum_over_time(((wojtus_meme_index_outcomes_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_index_outcomes_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_index_outcomes_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_index_outcomes_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
+              "refId": "A",
+              "legendFormat": "{{outcome}}",
+              "editorMode": "code",
+              "instant": false,
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "lineWidth": 0,
+                "fillOpacity": 85,
+                "showPoints": "never",
+                "pointSize": 5,
+                "lineInterpolation": "linear",
+                "spanNulls": false,
+                "gradientMode": "none",
+                "barAlignment": 0,
+                "barWidthFactor": 0.8,
+                "axisBorderShow": false,
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "axisColorMode": "text",
+                "axisCenteredZero": false,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "axisSoftMin": 0,
+                "axisSoftMax": 1
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#898781",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [],
+              "min": 0,
+              "decimals": 0,
+              "noValue": "No meme indexing in this time range"
+            },
+            "overrides": [
               {
-                "color": "#898781",
-                "value": null
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted)$/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#0ca30c"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(cancelled|skipped|debug|trace|existing)/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#898781"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(timeout|transient|short_circuit|serialization_failed|warning|refusal|rejected|unknown_tool|check_failed|bad_argument|not_executable|conflict|updated)/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#fab219"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(^|[ ,])(failed|error|critical)$/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#d03b3b"
+                    }
+                  }
+                ]
               }
             ]
           },
-          "mappings": [],
-          "min": 0,
-          "decimals": 0,
-          "noValue": "No meme indexing in this time range"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted)$/"
+          "options": {
+            "legend": {
+              "showLegend": true,
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
             },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#0ca30c"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(cancelled|skipped|debug|trace)/"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#898781"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(timeout|transient|short_circuit|serialization_failed|warning|refusal|rejected|unknown_tool|check_failed|bad_argument|not_executable|conflict|updated)/"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#fab219"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(^|[ ,])(failed|error|critical)$/"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#d03b3b"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc",
-          "hideZeros": false
-        }
-      },
-      "description": "Meme indexing outcomes per attachment, per interval. AutomaticIndexing is off in prod, so this stays empty outside a catch-up.",
-      "interval": "1m"
-    },
-    {
-      "type": "timeseries",
-      "id": 36,
-      "title": "Vision calls by model and outcome",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "gridPos": {
-        "x": 8,
-        "y": 72,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "expr": "sum by (model, outcome)(sum_over_time(((wojtus_meme_vision_calls_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_calls_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_calls_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_calls_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
-          "refId": "A",
-          "legendFormat": "{{model}} {{outcome}}",
-          "editorMode": "code",
-          "instant": false,
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "bars",
-            "lineWidth": 0,
-            "fillOpacity": 85,
-            "showPoints": "never",
-            "pointSize": 5,
-            "lineInterpolation": "linear",
-            "spanNulls": false,
-            "gradientMode": "none",
-            "barAlignment": 0,
-            "barWidthFactor": 0.8,
-            "axisBorderShow": false,
-            "axisPlacement": "auto",
-            "axisLabel": "",
-            "axisColorMode": "text",
-            "axisCenteredZero": false,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            },
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "axisSoftMin": 0,
-            "axisSoftMax": 1
-          },
-          "color": {
-            "mode": "palette-classic"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#898781",
-                "value": null
-              }
-            ]
-          },
-          "mappings": [],
-          "min": 0,
-          "decimals": 0,
-          "noValue": "No meme indexing in this time range"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted)$/"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#0ca30c"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(cancelled|skipped|debug|trace)/"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#898781"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(timeout|transient|short_circuit|serialization_failed|warning|refusal|rejected|unknown_tool|check_failed|bad_argument|not_executable|conflict|updated)/"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#fab219"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(^|[ ,])(failed|error|critical)$/"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#d03b3b"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc",
-          "hideZeros": false
-        }
-      },
-      "description": "Vision model calls for meme analysis per interval.",
-      "interval": "1m"
-    },
-    {
-      "type": "timeseries",
-      "id": 37,
-      "title": "Vision call latency",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "gridPos": {
-        "x": 16,
-        "y": 72,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "expr": "sum by (model)(sum_over_time(((wojtus_meme_vision_duration_seconds_sum{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_duration_seconds_sum{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_duration_seconds_sum{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_duration_seconds_sum{job=\"wojtusdiscord\"} + 0))[$__interval:1m])) / (sum by (model)(sum_over_time(((wojtus_meme_vision_duration_seconds_count{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_duration_seconds_count{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_duration_seconds_count{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_duration_seconds_count{job=\"wojtusdiscord\"} + 0))[$__interval:1m])) > 0)",
-          "refId": "A",
-          "legendFormat": "{{model}} mean",
-          "editorMode": "code",
-          "instant": false,
-          "range": true
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "expr": "histogram_quantile(0.95, sum by (le, model)(sum_over_time(((wojtus_meme_vision_duration_seconds_bucket{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_duration_seconds_bucket{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_duration_seconds_bucket{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_duration_seconds_bucket{job=\"wojtusdiscord\"} + 0))[$__interval:1m])))",
-          "refId": "B",
-          "legendFormat": "{{model}} p95",
-          "editorMode": "code",
-          "instant": false,
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 14,
-            "showPoints": "always",
-            "pointSize": 6,
-            "lineInterpolation": "linear",
-            "spanNulls": false,
-            "gradientMode": "opacity",
-            "barAlignment": 0,
-            "barWidthFactor": 0.8,
-            "axisBorderShow": false,
-            "axisPlacement": "auto",
-            "axisLabel": "",
-            "axisColorMode": "text",
-            "axisCenteredZero": false,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "stacking": {
-              "mode": "none",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            },
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc",
+              "hideZeros": false
             }
           },
-          "color": {
-            "mode": "palette-classic"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#898781",
-                "value": null
-              }
-            ]
-          },
-          "mappings": [],
-          "min": 0,
-          "noValue": "No meme indexing in this time range"
+          "description": "Meme indexing outcomes per attachment, per interval. AutomaticIndexing is off in prod, so this stays empty outside a catch-up.",
+          "interval": "1m"
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc",
-          "hideZeros": false
-        }
-      },
-      "description": "Latency of one vision model call, for the calls in each interval.",
-      "interval": "1m"
-    },
-    {
-      "type": "timeseries",
-      "id": 38,
-      "title": "Vision tokens by model and direction",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 80,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
         {
+          "type": "timeseries",
+          "id": 48,
+          "title": "Vision calls by model and outcome",
           "datasource": {
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by (model, direction)(sum_over_time(((wojtus_meme_vision_tokens_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_tokens_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_tokens_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_tokens_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
-          "refId": "A",
-          "legendFormat": "{{model}} {{direction}}",
-          "editorMode": "code",
-          "instant": false,
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "bars",
-            "lineWidth": 0,
-            "fillOpacity": 85,
-            "showPoints": "never",
-            "pointSize": 5,
-            "lineInterpolation": "linear",
-            "spanNulls": false,
-            "gradientMode": "none",
-            "barAlignment": 0,
-            "barWidthFactor": 0.8,
-            "axisBorderShow": false,
-            "axisPlacement": "auto",
-            "axisLabel": "",
-            "axisColorMode": "text",
-            "axisCenteredZero": false,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            },
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "axisSoftMin": 0,
-            "axisSoftMax": 1
+          "gridPos": {
+            "x": 8,
+            "y": 88,
+            "w": 8,
+            "h": 8
           },
-          "color": {
-            "mode": "palette-classic"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "sum by (model, outcome)(sum_over_time(((wojtus_meme_vision_calls_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_calls_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_calls_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_calls_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
+              "refId": "A",
+              "legendFormat": "{{model}} {{outcome}}",
+              "editorMode": "code",
+              "instant": false,
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "lineWidth": 0,
+                "fillOpacity": 85,
+                "showPoints": "never",
+                "pointSize": 5,
+                "lineInterpolation": "linear",
+                "spanNulls": false,
+                "gradientMode": "none",
+                "barAlignment": 0,
+                "barWidthFactor": 0.8,
+                "axisBorderShow": false,
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "axisColorMode": "text",
+                "axisCenteredZero": false,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "axisSoftMin": 0,
+                "axisSoftMax": 1
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#898781",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [],
+              "min": 0,
+              "decimals": 0,
+              "noValue": "No meme indexing in this time range"
+            },
+            "overrides": [
               {
-                "color": "#898781",
-                "value": null
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted)$/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#0ca30c"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(cancelled|skipped|debug|trace|existing)/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#898781"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(timeout|transient|short_circuit|serialization_failed|warning|refusal|rejected|unknown_tool|check_failed|bad_argument|not_executable|conflict|updated)/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#fab219"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(^|[ ,])(failed|error|critical)$/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#d03b3b"
+                    }
+                  }
+                ]
               }
             ]
           },
-          "mappings": [],
-          "min": 0,
-          "decimals": 0,
-          "noValue": "No meme indexing in this time range"
+          "options": {
+            "legend": {
+              "showLegend": true,
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc",
+              "hideZeros": false
+            }
+          },
+          "description": "Vision model calls for meme analysis per interval.",
+          "interval": "1m"
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc",
-          "hideZeros": false
-        }
-      },
-      "description": "Tokens billed by vision model calls per interval.",
-      "interval": "1m"
-    },
-    {
-      "type": "timeseries",
-      "id": 39,
-      "title": "Vision cost by model",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "gridPos": {
-        "x": 8,
-        "y": 80,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
         {
+          "type": "timeseries",
+          "id": 49,
+          "title": "Vision call latency",
           "datasource": {
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by (model)(sum_over_time(((wojtus_meme_vision_cost_usd_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_cost_usd_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_cost_usd_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_cost_usd_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
-          "refId": "A",
-          "legendFormat": "{{model}}",
-          "editorMode": "code",
-          "instant": false,
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "currencyUSD",
-          "custom": {
-            "drawStyle": "bars",
-            "lineWidth": 0,
-            "fillOpacity": 85,
-            "showPoints": "never",
-            "pointSize": 5,
-            "lineInterpolation": "linear",
-            "spanNulls": false,
-            "gradientMode": "none",
-            "barAlignment": 0,
-            "barWidthFactor": 0.8,
-            "axisBorderShow": false,
-            "axisPlacement": "auto",
-            "axisLabel": "",
-            "axisColorMode": "text",
-            "axisCenteredZero": false,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            },
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "axisSoftMin": 0,
-            "axisSoftMax": 1
+          "gridPos": {
+            "x": 16,
+            "y": 88,
+            "w": 8,
+            "h": 8
           },
-          "color": {
-            "mode": "palette-classic"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "sum by (model)(sum_over_time(((wojtus_meme_vision_duration_seconds_sum{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_duration_seconds_sum{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_duration_seconds_sum{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_duration_seconds_sum{job=\"wojtusdiscord\"} + 0))[$__interval:1m])) / (sum by (model)(sum_over_time(((wojtus_meme_vision_duration_seconds_count{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_duration_seconds_count{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_duration_seconds_count{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_duration_seconds_count{job=\"wojtusdiscord\"} + 0))[$__interval:1m])) > 0)",
+              "refId": "A",
+              "legendFormat": "{{model}} mean",
+              "editorMode": "code",
+              "instant": false,
+              "range": true
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le, model)(sum_over_time(((wojtus_meme_vision_duration_seconds_bucket{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_duration_seconds_bucket{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_duration_seconds_bucket{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_duration_seconds_bucket{job=\"wojtusdiscord\"} + 0))[$__interval:1m])))",
+              "refId": "B",
+              "legendFormat": "{{model}} p95",
+              "editorMode": "code",
+              "instant": false,
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineWidth": 1,
+                "fillOpacity": 14,
+                "showPoints": "always",
+                "pointSize": 6,
+                "lineInterpolation": "linear",
+                "spanNulls": false,
+                "gradientMode": "opacity",
+                "barAlignment": 0,
+                "barWidthFactor": 0.8,
+                "axisBorderShow": false,
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "axisColorMode": "text",
+                "axisCenteredZero": false,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#898781",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [],
+              "min": 0,
+              "noValue": "No meme indexing in this time range"
+            },
+            "overrides": []
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#898781",
-                "value": null
-              }
-            ]
+          "options": {
+            "legend": {
+              "showLegend": true,
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc",
+              "hideZeros": false
+            }
           },
-          "mappings": [],
-          "min": 0,
-          "decimals": 3,
-          "noValue": "No meme indexing in this time range"
+          "description": "Latency of one vision model call, for the calls in each interval.",
+          "interval": "1m"
         },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc",
-          "hideZeros": false
-        }
-      },
-      "description": "Cost of vision model calls per interval.",
-      "interval": "1m"
-    },
-    {
-      "type": "timeseries",
-      "id": 40,
-      "title": "Import items by outcome",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "gridPos": {
-        "x": 16,
-        "y": 80,
-        "w": 8,
-        "h": 8
-      },
-      "targets": [
         {
+          "type": "timeseries",
+          "id": 50,
+          "title": "Vision tokens by model and direction",
           "datasource": {
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by (outcome)(sum_over_time(((wojtus_meme_import_items_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_import_items_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_import_items_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_import_items_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
-          "refId": "A",
-          "legendFormat": "{{outcome}}",
-          "editorMode": "code",
-          "instant": false,
-          "range": true
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {
-            "drawStyle": "bars",
-            "lineWidth": 0,
-            "fillOpacity": 85,
-            "showPoints": "never",
-            "pointSize": 5,
-            "lineInterpolation": "linear",
-            "spanNulls": false,
-            "gradientMode": "none",
-            "barAlignment": 0,
-            "barWidthFactor": 0.8,
-            "axisBorderShow": false,
-            "axisPlacement": "auto",
-            "axisLabel": "",
-            "axisColorMode": "text",
-            "axisCenteredZero": false,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "stacking": {
-              "mode": "normal",
-              "group": "A"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            },
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "axisSoftMin": 0,
-            "axisSoftMax": 1
+          "gridPos": {
+            "x": 0,
+            "y": 96,
+            "w": 8,
+            "h": 8
           },
-          "color": {
-            "mode": "palette-classic"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "sum by (model, direction)(sum_over_time(((wojtus_meme_vision_tokens_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_tokens_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_tokens_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_tokens_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
+              "refId": "A",
+              "legendFormat": "{{model}} {{direction}}",
+              "editorMode": "code",
+              "instant": false,
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "lineWidth": 0,
+                "fillOpacity": 85,
+                "showPoints": "never",
+                "pointSize": 5,
+                "lineInterpolation": "linear",
+                "spanNulls": false,
+                "gradientMode": "none",
+                "barAlignment": 0,
+                "barWidthFactor": 0.8,
+                "axisBorderShow": false,
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "axisColorMode": "text",
+                "axisCenteredZero": false,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "axisSoftMin": 0,
+                "axisSoftMax": 1
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#898781",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [],
+              "min": 0,
+              "decimals": 0,
+              "noValue": "No meme indexing in this time range"
+            },
+            "overrides": []
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#898781",
-                "value": null
-              }
-            ]
+          "options": {
+            "legend": {
+              "showLegend": true,
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc",
+              "hideZeros": false
+            }
           },
-          "mappings": [],
-          "min": 0,
-          "decimals": 0,
-          "noValue": "No meme import in this time range"
+          "description": "Tokens billed by vision model calls per interval.",
+          "interval": "1m"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted)$/"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#0ca30c"
-                }
-              }
-            ]
+        {
+          "type": "timeseries",
+          "id": 51,
+          "title": "Vision cost by model",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
           },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(cancelled|skipped|debug|trace)/"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#898781"
-                }
-              }
-            ]
+          "gridPos": {
+            "x": 8,
+            "y": 96,
+            "w": 8,
+            "h": 8
           },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(timeout|transient|short_circuit|serialization_failed|warning|refusal|rejected|unknown_tool|check_failed|bad_argument|not_executable|conflict|updated)/"
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "sum by (model)(sum_over_time(((wojtus_meme_vision_cost_usd_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_vision_cost_usd_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_vision_cost_usd_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_vision_cost_usd_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
+              "refId": "A",
+              "legendFormat": "{{model}}",
+              "editorMode": "code",
+              "instant": false,
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "currencyUSD",
+              "custom": {
+                "drawStyle": "bars",
+                "lineWidth": 0,
+                "fillOpacity": 85,
+                "showPoints": "never",
+                "pointSize": 5,
+                "lineInterpolation": "linear",
+                "spanNulls": false,
+                "gradientMode": "none",
+                "barAlignment": 0,
+                "barWidthFactor": 0.8,
+                "axisBorderShow": false,
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "axisColorMode": "text",
+                "axisCenteredZero": false,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "axisSoftMin": 0,
+                "axisSoftMax": 1
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#898781",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [],
+              "min": 0,
+              "decimals": 3,
+              "noValue": "No meme indexing in this time range"
             },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#fab219"
-                }
-              }
-            ]
+            "overrides": []
           },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/(^|[ ,])(failed|error|critical)$/"
+          "options": {
+            "legend": {
+              "showLegend": true,
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
             },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "mode": "fixed",
-                  "fixedColor": "#d03b3b"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": {
-        "legend": {
-          "showLegend": true,
-          "displayMode": "list",
-          "placement": "bottom",
-          "calcs": []
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc",
+              "hideZeros": false
+            }
+          },
+          "description": "Cost of vision model calls per interval.",
+          "interval": "1m"
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc",
-          "hideZeros": false
+        {
+          "type": "timeseries",
+          "id": 52,
+          "title": "Import items by outcome",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "gridPos": {
+            "x": 16,
+            "y": 96,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "sum by (outcome)(sum_over_time(((wojtus_meme_import_items_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_meme_import_items_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_meme_import_items_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_meme_import_items_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
+              "refId": "A",
+              "legendFormat": "{{outcome}}",
+              "editorMode": "code",
+              "instant": false,
+              "range": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "lineWidth": 0,
+                "fillOpacity": 85,
+                "showPoints": "never",
+                "pointSize": 5,
+                "lineInterpolation": "linear",
+                "spanNulls": false,
+                "gradientMode": "none",
+                "barAlignment": 0,
+                "barWidthFactor": 0.8,
+                "axisBorderShow": false,
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "axisColorMode": "text",
+                "axisCenteredZero": false,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                },
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "axisSoftMin": 0,
+                "axisSoftMax": 1
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#898781",
+                    "value": null
+                  }
+                ]
+              },
+              "mappings": [],
+              "min": 0,
+              "decimals": 0,
+              "noValue": "No meme import in this time range"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted)$/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#0ca30c"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(cancelled|skipped|debug|trace|existing)/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#898781"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(timeout|transient|short_circuit|serialization_failed|warning|refusal|rejected|unknown_tool|check_failed|bad_argument|not_executable|conflict|updated)/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#fab219"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": "/(^|[ ,])(failed|error|critical)$/"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "#d03b3b"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "showLegend": true,
+              "displayMode": "list",
+              "placement": "bottom",
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc",
+              "hideZeros": false
+            }
+          },
+          "description": "Meme annotation import items per interval: imported, skipped or rejected.",
+          "interval": "1m"
         }
-      },
-      "description": "Meme annotation import items per interval: imported, skipped or rejected.",
-      "interval": "1m"
+      ]
     }
   ]
 }

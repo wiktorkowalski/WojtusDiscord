@@ -492,7 +492,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[$__range])))",
+          "expr": "histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\",event_type!~\"GuildCreated|GuildMembersChunked|ThreadListSynced\"}[$__range])))",
           "refId": "A",
           "legendFormat": "",
           "editorMode": "code",
@@ -523,7 +523,8 @@
               }
             ]
           },
-          "mappings": []
+          "mappings": [],
+          "noValue": "n/a"
         },
         "overrides": []
       },
@@ -544,7 +545,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "95th percentile of the time an event spends in the pipeline, over the range."
+      "description": "95th percentile of the time an event spends in the pipeline, over the range. Without the event types that arrive only when the bot connects (GuildCreated, GuildMembersChunked, ThreadListSynced): one guild replay of 250 to 500 ms at a start was the whole p95 of a quiet night. 'Handler p95 by type' below shows them."
     },
     {
       "type": "stat",
@@ -827,7 +828,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/(cancelled|skipped|debug|trace)/"
+              "options": "/(cancelled|skipped|debug|trace|existing)/"
             },
             "properties": [
               {
@@ -1125,7 +1126,7 @@
     {
       "type": "row",
       "id": 14,
-      "title": "Handler duration",
+      "title": "Messages",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -1136,9 +1137,9 @@
       "panels": []
     },
     {
-      "type": "timeseries",
+      "type": "stat",
       "id": 15,
-      "title": "Handler duration percentiles",
+      "title": "Messages",
       "datasource": {
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
@@ -1146,6 +1147,892 @@
       "gridPos": {
         "x": 0,
         "y": 27,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(sum_over_time(((wojtus_messages_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_messages_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_messages_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_messages_total{job=\"wojtusdiscord\"} + 0))[$__range:1m]))",
+          "refId": "A",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 0,
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "description": "Guild messages created in the range, counted from the event itself: a message whose database write fails still counts. Not filtered by the event type picker. Counts include the first sample of a new series, which increase() and rate() miss: the bot creates a counter series on its first increment."
+    },
+    {
+      "type": "stat",
+      "id": 16,
+      "title": "From humans",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 27,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(sum_over_time(((wojtus_messages_total{job=\"wojtusdiscord\",author=\"human\"} - (((last_over_time(wojtus_messages_total{job=\"wojtusdiscord\",author=\"human\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_messages_total{job=\"wojtusdiscord\",author=\"human\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_messages_total{job=\"wojtusdiscord\",author=\"human\"} + 0))[$__range:1m])) / (sum(sum_over_time(((wojtus_messages_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_messages_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_messages_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_messages_total{job=\"wojtusdiscord\"} + 0))[$__range:1m])) > 0)",
+          "refId": "A",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 0,
+          "noValue": "n/a"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "description": "Share of the messages in the range that a person wrote. The rest are bots, this bot included."
+    },
+    {
+      "type": "stat",
+      "id": 17,
+      "title": "Replies",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 27,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(sum_over_time(((wojtus_messages_total{job=\"wojtusdiscord\",reply=\"true\"} - (((last_over_time(wojtus_messages_total{job=\"wojtusdiscord\",reply=\"true\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_messages_total{job=\"wojtusdiscord\",reply=\"true\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_messages_total{job=\"wojtusdiscord\",reply=\"true\"} + 0))[$__range:1m])) / (sum(sum_over_time(((wojtus_messages_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_messages_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_messages_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_messages_total{job=\"wojtusdiscord\"} + 0))[$__range:1m])) > 0)",
+          "refId": "A",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 0,
+          "noValue": "n/a"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "description": "Share of the messages in the range that reply to another message."
+    },
+    {
+      "type": "stat",
+      "id": 18,
+      "title": "With an attachment",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 27,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "1 - sum(sum_over_time(((wojtus_message_attachments_bucket{job=\"wojtusdiscord\",le=~\"0(.0)?\"} - (((last_over_time(wojtus_message_attachments_bucket{job=\"wojtusdiscord\",le=~\"0(.0)?\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_message_attachments_bucket{job=\"wojtusdiscord\",le=~\"0(.0)?\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_message_attachments_bucket{job=\"wojtusdiscord\",le=~\"0(.0)?\"} + 0))[$__range:1m])) / (sum(sum_over_time(((wojtus_message_attachments_count{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_message_attachments_count{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_message_attachments_count{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_message_attachments_count{job=\"wojtusdiscord\"} + 0))[$__range:1m])) > 0)",
+          "refId": "A",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 0,
+          "noValue": "n/a"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "description": "Share of the messages in the range with at least one attachment."
+    },
+    {
+      "type": "stat",
+      "id": 19,
+      "title": "Mean length",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 27,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(sum_over_time(((wojtus_message_length_sum{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_message_length_sum{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_message_length_sum{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_message_length_sum{job=\"wojtusdiscord\"} + 0))[$__range:1m])) / (sum(sum_over_time(((wojtus_message_length_count{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_message_length_count{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_message_length_count{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_message_length_count{job=\"wojtusdiscord\"} + 0))[$__range:1m])) > 0)",
+          "refId": "A",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 0,
+          "noValue": "n/a"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "description": "Mean length of a message in characters, over the range. A message with only an attachment has length 0."
+    },
+    {
+      "type": "stat",
+      "id": 20,
+      "title": "Median length",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 27,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le)(sum_over_time(((wojtus_message_length_bucket{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_message_length_bucket{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_message_length_bucket{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_message_length_bucket{job=\"wojtusdiscord\"} + 0))[$__range:1m])))",
+          "refId": "A",
+          "legendFormat": "",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 0,
+          "noValue": "n/a"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "none",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "description": "Median length of a message in characters, over the range: an estimate from the buckets 0, 1, 10, 25, 50, 100, 200, 500, 1000, 2000, 4000."
+    },
+    {
+      "type": "timeseries",
+      "id": 21,
+      "title": "Messages per minute by kind",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 9,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (kind)(sum_over_time(((wojtus_messages_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_messages_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_messages_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_messages_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m])) / ($__interval_ms / 60000)",
+          "refId": "A",
+          "legendFormat": "{{kind}}",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 85,
+            "showPoints": "never",
+            "pointSize": 5,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "axisSoftMin": 0,
+            "axisSoftMax": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "decimals": 1,
+          "noValue": "No message in this time range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "text"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "attachment"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "embed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#9085e9"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sticker"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#199e70"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "empty"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#898781"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "Guild messages by content kind. The kind is the first that holds of: attachment, sticker, embed, text, empty. Counts include the first sample of a new series, which increase() and rate() miss: the bot creates a counter series on its first increment.",
+      "interval": "1m"
+    },
+    {
+      "type": "timeseries",
+      "id": 22,
+      "title": "Messages by author",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 9,
+        "y": 31,
+        "w": 5,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (author)(sum_over_time(((wojtus_messages_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_messages_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_messages_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_messages_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
+          "refId": "A",
+          "legendFormat": "{{author}}",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 85,
+            "showPoints": "never",
+            "pointSize": 5,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "axisSoftMin": 0,
+            "axisSoftMax": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "decimals": 0,
+          "noValue": "No message in this time range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "human"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bot"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#898781"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "Messages per interval by author type: human or bot.",
+      "interval": "1m"
+    },
+    {
+      "type": "bargauge",
+      "id": 23,
+      "title": "Message length",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 14,
+        "y": 31,
+        "w": 5,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (le)(sum_over_time(((wojtus_message_length_bucket{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_message_length_bucket{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_message_length_bucket{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_message_length_bucket{job=\"wojtusdiscord\"} + 0))[$__range:1m]))",
+          "refId": "A",
+          "legendFormat": "{{le}}",
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "format": "heatmap"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "mappings": [],
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3987e5"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0,
+          "displayName": "${__field.labels.le}",
+          "noValue": "No message in this time range"
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "basic",
+        "orientation": "horizontal",
+        "valueMode": "text",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 28,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "description": "Messages in the range by length in characters. Each bar is a bucket, named by its upper bound: 0 (no text), 1, 10, 25, 50, 100, 200, 500, 1000, 2000, 4000, +Inf."
+    },
+    {
+      "type": "bargauge",
+      "id": 24,
+      "title": "Attachments per message",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 19,
+        "y": 31,
+        "w": 5,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (le)(sum_over_time(((wojtus_message_attachments_bucket{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_message_attachments_bucket{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_message_attachments_bucket{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_message_attachments_bucket{job=\"wojtusdiscord\"} + 0))[$__range:1m]))",
+          "refId": "A",
+          "legendFormat": "{{le}}",
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "format": "heatmap"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "mappings": [],
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#3987e5"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "decimals": 0,
+          "displayName": "${__field.labels.le}",
+          "noValue": "No message in this time range"
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "basic",
+        "orientation": "horizontal",
+        "valueMode": "text",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 28,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "description": "Messages in the range by attachment count. Each bar is a bucket, named by its upper bound: 0, 1, 2, 3, 5, 10, +Inf."
+    },
+    {
+      "type": "row",
+      "id": 25,
+      "title": "Handler duration",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 26,
+      "title": "Handler duration percentiles",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 41,
         "w": 8,
         "h": 9
       },
@@ -1299,11 +2186,11 @@
           "hideZeros": false
         }
       },
-      "description": "Time one gateway event spends in the event pipeline, selected event types."
+      "description": "Time one gateway event spends in the event pipeline, selected event types. No trace exemplars here: a gateway event runs outside any trace, so there is no trace to open."
     },
     {
       "type": "heatmap",
-      "id": 16,
+      "id": 27,
       "title": "Handler duration heatmap",
       "datasource": {
         "type": "prometheus",
@@ -1311,7 +2198,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 27,
+        "y": 41,
         "w": 8,
         "h": 9
       },
@@ -1392,7 +2279,7 @@
     },
     {
       "type": "bargauge",
-      "id": 17,
+      "id": 28,
       "title": "Handler p95 by type",
       "datasource": {
         "type": "prometheus",
@@ -1400,7 +2287,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 27,
+        "y": 41,
         "w": 8,
         "h": 9
       },
@@ -1476,7 +2363,7 @@
     },
     {
       "type": "timeseries",
-      "id": 18,
+      "id": 29,
       "title": "Handler p95 by type over time",
       "datasource": {
         "type": "prometheus",
@@ -1484,7 +2371,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 50,
         "w": 12,
         "h": 8
       },
@@ -1572,7 +2459,7 @@
     },
     {
       "type": "timeseries",
-      "id": 19,
+      "id": 30,
       "title": "Raw payload bytes per second",
       "datasource": {
         "type": "prometheus",
@@ -1580,7 +2467,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 36,
+        "y": 50,
         "w": 12,
         "h": 8
       },
@@ -1668,20 +2555,20 @@
     },
     {
       "type": "row",
-      "id": 20,
+      "id": 31,
       "title": "Failures and database write gaps",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 44
+        "y": 58
       },
       "panels": []
     },
     {
       "type": "timeseries",
-      "id": 21,
+      "id": 32,
       "title": "Handler failures by event type",
       "datasource": {
         "type": "prometheus",
@@ -1689,7 +2576,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 45,
+        "y": 59,
         "w": 8,
         "h": 8
       },
@@ -1781,7 +2668,7 @@
     },
     {
       "type": "timeseries",
-      "id": 22,
+      "id": 33,
       "title": "Handler failures by handler",
       "datasource": {
         "type": "prometheus",
@@ -1789,7 +2676,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 45,
+        "y": 59,
         "w": 8,
         "h": 8
       },
@@ -1881,7 +2768,7 @@
     },
     {
       "type": "timeseries",
-      "id": 23,
+      "id": 34,
       "title": "Dead letters",
       "datasource": {
         "type": "prometheus",
@@ -1889,7 +2776,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 45,
+        "y": 59,
         "w": 8,
         "h": 8
       },
@@ -1981,7 +2868,7 @@
     },
     {
       "type": "timeseries",
-      "id": 24,
+      "id": 35,
       "title": "Serialization failures by type",
       "datasource": {
         "type": "prometheus",
@@ -1989,7 +2876,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 53,
+        "y": 67,
         "w": 8,
         "h": 8
       },
@@ -2081,7 +2968,7 @@
     },
     {
       "type": "timeseries",
-      "id": 25,
+      "id": 36,
       "title": "Unwritable window pending",
       "datasource": {
         "type": "prometheus",
@@ -2089,7 +2976,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 53,
+        "y": 67,
         "w": 8,
         "h": 8
       },
@@ -2180,7 +3067,7 @@
     },
     {
       "type": "timeseries",
-      "id": 26,
+      "id": 37,
       "title": "Heartbeat writes by outcome",
       "datasource": {
         "type": "prometheus",
@@ -2188,7 +3075,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 53,
+        "y": 67,
         "w": 8,
         "h": 8
       },
@@ -2338,20 +3225,20 @@
     },
     {
       "type": "row",
-      "id": 27,
+      "id": 38,
       "title": "Gateway",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 61
+        "y": 75
       },
       "panels": []
     },
     {
       "type": "timeseries",
-      "id": 28,
+      "id": 39,
       "title": "Gateway latency",
       "datasource": {
         "type": "prometheus",
@@ -2359,7 +3246,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 62,
+        "y": 76,
         "w": 6,
         "h": 8
       },
@@ -2448,7 +3335,7 @@
     },
     {
       "type": "timeseries",
-      "id": 29,
+      "id": 40,
       "title": "Gateway connected",
       "datasource": {
         "type": "prometheus",
@@ -2456,7 +3343,7 @@
       },
       "gridPos": {
         "x": 6,
-        "y": 62,
+        "y": 76,
         "w": 6,
         "h": 8
       },
@@ -2547,7 +3434,7 @@
     },
     {
       "type": "timeseries",
-      "id": 30,
+      "id": 41,
       "title": "Socket closes by close code",
       "datasource": {
         "type": "prometheus",
@@ -2555,7 +3442,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 62,
+        "y": 76,
         "w": 6,
         "h": 8
       },
@@ -2647,7 +3534,7 @@
     },
     {
       "type": "timeseries",
-      "id": 31,
+      "id": 42,
       "title": "Session resumes and guild downloads",
       "datasource": {
         "type": "prometheus",
@@ -2655,7 +3542,7 @@
       },
       "gridPos": {
         "x": 18,
-        "y": 62,
+        "y": 76,
         "w": 6,
         "h": 8
       },
@@ -2790,7 +3677,7 @@
     },
     {
       "type": "timeseries",
-      "id": 32,
+      "id": 43,
       "title": "Time since last event by kind",
       "datasource": {
         "type": "prometheus",
@@ -2798,9 +3685,9 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 70,
-        "w": 16,
-        "h": 7
+        "y": 84,
+        "w": 10,
+        "h": 8
       },
       "targets": [
         {
@@ -2947,17 +3834,17 @@
     },
     {
       "type": "timeseries",
-      "id": 33,
+      "id": 44,
       "title": "Members in voice channels",
       "datasource": {
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
       "gridPos": {
-        "x": 16,
-        "y": 70,
-        "w": 8,
-        "h": 7
+        "x": 10,
+        "y": 84,
+        "w": 6,
+        "h": 8
       },
       "targets": [
         {
@@ -3046,21 +3933,125 @@
       "description": "Members connected to a voice channel now, as the bot's cache sees them."
     },
     {
+      "type": "timeseries",
+      "id": 45,
+      "title": "Voice state changes",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 84,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum by (change)(sum_over_time(((wojtus_voice_state_changes_total{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_voice_state_changes_total{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_voice_state_changes_total{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_voice_state_changes_total{job=\"wojtusdiscord\"} + 0))[$__interval:1m]))",
+          "refId": "A",
+          "legendFormat": "{{change}}",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 0,
+            "fillOpacity": 85,
+            "showPoints": "never",
+            "pointSize": 5,
+            "lineInterpolation": "linear",
+            "spanNulls": false,
+            "gradientMode": "none",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "axisSoftMin": 0,
+            "axisSoftMax": 1
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "decimals": 0,
+          "noValue": "No voice state change in this time range"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "sum"
+          ],
+          "sortBy": "Total",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "Voice state changes per interval: join, leave, move, mute, unmute, deafen, undeafen, stream_start, stream_stop, video_start, video_stop, and 'other' (a change of none of these, such as a suppress flag). One event can count more than one change. Mute and deafen do not tell the member's own switch from the server's. Counts include the first sample of a new series, which increase() and rate() miss: the bot creates a counter series on its first increment.",
+      "interval": "1m"
+    },
+    {
       "type": "row",
-      "id": 34,
+      "id": 46,
       "title": "Health checks and downtime",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 92
       },
       "panels": []
     },
     {
       "type": "state-timeline",
-      "id": 35,
+      "id": 47,
       "title": "Health checks",
       "datasource": {
         "type": "prometheus",
@@ -3068,7 +4059,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 78,
+        "y": 93,
         "w": 12,
         "h": 8
       },
@@ -3160,7 +4151,7 @@
     },
     {
       "type": "timeseries",
-      "id": 36,
+      "id": 48,
       "title": "Health-check ages",
       "datasource": {
         "type": "prometheus",
@@ -3168,7 +4159,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 78,
+        "y": 93,
         "w": 12,
         "h": 8
       },
@@ -3268,7 +4259,7 @@
     },
     {
       "type": "timeseries",
-      "id": 37,
+      "id": 49,
       "title": "Health-check counts",
       "datasource": {
         "type": "prometheus",
@@ -3276,7 +4267,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 86,
+        "y": 101,
         "w": 8,
         "h": 8
       },
@@ -3367,7 +4358,7 @@
     },
     {
       "type": "timeseries",
-      "id": 38,
+      "id": 50,
       "title": "Health-check alerts by check",
       "datasource": {
         "type": "prometheus",
@@ -3375,7 +4366,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 86,
+        "y": 101,
         "w": 8,
         "h": 8
       },
@@ -3467,7 +4458,7 @@
     },
     {
       "type": "timeseries",
-      "id": 39,
+      "id": 51,
       "title": "Webhook failures",
       "datasource": {
         "type": "prometheus",
@@ -3475,7 +4466,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 86,
+        "y": 101,
         "w": 4,
         "h": 8
       },
@@ -3583,7 +4574,7 @@
     },
     {
       "type": "timeseries",
-      "id": 40,
+      "id": 52,
       "title": "Downtime by type",
       "datasource": {
         "type": "prometheus",
@@ -3591,7 +4582,7 @@
       },
       "gridPos": {
         "x": 20,
-        "y": 86,
+        "y": 101,
         "w": 4,
         "h": 8
       },
@@ -3683,20 +4674,20 @@
     },
     {
       "type": "row",
-      "id": 41,
+      "id": 53,
       "title": "Database writes",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 94
+        "y": 109
       },
       "panels": []
     },
     {
       "type": "timeseries",
-      "id": 42,
+      "id": 54,
       "title": "Upserts per minute by entity",
       "datasource": {
         "type": "prometheus",
@@ -3704,7 +4695,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 95,
+        "y": 110,
         "w": 9,
         "h": 8
       },
@@ -3795,12 +4786,12 @@
           "hideZeros": false
         }
       },
-      "description": "Entity upserts (guild, channel, user, member, ...) per minute. Counts include the first sample of a new series, which increase() and rate() miss: the bot creates a counter series on its first increment.",
+      "description": "Entity upserts and insert-or-get writes (guild, channel, user, member, message, ...) per minute. Counts include the first sample of a new series, which increase() and rate() miss: the bot creates a counter series on its first increment.",
       "interval": "1m"
     },
     {
       "type": "timeseries",
-      "id": 43,
+      "id": 55,
       "title": "Upserts per minute by result",
       "datasource": {
         "type": "prometheus",
@@ -3808,7 +4799,7 @@
       },
       "gridPos": {
         "x": 9,
-        "y": 95,
+        "y": 110,
         "w": 5,
         "h": 8
       },
@@ -3914,6 +4905,21 @@
           {
             "matcher": {
               "id": "byName",
+              "options": "existing"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#898781"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
               "options": "conflict"
             },
             "properties": [
@@ -3941,12 +4947,12 @@
           "hideZeros": false
         }
       },
-      "description": "The same upserts by result. 'conflict' means another writer won the race and the row was read back.",
+      "description": "The same writes by result. 'conflict' means another writer won the race and the row was then updated. 'existing' is an insert-or-get that found the row and left it as it was (a message that arrives twice).",
       "interval": "1m"
     },
     {
       "type": "timeseries",
-      "id": 44,
+      "id": 56,
       "title": "Foreign keys not resolved",
       "datasource": {
         "type": "prometheus",
@@ -3954,7 +4960,7 @@
       },
       "gridPos": {
         "x": 14,
-        "y": 95,
+        "y": 110,
         "w": 5,
         "h": 8
       },
@@ -4046,7 +5052,7 @@
     },
     {
       "type": "timeseries",
-      "id": 45,
+      "id": 57,
       "title": "Typing events throttled",
       "datasource": {
         "type": "prometheus",
@@ -4054,7 +5060,7 @@
       },
       "gridPos": {
         "x": 19,
-        "y": 95,
+        "y": 110,
         "w": 5,
         "h": 8
       },
@@ -4162,20 +5168,20 @@
     },
     {
       "type": "row",
-      "id": 46,
+      "id": 58,
       "title": "Boot",
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 103
+        "y": 118
       },
       "panels": []
     },
     {
       "type": "bargauge",
-      "id": 47,
+      "id": 59,
       "title": "Boot phases, last start",
       "datasource": {
         "type": "prometheus",
@@ -4183,7 +5189,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 104,
+        "y": 119,
         "w": 8,
         "h": 7
       },
@@ -4252,7 +5258,7 @@
     },
     {
       "type": "timeseries",
-      "id": 48,
+      "id": 60,
       "title": "Boot phases across restarts",
       "datasource": {
         "type": "prometheus",
@@ -4260,7 +5266,7 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 104,
+        "y": 119,
         "w": 16,
         "h": 7
       },
@@ -4348,19 +5354,19 @@
     },
     {
       "type": "row",
-      "id": 49,
+      "id": 61,
       "title": "Backfill",
       "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 111
+        "y": 126
       },
       "panels": [
         {
           "type": "timeseries",
-          "id": 50,
+          "id": 62,
           "title": "Backfill runs by type and outcome",
           "datasource": {
             "type": "prometheus",
@@ -4368,7 +5374,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 112,
+            "y": 127,
             "w": 6,
             "h": 8
           },
@@ -4459,7 +5465,7 @@
               {
                 "matcher": {
                   "id": "byRegexp",
-                  "options": "/(cancelled|skipped|debug|trace)/"
+                  "options": "/(cancelled|skipped|debug|trace|existing)/"
                 },
                 "properties": [
                   {
@@ -4521,7 +5527,7 @@
         },
         {
           "type": "timeseries",
-          "id": 51,
+          "id": 63,
           "title": "Backfill run duration",
           "datasource": {
             "type": "prometheus",
@@ -4529,7 +5535,7 @@
           },
           "gridPos": {
             "x": 6,
-            "y": 112,
+            "y": 127,
             "w": 6,
             "h": 8
           },
@@ -4618,7 +5624,7 @@
         },
         {
           "type": "timeseries",
-          "id": 52,
+          "id": 64,
           "title": "Backfill items per second",
           "datasource": {
             "type": "prometheus",
@@ -4626,7 +5632,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 112,
+            "y": 127,
             "w": 6,
             "h": 8
           },
@@ -4716,7 +5722,7 @@
         },
         {
           "type": "timeseries",
-          "id": 53,
+          "id": 65,
           "title": "Backfill item errors",
           "datasource": {
             "type": "prometheus",
@@ -4724,7 +5730,7 @@
           },
           "gridPos": {
             "x": 18,
-            "y": 112,
+            "y": 127,
             "w": 6,
             "h": 8
           },
@@ -4816,7 +5822,7 @@
         },
         {
           "type": "timeseries",
-          "id": 54,
+          "id": 66,
           "title": "Orphan replay rows by result",
           "datasource": {
             "type": "prometheus",
@@ -4824,7 +5830,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 120,
+            "y": 135,
             "w": 24,
             "h": 7
           },

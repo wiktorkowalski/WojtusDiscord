@@ -1256,7 +1256,7 @@
           "range": false
         }
       ],
-      "description": "Temp files created in the dashboard range.",
+      "description": "Temp files created in the dashboard range: a sort or a hash that did not fit in work_mem. A few per hour are normal (the dashboard statistics queries). Grey below 100; yellow from 100 in the range, where a higher work_mem is worth a look.",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -1267,12 +1267,12 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#0ca30c",
+                "color": "#898781",
                 "value": null
               },
               {
                 "color": "#fab219",
-                "value": 10
+                "value": 100
               }
             ]
           },
@@ -1296,7 +1296,10 @@
         "textMode": "auto",
         "wideLayout": true,
         "showPercentChange": false,
-        "percentChangeColorMode": "standard"
+        "percentChangeColorMode": "standard",
+        "text": {
+          "valueSize": 48
+        }
       }
     },
     {
@@ -1367,7 +1370,10 @@
         "textMode": "auto",
         "wideLayout": true,
         "showPercentChange": false,
-        "percentChangeColorMode": "standard"
+        "percentChangeColorMode": "standard",
+        "text": {
+          "valueSize": 48
+        }
       }
     },
     {
@@ -2281,7 +2287,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "topk(10, (pg_stat_user_tables_n_dead_tup{job=\"wojtus-postgres\",schemaname=\"public\"} / (pg_stat_user_tables_n_live_tup{job=\"wojtus-postgres\",schemaname=\"public\"} + pg_stat_user_tables_n_dead_tup{job=\"wojtus-postgres\",schemaname=\"public\"})) and (pg_stat_user_tables_n_live_tup{job=\"wojtus-postgres\",schemaname=\"public\"} + pg_stat_user_tables_n_dead_tup{job=\"wojtus-postgres\",schemaname=\"public\"} >= 100))",
+          "expr": "topk(10, (pg_stat_user_tables_n_dead_tup{job=\"wojtus-postgres\",schemaname=\"public\"} / (pg_stat_user_tables_n_live_tup{job=\"wojtus-postgres\",schemaname=\"public\"} + pg_stat_user_tables_n_dead_tup{job=\"wojtus-postgres\",schemaname=\"public\"})) and (pg_stat_user_tables_n_dead_tup{job=\"wojtus-postgres\",schemaname=\"public\"} >= 1000))",
           "refId": "A",
           "legendFormat": "{{relname}}",
           "editorMode": "code",
@@ -2289,7 +2295,7 @@
           "range": false
         }
       ],
-      "description": "Dead rows as a share of all rows. Public schema, tables with at least 100 rows.",
+      "description": "Dead rows as a share of all rows. Public schema, only tables with at least 1 000 dead rows: a small table (messages: 206 dead of 544) reads 38% and means nothing. Yellow from 10%, red from 30%. The WojtusPostgresDeadTuples alert needs 20% and 50 000 dead rows for 6 hours.",
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -2318,7 +2324,7 @@
           "max": 1,
           "decimals": 1,
           "displayName": "${__field.labels.relname}",
-          "noValue": "No table with 100 rows or more"
+          "noValue": "No table with 1 000 dead rows or more"
         },
         "overrides": []
       },
@@ -4042,7 +4048,10 @@
         "textMode": "auto",
         "wideLayout": true,
         "showPercentChange": false,
-        "percentChangeColorMode": "standard"
+        "percentChangeColorMode": "standard",
+        "text": {
+          "valueSize": 48
+        }
       }
     }
   ],

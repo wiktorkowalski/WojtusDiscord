@@ -174,7 +174,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time(up{job=\"wojtusdiscord\"}[7d])",
+          "expr": "1 - (1 - max(avg_over_time(up{job=\"wojtusdiscord\"}[7d]))) * count_over_time((max(up{job=\"wojtusdiscord\"}))[7d:1m]) / 10080",
           "refId": "A",
           "legendFormat": "Bot process",
           "editorMode": "code",
@@ -186,9 +186,9 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[7d:1m])",
+          "expr": "1 - (1 - avg_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[7d:1m])) * count_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[7d:1m]) / 10080",
           "refId": "B",
-          "legendFormat": "Discord gateway",
+          "legendFormat": "Gateway",
           "editorMode": "code",
           "instant": true,
           "range": false
@@ -198,7 +198,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time(probe_success{job=\"wojtusdiscord-http\"}[7d])",
+          "expr": "1 - (1 - max(avg_over_time(probe_success{job=\"wojtusdiscord-http\"}[7d]))) * count_over_time((max(probe_success{job=\"wojtusdiscord-http\"}))[7d:1m]) / 10080",
           "refId": "C",
           "legendFormat": "Public URL",
           "editorMode": "code",
@@ -210,7 +210,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time(pg_up{job=\"wojtus-postgres\"}[7d])",
+          "expr": "1 - (1 - max(avg_over_time(pg_up{job=\"wojtus-postgres\"}[7d]))) * count_over_time((max(pg_up{job=\"wojtus-postgres\"}))[7d:1m]) / 10080",
           "refId": "D",
           "legendFormat": "Postgres",
           "editorMode": "code",
@@ -263,7 +263,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Share of the last 7 days each part was up: bot process, Discord gateway, public URL, Postgres. Green from 99.9%, yellow from 99%. The window holds only the time since a series exists, and one deploy costs the bot about 0.01% of a week."
+      "description": "1 minus the time each part was seen down, as a share of the full 7 days: bot process, Discord gateway, public URL, Postgres. Green from 99.9% (10 minutes down in a week), yellow from 99%. A deploy restart counts as down time: about 15 s, 0.0025% of a week, so a few deploys a day stay green and a crash loop does not. Time before a series existed counts as up."
     },
     {
       "type": "stat",
@@ -285,7 +285,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time(up{job=\"wojtusdiscord\"}[30d])",
+          "expr": "1 - (1 - max(avg_over_time(up{job=\"wojtusdiscord\"}[30d]))) * count_over_time((max(up{job=\"wojtusdiscord\"}))[30d:5m]) / 8640",
           "refId": "A",
           "legendFormat": "Bot process",
           "editorMode": "code",
@@ -297,9 +297,9 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[30d:5m])",
+          "expr": "1 - (1 - avg_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[30d:5m])) * count_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[30d:5m]) / 8640",
           "refId": "B",
-          "legendFormat": "Discord gateway",
+          "legendFormat": "Gateway",
           "editorMode": "code",
           "instant": true,
           "range": false
@@ -309,7 +309,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time(probe_success{job=\"wojtusdiscord-http\"}[30d])",
+          "expr": "1 - (1 - max(avg_over_time(probe_success{job=\"wojtusdiscord-http\"}[30d]))) * count_over_time((max(probe_success{job=\"wojtusdiscord-http\"}))[30d:5m]) / 8640",
           "refId": "C",
           "legendFormat": "Public URL",
           "editorMode": "code",
@@ -321,7 +321,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time(pg_up{job=\"wojtus-postgres\"}[30d])",
+          "expr": "1 - (1 - max(avg_over_time(pg_up{job=\"wojtus-postgres\"}[30d]))) * count_over_time((max(pg_up{job=\"wojtus-postgres\"}))[30d:5m]) / 8640",
           "refId": "D",
           "legendFormat": "Postgres",
           "editorMode": "code",
@@ -374,7 +374,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Share of the last 30 days each part was up: bot process, Discord gateway, public URL, Postgres. Green from 99.9%, yellow from 99%. The window holds only the time since a series exists, and one deploy costs the bot about 0.01% of a week."
+      "description": "1 minus the time each part was seen down, as a share of the full 30 days: bot process, Discord gateway, public URL, Postgres. Green from 99.9% (10 minutes down in a week), yellow from 99%. A deploy restart counts as down time: about 15 s, 0.0025% of a week, so a few deploys a day stay green and a crash loop does not. Time before a series existed counts as up."
     },
     {
       "type": "state-timeline",
@@ -1849,7 +1849,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by (http_request_method, http_route)(rate(http_server_request_duration_seconds_count{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[$__rate_interval])) * 60",
+          "expr": "sum by (http_request_method, http_route)(sum_over_time(((http_server_request_duration_seconds_count{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_count{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_count{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_count{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0))[$__interval:1m])) / ($__interval_ms / 60000)",
           "refId": "A",
           "legendFormat": "{{http_request_method}} {{http_route}}",
           "editorMode": "code",
@@ -1930,7 +1930,8 @@
           "hideZeros": false
         }
       },
-      "description": "Requests the bot served, by route template. An empty route is a request no endpoint matched (static file or 404). Scrapes of /metrics and health checks of /health are left out."
+      "description": "Requests the bot served, by route template. An empty route is a request no endpoint matched (static file or 404). Scrapes of /metrics and health checks of /health are left out. Counts include the first sample of a new series, which increase() and rate() miss: the bot creates a counter series on its first increment.",
+      "interval": "1m"
     },
     {
       "type": "timeseries",
@@ -1952,7 +1953,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.5, sum by (le)(rate(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le)(sum_over_time(((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0))[$__interval:1m])))",
           "refId": "A",
           "legendFormat": "p50",
           "editorMode": "code",
@@ -1964,19 +1965,20 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.95, sum by (le)(rate(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le)(sum_over_time(((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0))[$__interval:1m])))",
           "refId": "B",
           "legendFormat": "p95",
           "editorMode": "code",
           "instant": false,
-          "range": true
+          "range": true,
+          "exemplar": true
         },
         {
           "datasource": {
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le)(rate(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le)(sum_over_time(((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0))[$__interval:1m])))",
           "refId": "C",
           "legendFormat": "p99",
           "editorMode": "code",
@@ -1991,8 +1993,8 @@
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 14,
-            "showPoints": "never",
-            "pointSize": 5,
+            "showPoints": "always",
+            "pointSize": 6,
             "lineInterpolation": "linear",
             "spanNulls": false,
             "gradientMode": "opacity",
@@ -2096,7 +2098,8 @@
           "hideZeros": false
         }
       },
-      "description": "Duration of inbound requests, all routes. Scrapes of /metrics and health checks of /health are left out."
+      "description": "Duration of inbound requests, all routes, for the requests in each interval. One point per interval with a request. Scrapes of /metrics and health checks of /health are left out. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one.",
+      "interval": "1m"
     },
     {
       "type": "bargauge",
@@ -2118,7 +2121,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sort_desc(histogram_quantile(0.95, sum by (le, http_route)(rate(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[$__range]))) > 0)",
+          "expr": "sort_desc(histogram_quantile(0.95, sum by (le, http_route)(sum_over_time(((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0))[$__range:1m]))) > 0)",
           "refId": "A",
           "legendFormat": "{{http_route}}",
           "editorMode": "code",
@@ -2143,11 +2146,11 @@
               },
               {
                 "color": "#fab219",
-                "value": 0.5
+                "value": 2.5
               },
               {
                 "color": "#d03b3b",
-                "value": 2
+                "value": 5
               }
             ]
           },
@@ -2180,7 +2183,7 @@
           "values": false
         }
       },
-      "description": "95th percentile request duration per route over the range. Scrapes of /metrics and health checks of /health are left out."
+      "description": "95th percentile request duration per route over the range. Yellow from 2.5 s, red from 5 s: the meme search route takes 1.5 to 1.9 s (see Conversation & Memes), and its p95 reads up to 2.5 s because the buckets end at 1 s and 2.5 s. Scrapes of /metrics and health checks of /health are left out."
     },
     {
       "type": "timeseries",
@@ -2202,7 +2205,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by (http_response_status_code)(rate(http_server_request_duration_seconds_count{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[$__rate_interval])) * 60",
+          "expr": "sum by (http_response_status_code)(sum_over_time(((http_server_request_duration_seconds_count{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_count{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_count{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_count{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0))[$__interval:1m])) / ($__interval_ms / 60000)",
           "refId": "A",
           "legendFormat": "{{http_response_status_code}}",
           "editorMode": "code",
@@ -2264,7 +2267,143 @@
           "decimals": 1,
           "noValue": "No inbound requests besides probes"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "200"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#0ca30c"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "204"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#0ca30c"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "302"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "304"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#3987e5"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "400"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "404"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d95926"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "429"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#fab219"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "500"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#d03b3b"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "503"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#fab219"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -2279,7 +2418,8 @@
           "hideZeros": false
         }
       },
-      "description": "Responses by HTTP status code. Scrapes of /metrics and health checks of /health are left out."
+      "description": "Responses by HTTP status code. 503 and 429 from the meme dashboard are caps the bot set itself. Scrapes of /metrics and health checks of /health are left out.",
+      "interval": "1m"
     },
     {
       "type": "timeseries",
@@ -2780,7 +2920,10 @@
         "textMode": "auto",
         "wideLayout": true,
         "showPercentChange": false,
-        "percentChangeColorMode": "standard"
+        "percentChangeColorMode": "standard",
+        "text": {
+          "valueSize": 48
+        }
       },
       "description": "Status code of the last probe. 0 means no HTTP answer."
     },
@@ -3509,7 +3652,8 @@
           "legendFormat": "p95",
           "editorMode": "code",
           "instant": false,
-          "range": true
+          "range": true,
+          "exemplar": true
         }
       ],
       "fieldConfig": {
@@ -3609,7 +3753,7 @@
           "hideZeros": false
         }
       },
-      "description": "Duration of requests to discord.com. No point when no request is sent."
+      "description": "Duration of requests to discord.com. No point when no request is sent. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one."
     },
     {
       "type": "timeseries",
@@ -3824,7 +3968,8 @@
           "legendFormat": "p95",
           "editorMode": "code",
           "instant": false,
-          "range": true
+          "range": true,
+          "exemplar": true
         }
       ],
       "fieldConfig": {
@@ -3924,7 +4069,7 @@
           "hideZeros": false
         }
       },
-      "description": "Duration of requests to OpenRouter, for the requests in each interval. A model call runs for seconds to minutes.",
+      "description": "Duration of requests to OpenRouter, for the requests in each interval. A model call runs for seconds to minutes. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one.",
       "interval": "1m"
     },
     {
@@ -4407,7 +4552,8 @@
           "legendFormat": "p95",
           "editorMode": "code",
           "instant": false,
-          "range": true
+          "range": true,
+          "exemplar": true
         },
         {
           "datasource": {
@@ -4534,7 +4680,7 @@
           "hideZeros": false
         }
       },
-      "description": "Duration of database commands as the driver measures it, network time included."
+      "description": "Duration of database commands as the driver measures it, network time included. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one."
     },
     {
       "type": "timeseries",
@@ -5164,7 +5310,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "max(wojtus_hangfire_servers{job=\"wojtusdiscord\"})",
+          "expr": "max(max_over_time(wojtus_hangfire_servers{job=\"wojtusdiscord\"}[2m]))",
           "refId": "A",
           "legendFormat": "",
           "editorMode": "code",
@@ -5211,9 +5357,12 @@
         "textMode": "auto",
         "wideLayout": true,
         "showPercentChange": false,
-        "percentChangeColorMode": "standard"
+        "percentChangeColorMode": "standard",
+        "text": {
+          "valueSize": 48
+        }
       },
-      "description": "Hangfire servers alive. The bot runs one."
+      "description": "Hangfire servers alive, the highest value of the last 2 minutes: the first read after a bot start is 0. The bot runs one."
     },
     {
       "type": "stat",
@@ -5278,7 +5427,10 @@
         "textMode": "auto",
         "wideLayout": true,
         "showPercentChange": false,
-        "percentChangeColorMode": "standard"
+        "percentChangeColorMode": "standard",
+        "text": {
+          "valueSize": 48
+        }
       },
       "description": "Hangfire recurring jobs registered."
     },

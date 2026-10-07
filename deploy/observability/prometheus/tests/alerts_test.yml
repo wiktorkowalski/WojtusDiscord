@@ -194,7 +194,7 @@ tests:
           - exp_labels: {severity: warning, service: wojtusdiscord, command: meme}
             exp_annotations:
               summary: "Slash command meme fails"
-              description: "At least 3 executions of /meme ended with an unhandled exception in one hour, more than 30% of its runs. Search the bot log for the command name."
+              description: "At least 3 executions of /meme failed in one hour, more than 30% of its runs: an exception left the command, or the command caught its own error and told the user (/meme). Search the bot log for the command name."
       - eval_time: 15m
         alertname: WojtusFkUnresolvedBurst
         exp_alerts:
@@ -202,3 +202,87 @@ tests:
             exp_annotations:
               summary: "30 unresolved channel foreign keys in 15 minutes"
               description: "FkResolver could not find a required channel row, so the events that need it were not written. A few after a start are normal (the entity sync is not done yet); a burst means the sync failed. Check the bot log and failed_events."
+  # Round 3. Meme search at its normal speed: 30 searches in 30 minutes, 1.5 s each, all in the
+  # (1 s, 2.5 s] bucket. The p95 of those buckets reads 2.4 s (the old rule fired on p95 > 2 s);
+  # the mean rule stays quiet. The dashboard caps answer 503 by design: nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
+        values: '1000x90'
+      - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
+        values: '5000+60x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="1.0"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="2.5"}'
+        values: '0+1x30 30x60'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="+Inf"}'
+        values: '0+1x30 30x60'
+      - series: 'wojtus_meme_search_duration_seconds_count{job="wojtusdiscord",instance="b",caller="Tester"}'
+        values: '0+1x30 30x60'
+      - series: 'wojtus_meme_search_duration_seconds_sum{job="wojtusdiscord",instance="b",caller="Tester"}'
+        values: '0+1.5x30 45x60'
+      - series: 'wojtus_meme_dashboard_unavailable_total{job="wojtusdiscord",instance="b",endpoint="thumbnail",reason="budget"}'
+        values: '_x10 40+5x20 140x59'
+      - series: 'wojtus_meme_dashboard_unavailable_total{job="wojtusdiscord",instance="b",endpoint="thumbnail",reason="recent_failure"}'
+        values: '_x10 30x80'
+      - series: 'wojtus_meme_dashboard_unavailable_total{job="wojtusdiscord",instance="b",endpoint="thumbnail",reason="refresh_failed"}'
+        values: '_x10 3x80'
+      # the 503 answers above as ASP.NET counts them: 173 of 200 requests
+      - series: 'http_server_request_duration_seconds_count{job="wojtusdiscord",instance="b",http_route="api/stats/memes/thumbnail/{attachmentDiscordId}",http_response_status_code="503"}'
+        values: '0x10 73+5x20 173x59'
+      - series: 'http_server_request_duration_seconds_count{job="wojtusdiscord",instance="b",http_route="api/stats/memes/thumbnail/{attachmentDiscordId}",http_response_status_code="302"}'
+        values: '0x10 27x80'
+    alert_rule_test:
+      - {eval_time: 25m, exp_alerts: [], alertname: WojtusMemeSearchSlow}
+      - {eval_time: 30m, exp_alerts: [], alertname: WojtusMemeSearchSlow}
+      - {eval_time: 20m, exp_alerts: [], alertname: WojtusMemeDashboardUnavailable}
+      - {eval_time: 30m, exp_alerts: [], alertname: WojtusMemeDashboardUnavailable}
+      - {eval_time: 20m, exp_alerts: [], alertname: WojtusApiServerErrors}
+      - {eval_time: 30m, exp_alerts: [], alertname: WojtusApiServerErrors}
+    promql_expr_test:
+      # what the old rule compared with 2 s
+      - expr: 'histogram_quantile(0.95, sum by (le)(increase(wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord"}[30m])))'
+        eval_time: 30m
+        exp_samples: [{labels: '{}', value: 2.425}]
+      - expr: 'sum(increase(wojtus_meme_search_duration_seconds_sum{job="wojtusdiscord"}[30m])) / sum(increase(wojtus_meme_search_duration_seconds_count{job="wojtusdiscord"}[30m])) < bool 3'
+        eval_time: 30m
+        exp_samples: [{labels: '{}', value: 1}]
+  # Round 3, real problems: searches of 4 s, a dashboard answer that stays busy, an API that throws.
+  - interval: 1m
+    input_series:
+      - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
+        values: '1000x90'
+      - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
+        values: '5000+60x90'
+      - series: 'wojtus_meme_search_duration_seconds_count{job="wojtusdiscord",instance="b",caller="Slash"}'
+        values: '0+1x30 30x60'
+      - series: 'wojtus_meme_search_duration_seconds_sum{job="wojtusdiscord",instance="b",caller="Slash"}'
+        values: '0+4x30 120x60'
+      - series: 'wojtus_meme_dashboard_unavailable_total{job="wojtusdiscord",instance="b",endpoint="index",reason="busy"}'
+        values: '_x10 2+2x29 60x50'
+      - series: 'http_server_request_duration_seconds_count{job="wojtusdiscord",instance="b",http_route="api/guild",http_response_status_code="500"}'
+        values: '0+1x30 30x60'
+      - series: 'http_server_request_duration_seconds_count{job="wojtusdiscord",instance="b",http_route="api/guild",http_response_status_code="200"}'
+        values: '0+1x30 30x60'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: WojtusMemeSearchSlow
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord}
+            exp_annotations:
+              summary: "Meme search takes 4s on average"
+              description: "At least 10 searches in 30 minutes took more than 3 s on average. Normal is 1.5 to 1.9 s. Open the Conversation & Memes dashboard, panel 'Mean search time by phase': a tall sql phase means Postgres (load, query plan)."
+      - eval_time: 30m
+        alertname: WojtusMemeDashboardUnavailable
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord, endpoint: index}
+            exp_annotations:
+              summary: "30 meme dashboard requests to index answered 503 in 15 minutes"
+              description: "The meme dashboard could not answer: the answer was still being computed after the wait limit (busy), or Discord gave no fresh thumbnail URL (refresh_timeout, refresh_failed). Open the Conversation & Memes dashboard, panel 'Dashboard requests unavailable (503)', for the reason; then Postgres load for busy, the bot log and Discord status for a refresh failure."
+      - eval_time: 25m
+        alertname: WojtusApiServerErrors
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord}
+            exp_annotations:
+              summary: "50% of dashboard API requests return 5xx"
+              description: "More than 10% of at least 20 /api requests in 15 minutes failed with a 5xx other than 503. Check the bot log for unhandled exceptions and the Runtime & HTTP dashboard for the route."
