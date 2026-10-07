@@ -83,7 +83,6 @@ ISSUE_401 = "[issue #401](https://github.com/wiktorkowalski/WojtusDiscord/issues
 EX = (" A dot is one request with a trace (an exemplar): click it to open the trace in Tempo."
       " Only a request inside a kept trace has one.")
 # Event types that arrive only when the bot connects: each start replays the guild.
-BOOT_TYPES = 'event_type!~"GuildCreated|GuildMembersChunked|ThreadListSynced"'
 MSG_KIND_COLORS = {"text": BLUE, "attachment": ORANGE, "embed": PURPLE, "sticker": TEAL, "empty": NEUTRAL}
 PHASE_COLORS = {"tokenize": PURPLE, "sql": BLUE, "map": TEAL}
 

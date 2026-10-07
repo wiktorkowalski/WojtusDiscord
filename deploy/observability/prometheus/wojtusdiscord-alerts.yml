@@ -334,23 +334,24 @@ groups:
           summary: "The bot uses {{ $value | humanize1024 }}B of process memory"
           description: "Anonymous memory of the discord-event-service container is above 1 GiB for 30 minutes. Normal is about 160 MiB. Look for a leak: GC heap by generation on the Runtime & HTTP dashboard."
 
-      # Normal p95 is about 90 ms; the guild replay at a start (GuildCreated) takes 250 to 500 ms and is
-      # far below the threshold. The floor is 20 events in 30 minutes (reached in about a third of the windows
+      # Normal p95 is about 90 ms. Connect-time event types (the guild replay at a start) are left out, as on
+      # the dashboard tile. 'for' is longer than the 30-minute window on purpose: one burst of slow events
+      # leaves the window before the rule can fire, so only a slowdown that keeps producing slow events fires. The floor is 20 events in 30 minutes (reached in about a third of the windows
       # with any event on this 12-member server; the first floor of 50 in 15 minutes was reached in 0.8%,
       # so the rule could not fire). The buckets near the threshold end at 1, 2.5 and
       # 5 s (PR #420 kept them): the p95 reads above 2 s when more than 5% of the events take over
       # 2.5 s (2 of 20), or more than about 15% take over 1 s. rate() is enough: 20 events need series that exist.
       - alert: WojtusEventHandlerSlow
         expr: |
-          histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord"}[30m]))) > 2
-          and sum(increase(wojtus_event_handler_duration_seconds_count{job="wojtusdiscord"}[30m])) >= 20
-        for: 15m
+          histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",event_type!~"GuildCreated|GuildMembersChunked|ThreadListSynced"}[30m]))) > 2
+          and sum(increase(wojtus_event_handler_duration_seconds_count{job="wojtusdiscord",event_type!~"GuildCreated|GuildMembersChunked|ThreadListSynced"}[30m])) >= 20
+        for: 40m
         labels:
           severity: warning
           service: wojtusdiscord
         annotations:
           summary: "Event handler p95 is {{ $value | humanizeDuration }}"
-          description: "The p95 of at least 20 events in 30 minutes is above 2 s. Normal is about 90 ms. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard."
+          description: "The p95 of at least 20 events in 30 minutes has been above 2 s for 40 minutes. Normal is about 90 ms. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard."
 
       - alert: WojtusHealthCheckWebhookFailed
         expr: |
