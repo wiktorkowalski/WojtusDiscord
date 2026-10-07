@@ -128,7 +128,7 @@ BOT = 'name="discord-event-service"'
 
 # Outcome colours by series name. Later entries win, so the exact "failed" comes last.
 OUTCOME_COLORS = [
-    (r"/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted)$/", GOOD),
+    (r"/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted|written)$/", GOOD),
     (r"/(cancelled|skipped|debug|trace|existing)/", NEUTRAL),
     (r"/(timeout|transient|short_circuit|serialization_failed|warning|refusal|rejected|unknown_tool|check_failed|bad_argument|not_executable|conflict|updated)/", WARN),
     (r"/(^|[ ,])(failed|error|critical)$/", CRIT),
@@ -144,7 +144,6 @@ ERRORS = 'level=~"error|critical"'
 WARNINGS_UP = 'level=~"warning|error|critical"'
 # Prometheus 3 stores a bucket bound as a float text: the bot's le="0" is scraped as le="0.0".
 LE_ZERO = 'le=~"0(.0)?"'
-LE_2_5 = 'le="2.5"'
 AUTHOR_HUMAN = 'author="human"'
 IS_REPLY = 'reply="true"'
 THUMBNAIL = 'endpoint="thumbnail"'
@@ -162,7 +161,38 @@ START = 'wojtus_process_start_time_seconds{job="wojtusdiscord"}'
 UPTIME = 'wojtus_process_uptime_seconds{job="wojtusdiscord"}'
 
 
-def xinc(metric, selector, rng, step="1m"):
+# Bucket layout. PR #420 (commit ff69b03, bot start 2026-10-07 01:26:55 UTC) gave the histograms
+# in REBUCKETED new bucket bounds. A bound of both layouts is one series with the counts of
+# both; a bound of one layout has the counts of that layout only. histogram_quantile over a
+# window with samples of both layouts then reads wrong: measured on prod for a 6 h window,
+# meme search p50 2.17 s (1.63 s from the new buckets alone), HTTP p95 4.5 s (1.9 s), handler
+# p95 0.22 s (0.17 s). So every bucket query of these histograms counts only the samples from
+# LAYOUT_SINCE on. Mean, sum and count do not depend on the buckets and keep the full history.
+# When the bot changes bounds again: set LAYOUT_SINCE to the start time of that process
+# (wojtus_process_start_time_seconds) and add the histogram here. The guard can go when the
+# old samples leave the Prometheus retention (90 days: after 2027-01-05).
+LAYOUT_SINCE = 1791336415
+REBUCKETED = {
+    "wojtus_event_handler_duration_seconds",
+    "wojtus_command_duration_seconds",
+    "wojtus_meme_search_duration_seconds",
+    "wojtus_meme_search_phase_duration_seconds",
+    "wojtus_meme_vision_duration_seconds",
+    "wojtus_conversation_turn_duration_seconds",
+    "wojtus_conversation_round_duration_seconds",
+    "wojtus_conversation_first_token_seconds",
+    "wojtus_conversation_tool_duration_seconds",
+    "wojtus_backfill_run_duration_seconds",
+    "http_server_request_duration_seconds",
+}
+
+
+def layout_since(metric):
+    """LAYOUT_SINCE for a bucket series of a histogram in REBUCKETED, else None."""
+    return LAYOUT_SINCE if metric.endswith("_bucket") and metric[:-len("_bucket")] in REBUCKETED else None
+
+
+def xinc(metric, selector, rng, step="1m", since=None):
     """Increase of a bot counter that also counts the first sample of a new series.
 
     increase() and rate() never count the sample that creates a series, and the bot
@@ -175,6 +205,8 @@ def xinc(metric, selector, rng, step="1m"):
     before, so one failed scrape counts nothing twice. In the first minutes of a
     process life that window can still hold a sample of the old process, so there
     the earlier value is the plain instant value, which ends at the restart.
+
+    since (unix seconds): count only the steps from that time on. See LAYOUT_SINCE.
     """
     m = f"{metric}{{{selector}}}"
     on = "on (job, instance)"
@@ -182,7 +214,10 @@ def xinc(metric, selector, rng, step="1m"):
     prev = (f"((last_over_time({m}[10m] offset {step}) and {on} ({UPTIME} > {young}))"
             f" or ({m} offset {step} and {on} ({UPTIME} <= {young})))"
             f" and {on} ({START} == last_over_time({START}[10m] offset {step}))")
-    return f"sum_over_time((({m} - ({prev}) >= 0) or ({m} + 0))[{rng}:{step}])"
+    per_step = f"({m} - ({prev}) >= 0) or ({m} + 0)"
+    if since is not None:
+        per_step = f"({per_step}) and on () (vector(time()) >= {since})"
+    return f"sum_over_time(({per_step})[{rng}:{step}])"
 
 
 def q(expr, legend="", instant=False, fmt=None, ref=None, exemplar=False):
@@ -474,6 +509,7 @@ EMPTY_TEXT = [
     (r"First token|Context", "No conversation turns yet"),
     (r"unavailable", "No dashboard request answered 503"),
     (r"Voice state", "No voice state change in this time range"),
+    (r"[Ll]og writes", "No search log write yet"),
     (r"Message|Attachments per", "No message in this time range"),
     (r"Tool", "No tool calls yet"),
     (r"Turn|Rounds|Round latency|Tokens by model|Cost by model", "No conversation turns yet"),

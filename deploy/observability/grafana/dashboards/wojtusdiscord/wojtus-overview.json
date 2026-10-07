@@ -1841,7 +1841,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted)$/"
+              "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted|written)$/"
             },
             "properties": [
               {
@@ -2124,7 +2124,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.5, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le)(sum_over_time((((wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\"} + 0)) and on () (vector(time()) >= 1791336415))[$__interval:1m])))",
           "refId": "A",
           "legendFormat": "p50",
           "editorMode": "code",
@@ -2136,7 +2136,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le)(sum_over_time((((wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\"} - (((last_over_time(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\"} + 0)) and on () (vector(time()) >= 1791336415))[$__interval:1m])))",
           "refId": "B",
           "legendFormat": "p95",
           "editorMode": "code",
@@ -2151,8 +2151,8 @@
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 14,
-            "showPoints": "never",
-            "pointSize": 5,
+            "showPoints": "always",
+            "pointSize": 6,
             "lineInterpolation": "linear",
             "spanNulls": false,
             "gradientMode": "opacity",
@@ -2241,7 +2241,8 @@
           "hideZeros": false
         }
       },
-      "description": "Time one gateway event spends in the event pipeline, all event types. No point when no event arrives. A spike at a bot start is the guild replay (GuildCreated). No trace exemplars: a gateway event runs outside any trace."
+      "description": "Time one gateway event spends in the event pipeline, all event types, for the events in each interval. No point when no event arrives. A spike at a bot start is the guild replay (GuildCreated). No trace exemplars: a gateway event runs outside any trace. The percentiles count from 2026-10-07 01:27 UTC: the bot changed the bucket bounds then, and buckets of two layouts do not add up.",
+      "interval": "1m"
     },
     {
       "type": "timeseries",

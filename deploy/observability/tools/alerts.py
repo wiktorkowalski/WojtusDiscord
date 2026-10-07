@@ -218,11 +218,16 @@ b += rule("WojtusConversationUsageAlert",
           "Conversation cost cap {{ $labels.cap }} was crossed",
           "The bot's own cost-cap alert fired in the last hour. Read the usage_alerts table and decide whether to keep the assistant on.")
 b += rule("WojtusMemeSearchSlow",
-          f"""sum(increase({MS}_sum{{{J}}}[30m])) / sum(increase({MS}_count{{{J}}}[30m])) > 3
-and sum(increase({MS}_count{{{J}}}[30m])) >= 10""", "10m",
-          "Meme search takes {{ $value | humanizeDuration }} on average",
-          "At least 10 searches in 30 minutes took more than 3 s on average. Normal is 1.5 to 1.9 s. Open the Conversation & Memes dashboard, panel 'Mean search time by phase': a tall sql phase means Postgres (load, query plan).",
-          "Mean, not p95. Measured on prod 2026-10-06: 1.5 to 1.9 s per search (mean 1.58 s). The buckets\nnear that end at 1 s and 2.5 s, so the p95 of normal searches reads 2.4 s and the old rule\n(p95 > 2 s) fired on normal behaviour. The mean is exact; 3 s is 1.9 times the measured mean\nand the time Discord gives an interaction. increase() is enough here: the 10-search floor\nalready needs a series that exists.")
+          f"""histogram_quantile(0.95, sum by (le)({xi(MS + '_bucket', '', '1h')})) > 2.5
+and sum({xi(MS + '_count', '', '1h')}) >= 20""", "10m",
+          "Meme search p95 is {{ $value | humanizeDuration }}",
+          "More than 5% of at least 20 searches in one hour took longer than 2.5 s. Normal is 1.5 to 1.9 s (issue #401), which reads as a p95 of 1.75 to 2 s. Open the Conversation & Memes dashboard, panel 'Mean search time by phase': a tall sql phase means Postgres (load, query plan, a larger table).",
+          "p95 above 2.5 s, at least 20 searches in one hour. Buckets step 0.25 s from 0.5 to 2 s, then\n2.5 and 3 s (PR #420): searches of 1.5 to 1.9 s read as a p95 of at most 2 s, and 2.5 s is a\nbucket bound, so the rule says 'more than 5% took longer than 2.5 s'.\nWhy not the mean (the rule until 2026-10-07: mean > 3 s, 10 searches): 24 searches of 1.66 s\nand 6 of 4 s have a mean of 2.13 s and a p95 of 3.75 s. The mean is silent until every search\ntakes twice its time.\nWhy 20 searches: with 20 or more, one slow search is at most 5% and does not move the p95\n(19 of 1.7 s and 1 of 6 s read 2 s). With 10 the p95 is the slowest search.\nRestart-aware counts: searches are rare and the bot restarts on a deploy.")
+b += rule("WojtusMemeSearchLogWriteFailed",
+          f"sum({xi('wojtus_meme_search_log_writes_total', FAILED, '15m')}) > 0", None,
+          '{{ $value | printf \\"%.0f\\" }} meme search log row(s) lost in 15 minutes',
+          "The bot could not write a row of meme_search_log: that search is missing from the search log (the data of issue #384). The search itself answered. Search the bot log for the search log error and check that Postgres accepts writes.",
+          "Any failed write. The alert stays for 15 minutes after the last one.")
 b += rule("WojtusMemeDashboardUnavailable",
           f"""sum by (endpoint)({xi('wojtus_meme_dashboard_unavailable_total', 'reason=~"busy|refresh_timeout|refresh_failed"', '15m')}) > 20""", "5m",
           '{{ $value | printf \\"%.0f\\" }} meme dashboard requests to {{ $labels.endpoint }} answered 503 in 15 minutes',
@@ -244,7 +249,8 @@ b += rule("WojtusEventHandlerSlow",
           f"""histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{{{J}}}[15m]))) > 2
 and sum(increase(wojtus_event_handler_duration_seconds_count{{{J}}}[15m])) >= 50""", "15m",
           "Event handler p95 is {{ $value | humanizeDuration }}",
-          "5% of at least 50 events in 15 minutes spent more than 2 s in the pipeline. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard.")
+          "The p95 of at least 50 events in 15 minutes is above 2 s. Normal is about 90 ms. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard.",
+          "Normal p95 is about 90 ms; the guild replay at a start (GuildCreated) takes 250 to 500 ms and is\na few events, well under 5% of 50. The buckets near the threshold end at 1, 2.5 and\n5 s (PR #420 kept them): the p95 reads above 2 s when more than 5% of the events take over\n2.5 s, or more than about 15% take over 1 s. rate() is enough: 50 events need series that exist.")
 b += rule("WojtusHealthCheckWebhookFailed",
           f"sum({xi('wojtus_healthcheck_webhook_failures_total', '', '1h')}) > 0", None,
           "A bot health-check alert was not delivered",
