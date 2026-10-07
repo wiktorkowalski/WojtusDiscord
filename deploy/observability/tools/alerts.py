@@ -9,7 +9,7 @@ run build.py, then `../sync.sh --check`.
 """
 import os
 
-from lib import ERRORS, FAILED, J, NOT_OK, xinc
+from lib import BOOT_TYPES, ERRORS, FAILED, J, NOT_OK, xinc
 
 MS = "wojtus_meme_search_duration_seconds"
 API = 'http_route=~"/?api/.*"'
@@ -171,10 +171,10 @@ b += rule("WojtusEventHandlerFailures",
 b += rule("WojtusEventFailureRatioHigh",
           f"""sum({xi('wojtus_events_total', 'outcome="failed"', '30m')})
   / sum({xi('wojtus_events_total', '', '30m')}) > 0.05
-and sum({xi('wojtus_events_total', '', '30m')}) >= 100""", "10m",
+and sum({xi('wojtus_events_total', '', '30m')}) >= 20""", "10m",
           "{{ $value | humanizePercentage }} of gateway events fail",
-          "More than 5% of at least 100 events in 30 minutes had a failed handler. Check the bot log for 'Error handling' and whether Postgres accepts writes.",
-          "Share of events with a failed handler. The 100-event floor keeps a quiet night out.")
+          "More than 5% of at least 20 events in 30 minutes had a failed handler (2 of 20, 3 of 40). Check the bot log for 'Error handling' and whether Postgres accepts writes.",
+          "Share of events with a failed handler. The floor is 20 events in 30 minutes: on this server (12 members)\nthat is reached in about a third of the windows that have any event (14 days of raw_event_logs,\n2026-10-07: median 15, p75 27, p99 92). The first floor of 100 was reached in 0.6% of windows, so the\nrule could not fire. Below 20 events one failure is already above 5%; WojtusEventHandlerFailures\ncovers that by count.")
 b += rule("WojtusEventDeadLetter",
           f"sum by (event_type, handler)({xi('wojtus_event_dead_letters_total', '', '30m')}) > 0", None,
           "Dead letter for {{ $labels.event_type }} in {{ $labels.handler }}",
@@ -246,11 +246,11 @@ b += rule("WojtusBotMemoryHigh",
           "Anonymous memory of the discord-event-service container is above 1 GiB for 30 minutes. Normal is about 160 MiB. Look for a leak: GC heap by generation on the Runtime & HTTP dashboard.",
           "Anonymous memory is process memory without the page cache. The container has no limit.")
 b += rule("WojtusEventHandlerSlow",
-          f"""histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{{{J}}}[15m]))) > 2
-and sum(increase(wojtus_event_handler_duration_seconds_count{{{J}}}[15m])) >= 50""", "15m",
+          f"""histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{{{J},{BOOT_TYPES}}}[30m]))) > 2
+and sum(increase(wojtus_event_handler_duration_seconds_count{{{J},{BOOT_TYPES}}}[30m])) >= 20""", "40m",
           "Event handler p95 is {{ $value | humanizeDuration }}",
-          "The p95 of at least 50 events in 15 minutes is above 2 s. Normal is about 90 ms. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard.",
-          "Normal p95 is about 90 ms; the guild replay at a start (GuildCreated) takes 250 to 500 ms and is\na few events, well under 5% of 50. The buckets near the threshold end at 1, 2.5 and\n5 s (PR #420 kept them): the p95 reads above 2 s when more than 5% of the events take over\n2.5 s, or more than about 15% take over 1 s. rate() is enough: 50 events need series that exist.")
+          "The p95 of at least 20 events in 30 minutes has been above 2 s for 40 minutes. Normal is about 90 ms. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard.",
+          "Normal p95 is about 90 ms. Connect-time event types (the guild replay at a start) are left out, as on\nthe dashboard tile. 'for' is longer than the 30-minute window on purpose: one burst of slow events\nleaves the window before the rule can fire, so only a slowdown that keeps producing slow events fires. The floor is 20 events in 30 minutes (reached in about a third of the windows\nwith any event on this 12-member server; the first floor of 50 in 15 minutes was reached in 0.8%,\nso the rule could not fire). The buckets near the threshold end at 1, 2.5 and\n5 s (PR #420 kept them): the p95 reads above 2 s when more than 5% of the events take over\n2.5 s (2 of 20), or more than about 15% take over 1 s. rate() is enough: 20 events need series that exist.")
 b += rule("WojtusHealthCheckWebhookFailed",
           f"sum({xi('wojtus_healthcheck_webhook_failures_total', '', '1h')}) > 0", None,
           "A bot health-check alert was not delivered",

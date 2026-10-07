@@ -649,3 +649,7 @@ class Dash:
             json.dump(self.d, f, indent=2, ensure_ascii=False)
             f.write("\n")
         return self.d
+
+# Event types that arrive only while the bot connects (the guild replay). They take 250 to 500 ms
+# and say nothing about steady-state handler speed, so the p95 tile and the slow-handler rule skip them.
+BOOT_TYPES = 'event_type!~"GuildCreated|GuildMembersChunked|ThreadListSynced"'

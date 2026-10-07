@@ -503,10 +503,70 @@ tests:
         values: '0+20x60'
     alert_rule_test:
       - {eval_time: 10m, exp_alerts: [], alertname: WojtusEventHandlerSlow}
-      - eval_time: 30m
+      - {eval_time: 30m, exp_alerts: [], alertname: WojtusEventHandlerSlow}
+      - eval_time: 50m
         alertname: WojtusEventHandlerSlow
         exp_alerts:
           - exp_labels: {severity: warning, service: wojtusdiscord}
             exp_annotations:
               summary: "Event handler p95 is 3.75s"
-              description: "The p95 of at least 50 events in 15 minutes is above 2 s. Normal is about 90 ms. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard."
+              description: "The p95 of at least 20 events in 30 minutes has been above 2 s for 40 minutes. Normal is about 90 ms. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard."
+  # Small-server floors (2026-10-07): 30 events in 30 minutes is a normal busy half hour here.
+  # Three failed handlers among them fire the ratio rule; one does not.
+  - interval: 1m
+    input_series:
+      - series: 'wojtus_events_total{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",outcome="ok"}'
+        values: '0+1x90'
+      - series: 'wojtus_events_total{job="wojtusdiscord",instance="b",event_type="X",outcome="failed"}'
+        values: '0x20 1 2 3x68'
+      - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
+        values: '1000x90'
+      - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
+        values: '3600+60x90'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: WojtusEventFailureRatioHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord}
+            exp_annotations:
+              summary: "9.091% of gateway events fail"
+              description: "More than 5% of at least 20 events in 30 minutes had a failed handler (2 of 20, 3 of 40). Check the bot log for 'Error handling' and whether Postgres accepts writes."
+      - {eval_time: 80m, exp_alerts: [], alertname: WojtusEventFailureRatioHigh}
+  - interval: 1m
+    input_series:
+      - series: 'wojtus_events_total{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",outcome="ok"}'
+        values: '0+1x90'
+      - series: 'wojtus_events_total{job="wojtusdiscord",instance="b",event_type="X",outcome="failed"}'
+        values: '0x20 1x70'
+      - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
+        values: '1000x90'
+      - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
+        values: '3600+60x90'
+    alert_rule_test:
+      - {eval_time: 40m, exp_alerts: [], alertname: WojtusEventFailureRatioHigh}
+  # One burst, not a slowdown: two events take 2.5 to 5 s at minute 10, everything after is fast. The p95 of
+  # the 30-minute window is high until the burst leaves it; 'for: 40m' is longer than that, so nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="0.1"}'
+        values: '0+1x9 9 9 10+1x78'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="0.5"}'
+        values: '0+1x9 9 9 10+1x78'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="1.0"}'
+        values: '0+1x9 9 9 10+1x78'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="2.5"}'
+        values: '0+1x9 9 9 10+1x78'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="5.0"}'
+        values: '0+1x9 10+1x80'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="+Inf"}'
+        values: '0+1x9 10+1x80'
+      - series: 'wojtus_event_handler_duration_seconds_count{job="wojtusdiscord",instance="b",event_type="PresenceUpdated"}'
+        values: '0+1x9 10+1x80'
+    alert_rule_test:
+      - {eval_time: 35m, exp_alerts: [], alertname: WojtusEventHandlerSlow}
+      - {eval_time: 50m, exp_alerts: [], alertname: WojtusEventHandlerSlow}
+      - {eval_time: 80m, exp_alerts: [], alertname: WojtusEventHandlerSlow}
+    promql_expr_test:
+      - expr: 'histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord"}[30m]))) > bool 2'
+        eval_time: 25m
+        exp_samples: [{labels: '{}', value: 1}]
