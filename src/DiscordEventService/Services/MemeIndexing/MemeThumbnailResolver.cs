@@ -4,6 +4,7 @@ using System.Web;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
+using DiscordEventService.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
@@ -64,6 +65,8 @@ internal sealed class MemeThumbnailResolver(
     // The year 10000 in Unix seconds: past it FromUnixTimeSeconds throws.
     private const long MaxUnixSeconds = 253402300800L;
 
+    private const string ThumbnailEndpoint = "thumbnail";
+
     private static readonly string[] DiscordCdnHosts = ["cdn.discordapp.com", "media.discordapp.net"];
 
     public async Task<MemeThumbnail> ResolveAsync(ulong attachmentDiscordId, CancellationToken cancellationToken)
@@ -87,7 +90,7 @@ internal sealed class MemeThumbnailResolver(
         // One call to Discord at a time. No slot (the queue is full, or the wait was too long): 503.
         using var slot = await WaitForRefreshSlotAsync(cancellationToken);
         if (slot is not { IsAcquired: true })
-            return MemeThumbnail.Unavailable;
+            return Unavailable(slot is null ? "wait_timeout" : "queue_full");
 
         // A request for the same image may have filled the cache while this one waited.
         if (Cached(attachmentDiscordId) is { } filledMeanwhile)
@@ -95,7 +98,7 @@ internal sealed class MemeThumbnailResolver(
 
         using var permit = limits.RefreshBudget.AttemptAcquire();
         if (!permit.IsAcquired)
-            return MemeThumbnail.Unavailable;
+            return Unavailable("budget");
 
         return await RefreshAsync(attachmentDiscordId, storedUrl, cancellationToken);
     }
@@ -162,13 +165,13 @@ internal sealed class MemeThumbnailResolver(
             logger.LogWarning(
                 "Attachment URL refresh for meme attachment {AttachmentId} took over {TimeoutSeconds} s; no thumbnail served",
                 attachmentDiscordId, MemeDashboardLimits.RefreshCallTimeout.TotalSeconds);
-            return Keep(attachmentDiscordId, MemeThumbnail.Unavailable, FailureCacheDuration);
+            return Keep(attachmentDiscordId, Unavailable("refresh_timeout"), FailureCacheDuration);
         }
 
         switch (refreshed.GetFreshUrl(storedUrl, out var freshUrl))
         {
             case AttachmentUrlRefreshOutcome.BatchFailed:
-                return Keep(attachmentDiscordId, MemeThumbnail.Unavailable, FailureCacheDuration);
+                return Keep(attachmentDiscordId, Unavailable("refresh_failed"), FailureCacheDuration);
             case AttachmentUrlRefreshOutcome.Declined:
                 return Keep(attachmentDiscordId, MemeThumbnail.Gone, DeclinedCacheDuration);
         }
@@ -191,7 +194,22 @@ internal sealed class MemeThumbnailResolver(
         return keepFor > TimeSpan.Zero ? Keep(attachmentDiscordId, thumbnail, keepFor) : thumbnail;
     }
 
-    private MemeThumbnail? Cached(ulong attachmentDiscordId) => limits.Thumbnails.Get<MemeThumbnail>(attachmentDiscordId);
+    // A kept "Discord failed" answer is a 503 too: counted as recent_failure, with no new call.
+    private MemeThumbnail? Cached(ulong attachmentDiscordId)
+    {
+        var cached = limits.Thumbnails.Get<MemeThumbnail>(attachmentDiscordId);
+        if (cached is { Url: null, IsRetryable: true })
+            BotMetrics.MemeDashboardRequestUnavailable(ThumbnailEndpoint, "recent_failure");
+        return cached;
+    }
+
+    // Every 503 of this resolver, by the cap or the failure behind it. No log line: a cap that
+    // is reached is the cap doing its work, and the refresh service logs its own failures.
+    private static MemeThumbnail Unavailable(string reason)
+    {
+        BotMetrics.MemeDashboardRequestUnavailable(ThumbnailEndpoint, reason);
+        return MemeThumbnail.Unavailable;
+    }
 
     private MemeThumbnail Keep(ulong attachmentDiscordId, MemeThumbnail thumbnail, TimeSpan duration)
     {

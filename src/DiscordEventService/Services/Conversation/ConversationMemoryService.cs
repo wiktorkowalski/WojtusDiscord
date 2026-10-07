@@ -188,6 +188,11 @@ internal sealed class ConversationMemoryService(
         BotMetrics.ConversationRoundRecorded(
             usage.Model, usage.Attempt, usage.PromptTokens, usage.CompletionTokens,
             usage.CostUsd, usage.LatencyMs, usage.Failed);
+
+        // The fee of the searches is what the call cost above the model itself. Langfuse does
+        // not show it; this counter and the ledger row do.
+        if (usage.WebSearchRequests is > 0 and var searches)
+            BotMetrics.ConversationWebSearched(usage.Model, searches, usage.CostUsd - usage.UpstreamInferenceCostUsd);
     }
 
     // The exact string MEAI's OpenAI adapter puts on the wire for a tool result: the

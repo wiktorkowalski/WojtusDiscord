@@ -73,6 +73,7 @@ internal static class DbSetUpsertExtensions
         {
             set.Add(entity);
             await db.SaveChangesAsync(cancellationToken);
+            BotMetrics.EntityUpserted(EntityLabel<TEntity>.Value, "inserted");
             return (entity, true);
         }
         catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
@@ -80,6 +81,7 @@ internal static class DbSetUpsertExtensions
             // Race: another writer inserted first — drop the failed Add and return the existing
             // row untouched (deliberately NO update; the existing data may be richer than ours).
             db.ChangeTracker.Clear();
+            BotMetrics.EntityUpserted(EntityLabel<TEntity>.Value, "existing");
             return (await set.Where(match).FirstOrDefaultAsync(cancellationToken), false);
         }
     }

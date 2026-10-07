@@ -102,8 +102,21 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
                 + "data: [DONE]\n\n"),
         });
 
+        using var metrics = new MetricsCapture();
         var events = await CollectAsync(BuildService(transport, webSearchEnabled: true)
             .GenerateReplyAsync("co się dzieje w świecie?", Context(), CancellationToken.None));
+
+        // The search fee is the cost above the upstream model cost, per round. Other test
+        // classes use the same model label, so the assertion is on this turn's own values.
+        var fees = metrics.Of("wojtus.conversation.web_search.cost.usd").Select(m => Math.Round(m.Value, 6)).ToList();
+        Assert.Contains(0.008, fees);
+        Assert.Contains(0.005, fees);
+        Assert.True(metrics.Of("wojtus.conversation.web_search.requests").Count >= 2);
+
+        // Each call reports what it sent and how long its first visible text took.
+        Assert.True(metrics.Of("wojtus.conversation.context.messages").Count >= 2);
+        Assert.True(metrics.Of("wojtus.conversation.first_token").Count >= 2);
+        Assert.All(metrics.Of("wojtus.conversation.first_token"), m => Assert.True(m.Tags.ContainsKey("model")));
 
         var answer = FinalAnswer(events);
         Assert.StartsWith("Oto co znalazłem.", answer);

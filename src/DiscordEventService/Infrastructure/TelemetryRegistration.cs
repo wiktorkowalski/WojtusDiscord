@@ -1,6 +1,9 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
+using DiscordEventService.Commands;
 using DiscordEventService.Configuration;
+using DiscordEventService.Jobs;
 using DiscordEventService.Services.Conversation;
 using Npgsql;
 using OpenTelemetry;
@@ -13,7 +16,7 @@ namespace DiscordEventService.Infrastructure;
 
 // The OpenTelemetry wiring, root container only: metrics for the Prometheus scrape on /metrics
 // (always on), and traces for Langfuse and Grafana Tempo (each on only when configured).
-internal static class TelemetryRegistration
+internal static partial class TelemetryRegistration
 {
     public const string ServiceName = "discord-event-service";
 
@@ -35,6 +38,16 @@ internal static class TelemetryRegistration
 
         // The exporter only answers a scrape: no push, no background work, so this needs no
         // config gate. "Npgsql" is the driver's own meter (connection pool, command duration).
+        //
+        // TraceBased: a measurement made inside a sampled span keeps the trace id as an
+        // exemplar. The exporter writes exemplars only to a scrape that asks for OpenMetrics
+        // (Prometheus does); the plain text format is unchanged. With no trace target there is
+        // no sampled span and no exemplar.
+        //
+        // A span Tempo does not get (IsForTempo: a database or HTTP client span with no root)
+        // is still a sampled span, so a driver or HttpClient histogram can carry an exemplar
+        // of a trace Tempo does not hold. The bot's own histograms and the request histogram
+        // are measured under a root.
         services.AddOpenTelemetry().WithMetrics(metrics => metrics
             .ConfigureResource(resource => resource.AddService(ServiceName))
             .AddAspNetCoreInstrumentation()
@@ -43,6 +56,7 @@ internal static class TelemetryRegistration
             .AddProcessInstrumentation()
             .AddMeter(NpgsqlSourceName)
             .AddMeter(BotMetrics.MeterName)
+            .SetExemplarFilter(ExemplarFilterType.TraceBased)
             .AddPrometheusExporter());
 
         AddTracing(services, configuration, environment);
@@ -87,10 +101,14 @@ internal static class TelemetryRegistration
                 return;
             }
 
+            // The roots outside a request: a slash command and a traced Hangfire job. The
+            // redaction comes before the exporters: the processors of a provider run in order.
             tracing
+                .AddSource(CommandMetrics.SourceName, TracedJobAttribute.SourceName)
                 .AddAspNetCoreInstrumentation(aspNet => aspNet.Filter = context => !IsProbe(context.Request.Path))
                 .AddHttpClientInstrumentation()
                 .AddNpgsql()
+                .AddProcessor(new UrlTokenRedactionProcessor())
                 .AddProcessor(new FilteredBatchActivityExportProcessor(
                     new OtlpTraceExporter(new OtlpExporterOptions
                     {
@@ -112,14 +130,23 @@ internal static class TelemetryRegistration
     internal static bool IsForLangfuse(Activity activity) =>
         activity.Source.Name == ConversationTelemetry.SourceName;
 
-    // Tempo takes a span only when its trace has a real root: a request or a conversation
-    // turn. A database or HTTP client span with no parent is a trace of one span, and there
-    // are thousands of them per hour (the 5 s heartbeat, the Hangfire queue poll, every
-    // Discord REST call of a backfill). The same span inside a request or a turn has a
-    // parent and is kept.
+    // Tempo takes a span only when its trace has a real root: a request, a conversation
+    // turn, a slash command or a traced job. A database or HTTP client span with no parent is
+    // a trace of one span, and there are thousands of them per hour (the 5 s heartbeat, the
+    // Hangfire queue poll, every Discord REST call of a backfill). The same span inside a root
+    // has a parent and is kept.
     internal static bool IsForTempo(Activity activity) =>
         activity.ParentSpanId != default
         || (activity.Source.Name != NpgsqlSourceName && activity.Source.Name != HttpClientSourceName);
+
+    // A Discord webhook URL and an interaction URL hold their secret in the path:
+    // /webhooks/{id}/{token} and /interactions/{id}/{token}/callback. The runtime hides the
+    // query of a client span URL, not its path, so the token segment is replaced here. The
+    // health check webhook and every answer of a slash command are such calls.
+    internal static string RedactUrlTokens(string url) => TokenInPath().Replace(url, "$1/REDACTED");
+
+    [GeneratedRegex(@"(/(?:webhooks|interactions)/\d+)/[^/?#]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TokenInPath();
 
     // The scrape and the Docker HEALTHCHECK: periodic, and never the request someone looks for.
     internal static bool IsProbe(PathString path) =>
@@ -132,6 +159,22 @@ internal static class TelemetryRegistration
         exporter.Protocol = OtlpExportProtocol.HttpProtobuf;
         exporter.Headers = "Authorization=Basic " + Convert.ToBase64String(
             Encoding.UTF8.GetBytes($"{conversation.LangfusePublicKey}:{conversation.LangfuseSecretKey}"));
+    }
+}
+
+// Rewrites the URL tags of a span before any exporter reads them: see RedactUrlTokens.
+// "url.full" is the current name of the tag, "http.url" the one before it.
+internal sealed class UrlTokenRedactionProcessor : BaseProcessor<Activity>
+{
+    private static readonly string[] UrlTags = ["url.full", "http.url"];
+
+    public override void OnEnd(Activity data)
+    {
+        foreach (var tag in UrlTags)
+        {
+            if (data.GetTagItem(tag) is string url)
+                data.SetTag(tag, TelemetryRegistration.RedactUrlTokens(url));
+        }
     }
 }
 

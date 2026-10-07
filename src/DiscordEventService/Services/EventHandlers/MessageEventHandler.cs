@@ -4,6 +4,7 @@ using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
+using DiscordEventService.Infrastructure;
 using DiscordEventService.Jobs;
 using DiscordEventService.Services.MemeIndexing;
 using DiscordEventService.Services.Pipeline;
@@ -25,6 +26,16 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
     public async Task HandleEventAsync(DiscordClient sender, MessageCreatedEventArgs e)
     {
         if (e.Guild is null) return;
+
+        // From the event alone, before any database work: a message the pipeline fails still counts.
+        var length = e.Message.Content?.Length ?? 0;
+        var attachmentCount = e.Message.Attachments.Count;
+        BotMetrics.MessageCreated(
+            MessageKindOf(length, attachmentCount, e.Message.Stickers?.Count ?? 0, e.Message.Embeds.Count),
+            e.Author.IsBot,
+            isReply: e.Message.ReferencedMessage is not null,
+            length,
+            attachmentCount);
 
         await pipeline.ExecuteAsync(e, "MessageCreated", nameof(MessageEventHandler),
             e.Guild.Id, e.Channel.Id, e.Author.Id, async ctx =>
@@ -330,6 +341,16 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
 
         return new MessageBeforeState(contentBefore, attachmentsBeforeJson, embedsBeforeJson, flagsBefore);
     }
+
+    // The kind label of wojtus_messages_total: what the message mainly carries, the first that
+    // holds. An embed of a link arrives later, in MessageUpdated, so "embed" here is a message
+    // that came with one (a bot or a webhook) and a link alone is "text".
+    internal static string MessageKindOf(int length, int attachmentCount, int stickerCount, int embedCount) =>
+        attachmentCount > 0 ? "attachment"
+        : stickerCount > 0 ? "sticker"
+        : embedCount > 0 ? "embed"
+        : length > 0 ? "text"
+        : "empty";
 
     private static MessageEntity BuildMessage(
         MessageCreatedEventArgs e, Guid guildId, Guid channelId, Guid authorId,

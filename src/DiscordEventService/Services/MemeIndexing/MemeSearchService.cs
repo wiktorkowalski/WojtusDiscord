@@ -95,10 +95,18 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         var contentTokens = tokens.Where(t => !RankStopWords.Contains(t)).ToList();
         var rankTokens = contentTokens.Count > 0 ? contentTokens : tokens;
 
+        // The phases of one search (#401): where its time goes. The log row is written by
+        // MemeSearchLogWriter after this method returns and is no part of any phase.
+        var tokenizedAt = stopwatch.Elapsed;
+        BotMetrics.MemeSearchPhaseFinished("tokenize", tokenizedAt);
+
         // A query with no word characters runs no SQL. It is still a search, and is logged as one.
-        var rows = tokens.Count == 0
-            ? []
-            : await QueryAsync(guildId, query, tokens, rankTokens, offset, limit, cancellationToken);
+        List<MemeSearchRow> rows = [];
+        if (tokens.Count > 0)
+        {
+            rows = await QueryAsync(guildId, query, tokens, rankTokens, offset, limit, cancellationToken);
+            BotMetrics.MemeSearchPhaseFinished("sql", stopwatch.Elapsed - tokenizedAt);
+        }
 
         // No caller = the dashboard tester (#395).
         BotMetrics.MemeSearched(caller?.Source.ToString() ?? "Tester", rows.Count, stopwatch.Elapsed);
@@ -106,6 +114,7 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         if (caller is not null)
             searchLog.Write(NewLogRow(searchedAtUtc, guildId, query, offset, limit, caller, tokens, rankTokens, rows, stopwatch.Elapsed));
 
+        var mapStartedAt = stopwatch.Elapsed;
         var hits = rows
             .Select(r => new MemeSearchHit(
                 (ulong)r.ChannelDiscordId,
@@ -124,6 +133,7 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
                 r.TsRank,
                 r.TrigramSimilarity))
             .ToList();
+        BotMetrics.MemeSearchPhaseFinished("map", stopwatch.Elapsed - mapStartedAt);
 
         return new MemeSearchPage(hits, rows.Count > 0 ? (int)rows[0].TotalCount : 0);
     }
