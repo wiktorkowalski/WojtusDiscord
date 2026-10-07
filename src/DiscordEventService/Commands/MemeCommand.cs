@@ -15,6 +15,9 @@ public sealed class MemeCommand(MemeSearchService searchService, ILogger<MemeCom
         SlashCommandContext ctx,
         [Description("Co znaleźć — np. \"kot lodówka\" albo tekst z mema")] string query)
     {
+        // The root of the command's trace: the search SQL and the Discord calls are its children.
+        using var span = CommandMetrics.StartSpan(ctx);
+
         // Defer immediately: the search can exceed Discord's 3s window.
         await ctx.DeferResponseAsync();
 
@@ -26,6 +29,7 @@ public sealed class MemeCommand(MemeSearchService searchService, ILogger<MemeCom
         {
             // No query text here either: what a person typed stays out of the application log.
             logger.LogError(ex, "/meme failed in guild {GuildId}", ctx.Guild?.Id);
+            CommandMetrics.MarkFailed(ctx);
             await ctx.EditResponseAsync("Coś poszło nie tak przy szukaniu — spróbuj jeszcze raz.");
         }
     }

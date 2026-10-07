@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Jobs;
 
+[TracedJob]
 internal sealed class HealthCheckJob(
     IServiceScopeFactory scopeFactory,
     IHttpClientFactory httpClientFactory,

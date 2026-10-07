@@ -162,6 +162,52 @@ public sealed class TelemetryRegistrationTests
         Assert.Contains("dotnet_gc_collections_total", body);
     }
 
+    // Exemplars: a measurement made inside a sampled span carries its trace id, and only a
+    // scrape that asks for OpenMetrics sees it. The plain text format must stay as it was:
+    // the boot-smoke CI job and every older scraper read that one.
+    [Fact]
+    public async Task MetricsEndpoint_WritesTraceExemplarsToAnOpenMetricsScrapeOnly()
+    {
+        var builder = WebApplication.CreateSlimBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            // A trace target makes the request span a sampled one. Nothing listens there.
+            ["Telemetry:OtlpTracesEndpoint"] = "http://127.0.0.1:1",
+        });
+        builder.Services.AddBotTelemetry(builder.Configuration, new TestHostEnvironment());
+
+        await using var app = builder.Build();
+        app.MapPrometheusScrapingEndpoint();
+        var phase = $"exemplar-{Guid.NewGuid():N}";
+        app.MapGet("/api/traced", () =>
+        {
+            BotMetrics.MemeSearchPhaseFinished(phase, TimeSpan.FromMilliseconds(3));
+            return Results.Ok(Activity.Current?.TraceId.ToString());
+        });
+        await app.StartAsync();
+
+        var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+        using var client = new HttpClient { BaseAddress = new Uri(address) };
+        var traceId = (await client.GetStringAsync("/api/traced")).Trim('"');
+
+        using var openMetricsRequest = new HttpRequestMessage(HttpMethod.Get, "/metrics");
+        openMetricsRequest.Headers.TryAddWithoutValidation("Accept", "application/openmetrics-text; version=1.0.0");
+        using var openMetricsResponse = await client.SendAsync(openMetricsRequest);
+        var openMetrics = await openMetricsResponse.Content.ReadAsStringAsync();
+        var plain = await client.GetStringAsync("/metrics");
+
+        Assert.Equal("application/openmetrics-text", openMetricsResponse.Content.Headers.ContentType!.MediaType);
+        var ownBucket = openMetrics.Split('\n').First(line =>
+            line.StartsWith("wojtus_meme_search_phase_duration_seconds_bucket{", StringComparison.Ordinal)
+            && line.Contains($"phase=\"{phase}\"", StringComparison.Ordinal)
+            && line.Contains(" # {", StringComparison.Ordinal));
+        Assert.Contains($"# {{trace_id=\"{traceId}\",span_id=\"", ownBucket);
+
+        Assert.DoesNotContain(" # {", plain);
+        Assert.Contains($"phase=\"{phase}\"", plain);
+    }
+
     private sealed class CapturingExporter : BaseExporter<Activity>
     {
         public List<(string SourceName, string DisplayName)> Exported { get; } = [];

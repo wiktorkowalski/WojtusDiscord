@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using DiscordEventService.Configuration;
+using DiscordEventService.Infrastructure;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
 using ChatTokenUsage = OpenAI.Chat.ChatTokenUsage;
@@ -139,6 +140,9 @@ internal sealed class ConversationService(
                 Exception? failure = null;
                 var stopwatch = Stopwatch.StartNew();
 
+                // Every attempt is one call with the same messages: a failed attempt appended nothing.
+                BotMetrics.ConversationCallStarted(options.Model, messages.Count);
+
                 ReanchorTurnSpan();
                 var updates = chatClient
                     .GetStreamingResponseAsync(messages, roundOptions, cancellationToken)
@@ -177,6 +181,10 @@ internal sealed class ConversationService(
                         // out of scope; tool-call fragments carry no text and yield nothing here.
                         if (!string.IsNullOrEmpty(update.Text))
                         {
+                            // The first text a person can see: reasoning and tool-call chunks
+                            // come before it and are part of the wait.
+                            if (!streamedVisibleText)
+                                BotMetrics.ConversationFirstTokenReceived(options.Model, stopwatch.Elapsed);
                             streamedVisibleText = true;
                             yield return new ConversationUpdate.AssistantTextDelta(update.Text);
                         }

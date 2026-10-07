@@ -165,6 +165,7 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         await using var host = await StartAsync(answerWaitTimeout: TimeSpan.FromMilliseconds(200));
         await host.Limits.IndexGate.WaitAsync();
         await host.Limits.SearchUsageGate.WaitAsync();
+        using var metrics = new MetricsCapture();
 
         var response = await host.Client.GetAsync(BasePath + path);
         host.Limits.IndexGate.Release();
@@ -173,6 +174,8 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
 
         await AssertTurnedAwayAsync(response, HttpStatusCode.ServiceUnavailable);
         Assert.Equal(HttpStatusCode.OK, afterRelease.StatusCode);
+        var counted = Assert.Single(metrics.Of("wojtus.meme.dashboard.unavailable", "endpoint", path == "" ? "index" : "search_usage"));
+        Assert.Equal("busy", counted.Tags["reason"]);
     }
 
     [Fact]
@@ -420,6 +423,7 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
     {
         await _data.AddIndexedAsync(AttachmentId);
         await using var host = await StartAsync(failWith: HttpStatusCode.InternalServerError);
+        using var metrics = new MetricsCapture();
 
         var first = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
         var second = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
@@ -427,6 +431,7 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         Assert.Equal(HttpStatusCode.ServiceUnavailable, first.StatusCode);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, second.StatusCode);
         Assert.Equal(1, host.Discord.Calls);
+        Assert.Equal(["refresh_failed", "recent_failure"], ThumbnailReasons(metrics));
     }
 
     [Fact]
@@ -435,12 +440,14 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         await _data.AddIndexedAsync(AttachmentId);
         await using var host = await StartAsync();
         using var allPermits = host.Limits.RefreshBudget.AttemptAcquire(MemeDashboardLimits.MaxRefreshesPerMinute);
+        using var metrics = new MetricsCapture();
 
         var response = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
 
         Assert.True(allPermits.IsAcquired);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal(0, host.Discord.Calls);
+        Assert.Equal(["budget"], ThumbnailReasons(metrics));
     }
 
     // The wait for the one Discord slot has a bound too: past it a request is turned away at once.
@@ -453,6 +460,7 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         var queued = Enumerable.Range(0, MemeDashboardLimits.MaxQueuedRefreshes)
             .Select(_ => host.Limits.RefreshSlots.AcquireAsync().AsTask())
             .ToList();
+        using var metrics = new MetricsCapture();
 
         var response = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
 
@@ -460,6 +468,7 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
         Assert.Equal(TimeSpan.FromSeconds(5), response.Headers.RetryAfter!.Delta);
         Assert.Equal(0, host.Discord.Calls);
+        Assert.Equal(["queue_full"], ThumbnailReasons(metrics));
 
         slot.Dispose();
         foreach (var waiter in queued)
@@ -472,6 +481,7 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
     {
         await _data.AddIndexedAsync(AttachmentId);
         await using var host = await StartAsync(delay: TimeSpan.FromMinutes(1));
+        using var metrics = new MetricsCapture();
 
         var first = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
         var second = await host.Client.GetAsync(ThumbnailPath(AttachmentId));
@@ -479,7 +489,13 @@ public sealed class MemeStatsControllerTests(PostgresFixture fixture) : IClassFi
         Assert.Equal(HttpStatusCode.ServiceUnavailable, first.StatusCode);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, second.StatusCode);
         Assert.Equal(1, host.Discord.Calls);
+        Assert.Equal(["refresh_timeout", "recent_failure"], ThumbnailReasons(metrics));
     }
+
+    // The thumbnail endpoint is used by this class only, and its tests run one at a time: the
+    // capture of a test holds the 503s of that test and no other.
+    private static List<object?> ThumbnailReasons(MetricsCapture metrics) =>
+        metrics.Of("wojtus.meme.dashboard.unavailable", "endpoint", "thumbnail").Select(m => m.Tags["reason"]).ToList();
 
     // A signed URL that expires inside the margin is served and not kept: the next request asks again.
     [Fact]

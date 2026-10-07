@@ -70,6 +70,21 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         Assert.Equal(["pies", "programowanie"], hit.Tags);
     }
 
+    // The phase label is shared with every search another test class runs at the same time,
+    // so this asserts that each phase was timed, not how often (#401).
+    [Fact]
+    public async Task SearchAsync_TimesEachPhase()
+    {
+        await SeedIndexedMemeAsync(13UL, 1003UL, descriptionPl: "Pies", ocrText: "", tags: ["pies"]);
+        using var metrics = new MetricsCapture();
+
+        await RunSearchAsync("pies");
+
+        foreach (var phase in new[] { "tokenize", "sql", "map" })
+            Assert.NotEmpty(metrics.Of("wojtus.meme.search.phase.duration", "phase", phase));
+        Assert.All(metrics.Of("wojtus.meme.search.phase.duration"), m => Assert.True(m.Value >= 0));
+    }
+
     [Fact]
     public async Task SearchAsync_TagHit_OutranksDescriptionOnlyHit()
     {

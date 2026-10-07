@@ -1,4 +1,5 @@
 using DiscordEventService.Dtos;
+using DiscordEventService.Infrastructure;
 using DiscordEventService.Services.MemeIndexing;
 using Microsoft.AspNetCore.Mvc;
 
@@ -29,7 +30,7 @@ public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
     [ProducesResponseType<MemeIndexDto>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
     public async Task<ActionResult<MemeIndexDto>> Index(CancellationToken ct) =>
-        await stats.GetIndexAsync(ct) is { } index ? index : Busy();
+        await stats.GetIndexAsync(ct) is { } index ? index : Busy("index");
 
     [HttpGet("search-usage")]
     [ProducesResponseType<MemeSearchUsageDto>(StatusCodes.Status200OK)]
@@ -41,7 +42,7 @@ public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
         if (!AllowedUsageDays.Contains(days))
             return BadRequest(new { error = $"days must be one of: {string.Join(", ", AllowedUsageDays)}." });
 
-        return await stats.GetSearchUsageAsync(days, ct) is { } usage ? usage : Busy();
+        return await stats.GetSearchUsageAsync(days, ct) is { } usage ? usage : Busy("search_usage");
     }
 
     [HttpGet("search")]
@@ -94,8 +95,9 @@ public sealed class MemeStatsController(IMemeStatsReader stats) : ControllerBase
     }
 
     // The answer is being computed for another request and the wait for it reached its limit.
-    private ObjectResult Busy()
+    private ObjectResult Busy(string endpoint)
     {
+        BotMetrics.MemeDashboardRequestUnavailable(endpoint, "busy");
         Response.Headers.RetryAfter = RetryAfterSeconds;
         return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "The answer is being computed. Try again." });
     }

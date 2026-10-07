@@ -28,10 +28,14 @@ internal static class BotMetrics
     // the first bucket. A static Meter cannot take an SDK view, so the boundaries ride on the
     // instrument as advice.
     private static readonly double[] FastSeconds = [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30];
+    // From 0.1 ms: two of the three meme search phases run in memory.
+    private static readonly double[] PhaseSeconds = [0.0001, 0.0005, 0.001, 0.005, 0.025, 0.1, 0.25, 0.5, 1, 2.5, 5, 10];
     private static readonly double[] ModelSeconds = [0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 60, 120, 300];
     private static readonly double[] JobSeconds = [1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200, 14400];
     private static readonly double[] SizeBytes = [256, 1024, 4096, 16384, 65536, 262144, 1048576];
     private static readonly double[] ResultCounts = [0, 1, 2, 5, 10, 25, 50, 100];
+    private static readonly double[] MessageCharacters = [0, 1, 10, 25, 50, 100, 200, 500, 1000, 2000, 4000];
+    private static readonly double[] AttachmentCounts = [0, 1, 2, 3, 5, 10];
 
     // Gateway events (EventPipeline).
     private static readonly Counter<long> Events = Meter.CreateCounter<long>(
@@ -45,9 +49,19 @@ internal static class BotMetrics
     private static readonly Counter<long> TypingThrottled = Meter.CreateCounter<long>(
         "wojtus.typing.throttled", description: "TypingStarted events the 10 s throttle dropped before the pipeline.");
     private static readonly Counter<long> Upserts = Meter.CreateCounter<long>(
-        "wojtus.upserts", description: "Entity upserts (DbSetUpsertExtensions.UpsertAsync), by entity and result.");
+        "wojtus.upserts", description: "Entity upserts (DbSetUpsertExtensions: UpsertAsync and GetOrInsertAsync), by entity and result.");
     private static readonly Counter<long> FkUnresolved = Meter.CreateCounter<long>(
         "wojtus.fk.unresolved", description: "Required foreign keys FkResolver could not resolve, by entity.");
+
+    // Messages and voice, counted from the event itself (MessageEventHandler, VoiceEventHandler).
+    private static readonly Counter<long> Messages = Meter.CreateCounter<long>(
+        "wojtus.messages", description: "Guild messages created, by content kind, author kind and reply.");
+    private static readonly Histogram<double> MessageLength = Counts(
+        "wojtus.message.length", "Length of a created guild message in characters.", MessageCharacters);
+    private static readonly Histogram<double> MessageAttachments = Counts(
+        "wojtus.message.attachments", "Attachments of a created guild message.", AttachmentCounts);
+    private static readonly Counter<long> VoiceStateChanges = Meter.CreateCounter<long>(
+        "wojtus.voice.state.changes", description: "Voice state changes, by change (join, leave, move, mute, stream_start, ...).");
 
     // Failures.
     private static readonly Counter<long> EventFailures = Meter.CreateCounter<long>(
@@ -88,6 +102,15 @@ internal static class BotMetrics
         "wojtus.conversation.tool.calls", description: "Conversation tool calls, by tool and outcome.");
     private static readonly Histogram<double> ToolDuration = Seconds(
         "wojtus.conversation.tool.duration", "Time one conversation tool call takes.", FastSeconds);
+    private static readonly Histogram<double> ConversationFirstToken = Seconds(
+        "wojtus.conversation.first_token", "Time from the start of a model call to its first visible text.", ModelSeconds);
+    private static readonly Histogram<double> ConversationContextMessages = Counts(
+        "wojtus.conversation.context.messages",
+        "Messages sent to the model in one call (system prompt, memory window, tool results).", ResultCounts);
+    private static readonly Counter<long> ConversationWebSearches = Meter.CreateCounter<long>(
+        "wojtus.conversation.web_search.requests", description: "Web searches the provider ran for conversation model calls.");
+    private static readonly Counter<double> ConversationWebSearchCost = Meter.CreateCounter<double>(
+        "wojtus.conversation.web_search.cost.usd", description: "Web search fee of conversation model calls in USD (cost less the upstream model cost).");
     private static readonly Counter<long> UsageAlerts = Meter.CreateCounter<long>(
         "wojtus.conversation.usage_alerts", description: "Cost-cap alerts fired, by cap.");
 
@@ -102,9 +125,8 @@ internal static class BotMetrics
         "wojtus.meme.searches", description: "Meme searches, by caller kind.");
     private static readonly Histogram<double> MemeSearchDuration = Seconds(
         "wojtus.meme.search.duration", "Time one meme search takes.", FastSeconds);
-    private static readonly Histogram<double> MemeSearchResults = Meter.CreateHistogram(
-        "wojtus.meme.search.results", description: "Hits one meme search page returns.",
-        advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = ResultCounts });
+    private static readonly Histogram<double> MemeSearchResults = Counts(
+        "wojtus.meme.search.results", "Hits one meme search page returns.", ResultCounts);
     private static readonly Counter<long> MemeIndexOutcomes = Meter.CreateCounter<long>(
         "wojtus.meme.index.outcomes", description: "Meme indexing outcomes per attachment.");
     private static readonly Counter<long> MemeVisionCalls = Meter.CreateCounter<long>(
@@ -120,6 +142,10 @@ internal static class BotMetrics
 
     private static readonly Counter<long> MemeDashboardRejections = Meter.CreateCounter<long>(
         "wojtus.meme.dashboard.rejections", description: "Dashboard meme searches answered 429, by the cap they reached.");
+    private static readonly Counter<long> MemeDashboardUnavailable = Meter.CreateCounter<long>(
+        "wojtus.meme.dashboard.unavailable", description: "Dashboard meme requests answered 503, by endpoint and reason.");
+    private static readonly Histogram<double> MemeSearchPhaseDuration = Seconds(
+        "wojtus.meme.search.phase.duration", "Time one phase of a meme search takes (tokenize, sql, map).", PhaseSeconds);
 
     // Backfill and jobs.
     private static readonly Counter<long> BackfillRuns = Meter.CreateCounter<long>(
@@ -228,12 +254,24 @@ internal static class BotMetrics
 
     public static void TypingEventThrottled() => TypingThrottled.Add(1);
 
-    // result: inserted, updated, or conflict (another writer inserted first; the row was then updated).
+    // result: inserted, updated, or conflict (another writer inserted first; the row was then
+    // updated). GetOrInsertAsync has inserted and existing (the row was there and stays as it was).
     public static void EntityUpserted(string entity, string result) =>
         Upserts.Add(1, Tag("entity", entity), Tag("result", result));
 
     // entity: guild, channel or user.
     public static void FkNotResolved(string entity) => FkUnresolved.Add(1, Tag("entity", entity));
+
+    // kind: the first that holds of attachment, sticker, embed, text, empty. author: human or bot.
+    public static void MessageCreated(string kind, bool fromBot, bool isReply, int length, int attachmentCount)
+    {
+        Messages.Add(1, Tag("kind", kind), Tag("author", fromBot ? "bot" : "human"), Tag("reply", isReply ? "true" : "false"));
+        MessageLength.Record(length);
+        MessageAttachments.Record(attachmentCount);
+    }
+
+    // change: see VoiceEventHandler.ChangesOf.
+    public static void VoiceStateChanged(string change) => VoiceStateChanges.Add(1, Tag("change", change));
 
     public static void RawEventLogged(string eventType, int sizeBytes) =>
         RawEventSize.Record(sizeBytes, Tag("event_type", eventType));
@@ -282,6 +320,22 @@ internal static class BotMetrics
             ConversationCost.Add(costUsd.Value, modelTag);
     }
 
+    // The first visible text of a call. A call that ends with tool calls only records nothing.
+    public static void ConversationFirstTokenReceived(string model, TimeSpan elapsed) =>
+        ConversationFirstToken.Record(elapsed.TotalSeconds, Tag("model", model));
+
+    public static void ConversationCallStarted(string model, int contextMessages) =>
+        ConversationContextMessages.Record(contextMessages, Tag("model", model));
+
+    // feeUsd null = the provider did not report both costs: the searches still count.
+    public static void ConversationWebSearched(string model, int requests, double? feeUsd)
+    {
+        var modelTag = Tag("model", model);
+        ConversationWebSearches.Add(requests, modelTag);
+        if (feeUsd is > 0)
+            ConversationWebSearchCost.Add(feeUsd.Value, modelTag);
+    }
+
     public static void ToolCalled(string tool, string outcome, TimeSpan elapsed)
     {
         var toolTag = Tag("tool", tool);
@@ -300,6 +354,10 @@ internal static class BotMetrics
         MemeSearchResults.Record(hitCount, callerTag);
     }
 
+    // phase: tokenize, sql or map.
+    public static void MemeSearchPhaseFinished(string phase, TimeSpan elapsed) =>
+        MemeSearchPhaseDuration.Record(elapsed.TotalSeconds, Tag("phase", phase));
+
     public static void CommandFinished(string command, string outcome, TimeSpan elapsed)
     {
         var commandTag = Tag("command", command);
@@ -311,6 +369,11 @@ internal static class BotMetrics
     // reason: concurrency (too many searches at one time) or rate (the budget of the minute).
     public static void MemeDashboardSearchRejected(string reason) =>
         MemeDashboardRejections.Add(1, Tag("reason", reason));
+
+    // endpoint: index, search_usage or thumbnail. reason: busy (the answer is being computed for
+    // another request) or, for a thumbnail, the cap or the Discord failure that left no image.
+    public static void MemeDashboardRequestUnavailable(string endpoint, string reason) =>
+        MemeDashboardUnavailable.Add(1, Tag("endpoint", endpoint), Tag("reason", reason));
 
     public static void MemeIndexOutcome(string outcome) => MemeIndexOutcomes.Add(1, Tag("outcome", outcome));
 
@@ -512,6 +575,11 @@ internal static class BotMetrics
 
     private static Histogram<double> Seconds(string name, string description, double[] boundaries) =>
         Meter.CreateHistogram(name, unit: "s", description: description,
+            advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = boundaries });
+
+    // A histogram of a count: no unit, so the exporter adds no suffix to the name.
+    private static Histogram<double> Counts(string name, string description, double[] boundaries) =>
+        Meter.CreateHistogram(name, description: description,
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = boundaries });
 
     private static KeyValuePair<string, object?> Tag(string key, object? value) => new(key, value);

@@ -34,6 +34,26 @@ public sealed class GetOrInsertTests(PostgresFixture fixture) : IClassFixture<Po
         Assert.Equal("Alpha", row.Name);
     }
 
+    // The guild label is shared with every test that writes a guild at the same time, so this
+    // asserts that both results were counted, not how often.
+    [Fact]
+    public async Task GetOrInsertAsync_CountsInsertedThenExistingByEntity()
+    {
+        using var metrics = new MetricsCapture();
+
+        for (var run = 0; run < 2; run++)
+        {
+            await _db.Guilds.GetOrInsertAsync(
+                g => g.DiscordId == 150UL,
+                () => new GuildEntity { DiscordId = 150UL, Name = "Counted" });
+            _db.ChangeTracker.Clear();
+        }
+
+        var results = metrics.Of("wojtus.upserts", "entity", "guild").Select(m => m.Tags["result"]).ToList();
+        Assert.Contains("inserted", results);
+        Assert.Contains("existing", results);
+    }
+
     [Fact]
     public async Task GetOrInsertAsync_WhenExists_ReturnsExistingRowUntouched()
     {
