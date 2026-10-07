@@ -492,7 +492,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\",event_type!~\"GuildCreated|GuildMembersChunked|ThreadListSynced\"}[$__range])))",
+          "expr": "histogram_quantile(0.95, sum by (le)(sum_over_time((((wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\",event_type!~\"GuildCreated|GuildMembersChunked|ThreadListSynced\"} - (((last_over_time(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\",event_type!~\"GuildCreated|GuildMembersChunked|ThreadListSynced\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\",event_type!~\"GuildCreated|GuildMembersChunked|ThreadListSynced\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\",event_type!~\"GuildCreated|GuildMembersChunked|ThreadListSynced\"} + 0)) and on () (vector(time()) >= 1791336415))[$__range:1m])))",
           "refId": "A",
           "legendFormat": "",
           "editorMode": "code",
@@ -545,7 +545,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "95th percentile of the time an event spends in the pipeline, over the range. Without the event types that arrive only when the bot connects (GuildCreated, GuildMembersChunked, ThreadListSynced): one guild replay of 250 to 500 ms at a start was the whole p95 of a quiet night. 'Handler p95 by type' below shows them."
+      "description": "95th percentile of the time an event spends in the pipeline, over the range. Without the event types that arrive only when the bot connects (GuildCreated, GuildMembersChunked, ThreadListSynced): one guild replay of 250 to 500 ms at a start was the whole p95 of a quiet night. 'Handler p95 by type' below shows them. Normal is about 90 ms. Yellow from 0.5 s, red from 2 s (the WojtusEventHandlerSlow alert). The percentiles count from 2026-10-07 01:27 UTC: the bot changed the bucket bounds then, and buckets of two layouts do not add up."
     },
     {
       "type": "stat",
@@ -813,7 +813,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted)$/"
+              "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted|written)$/"
             },
             "properties": [
               {
@@ -2042,7 +2042,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.5, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le)(sum_over_time((((wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} - (((last_over_time(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} + 0)) and on () (vector(time()) >= 1791336415))[$__interval:1m])))",
           "refId": "A",
           "legendFormat": "p50",
           "editorMode": "code",
@@ -2054,7 +2054,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le)(sum_over_time((((wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} - (((last_over_time(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} + 0)) and on () (vector(time()) >= 1791336415))[$__interval:1m])))",
           "refId": "B",
           "legendFormat": "p95",
           "editorMode": "code",
@@ -2066,7 +2066,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le)(sum_over_time((((wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} - (((last_over_time(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} + 0)) and on () (vector(time()) >= 1791336415))[$__interval:1m])))",
           "refId": "C",
           "legendFormat": "p99",
           "editorMode": "code",
@@ -2081,8 +2081,8 @@
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 14,
-            "showPoints": "never",
-            "pointSize": 5,
+            "showPoints": "always",
+            "pointSize": 6,
             "lineInterpolation": "linear",
             "spanNulls": false,
             "gradientMode": "opacity",
@@ -2186,7 +2186,8 @@
           "hideZeros": false
         }
       },
-      "description": "Time one gateway event spends in the event pipeline, selected event types. No trace exemplars here: a gateway event runs outside any trace, so there is no trace to open."
+      "description": "Time one gateway event spends in the event pipeline, selected event types, for the events in each interval. Estimates from buckets: 1, 2.5, 5, 10, 15, 25, 35, 50, 75, 100, 150, 200, 250, 350, 500 ms, 1, 2.5, 5 s. No trace exemplars here: a gateway event runs outside any trace, so there is no trace to open. The percentiles count from 2026-10-07 01:27 UTC: the bot changed the bucket bounds then, and buckets of two layouts do not add up.",
+      "interval": "1m"
     },
     {
       "type": "heatmap",
@@ -2202,7 +2203,7 @@
         "w": 8,
         "h": 9
       },
-      "description": "Events per duration bucket and interval. Bucket bounds: 5 ms to 30 s.",
+      "description": "Events per duration bucket and interval. Bucket bounds: 1 ms to 5 s, 18 of them, close together from 10 to 350 ms where the events are. Starts at 2026-10-07 01:27 UTC: the bot changed the bucket bounds then.",
       "interval": "1m",
       "targets": [
         {
@@ -2210,7 +2211,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by (le)(increase(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[$__interval]))",
+          "expr": "sum by (le)(sum_over_time((((wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} - (((last_over_time(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} + 0)) and on () (vector(time()) >= 1791336415))[$__interval:1m]))",
           "refId": "A",
           "legendFormat": "{{le}}",
           "editorMode": "code",
@@ -2297,7 +2298,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sort_desc(histogram_quantile(0.95, sum by (le, event_type)(rate(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[$__range]))) > 0)",
+          "expr": "sort_desc(histogram_quantile(0.95, sum by (le, event_type)(sum_over_time((((wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} - (((last_over_time(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} + 0)) and on () (vector(time()) >= 1791336415))[$__range:1m]))) > 0)",
           "refId": "A",
           "legendFormat": "{{event_type}}",
           "editorMode": "code",
@@ -2359,7 +2360,7 @@
           "values": false
         }
       },
-      "description": "95th percentile handler time per event type over the range."
+      "description": "95th percentile handler time per event type over the range. GuildCreated is the guild replay at a bot start: 250 to 500 ms is normal for it. The percentiles count from 2026-10-07 01:27 UTC: the bot changed the bucket bounds then, and buckets of two layouts do not add up."
     },
     {
       "type": "timeseries",
@@ -2381,7 +2382,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, event_type)(rate(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le, event_type)(sum_over_time((((wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} - (((last_over_time(wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (wojtus_event_handler_duration_seconds_bucket{job=\"wojtusdiscord\",event_type=~\"$event_type\"} + 0)) and on () (vector(time()) >= 1791336415))[$__interval:1m])))",
           "refId": "A",
           "legendFormat": "{{event_type}}",
           "editorMode": "code",
@@ -2396,8 +2397,8 @@
             "drawStyle": "line",
             "lineWidth": 1,
             "fillOpacity": 14,
-            "showPoints": "never",
-            "pointSize": 5,
+            "showPoints": "always",
+            "pointSize": 6,
             "lineInterpolation": "linear",
             "spanNulls": false,
             "gradientMode": "opacity",
@@ -2455,7 +2456,8 @@
           "hideZeros": false
         }
       },
-      "description": "95th percentile handler time per event type. No point when no event arrives."
+      "description": "95th percentile handler time per event type, for the events in each interval. No point when no event arrives. The percentiles count from 2026-10-07 01:27 UTC: the bot changed the bucket bounds then, and buckets of two layouts do not add up.",
+      "interval": "1m"
     },
     {
       "type": "timeseries",
@@ -5450,7 +5452,7 @@
               {
                 "matcher": {
                   "id": "byRegexp",
-                  "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted)$/"
+                  "options": "/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted|written)$/"
                 },
                 "properties": [
                   {

@@ -202,25 +202,96 @@ tests:
             exp_annotations:
               summary: "30 unresolved channel foreign keys in 15 minutes"
               description: "FkResolver could not find a required channel row, so the events that need it were not written. A few after a start are normal (the entity sync is not done yet); a burst means the sync failed. Check the bot log and failed_events."
-  # Round 3. Meme search at its normal speed: 30 searches in 30 minutes, 1.5 s each, all in the
-  # (1 s, 2.5 s] bucket. The p95 of those buckets reads 2.4 s (the old rule fired on p95 > 2 s);
-  # the mean rule stays quiet. The dashboard caps answer 503 by design: nothing fires.
+  # Round 3 and 4. Meme search at its normal speed, in the buckets of PR #420: 20 searches of
+  # 1.66 s in (1.5, 1.75], 10 of 1.9 s in (1.75, 2], and one slow search of 6 s in (5, 7.5].
+  # 31 searches in 30 minutes: the p95 reads 1.99 s, the slow one is 3% and does not move it.
+  # Every search log row is written. The dashboard caps answer 503 by design. Nothing fires.
   - interval: 1m
     input_series:
       - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
         values: '1000x90'
       - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
         values: '5000+60x90'
-      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="1.0"}'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="1.25"}'
         values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="1.5"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="1.75"}'
+        values: '0+1x20 20x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="2.0"}'
+        values: '0+1x20 20x70'
       - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="2.5"}'
-        values: '0+1x30 30x60'
+        values: '0+1x20 20x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="3.0"}'
+        values: '0+1x20 20x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="4.0"}'
+        values: '0+1x20 20x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="5.0"}'
+        values: '0+1x20 20x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="7.5"}'
+        values: '0+1x20 20x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="10.0"}'
+        values: '0+1x20 20x70'
       - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Tester",le="+Inf"}'
-        values: '0+1x30 30x60'
+        values: '0+1x20 20x70'
       - series: 'wojtus_meme_search_duration_seconds_count{job="wojtusdiscord",instance="b",caller="Tester"}'
-        values: '0+1x30 30x60'
+        values: '0+1x20 20x70'
       - series: 'wojtus_meme_search_duration_seconds_sum{job="wojtusdiscord",instance="b",caller="Tester"}'
-        values: '0+1.5x30 45x60'
+        values: '0+1.66x20 33.2x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="1.25"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="1.5"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="1.75"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="2.0"}'
+        values: '0x10 0+1x10 10x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="2.5"}'
+        values: '0x10 0+1x10 10x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="3.0"}'
+        values: '0x10 0+1x10 10x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="4.0"}'
+        values: '0x10 0+1x10 10x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="5.0"}'
+        values: '0x10 0+1x10 10x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="7.5"}'
+        values: '0x10 0+1x10 10x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="10.0"}'
+        values: '0x10 0+1x10 10x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="+Inf"}'
+        values: '0x10 0+1x10 10x70'
+      - series: 'wojtus_meme_search_duration_seconds_count{job="wojtusdiscord",instance="b",caller="Slash"}'
+        values: '0x10 0+1x10 10x70'
+      - series: 'wojtus_meme_search_duration_seconds_sum{job="wojtusdiscord",instance="b",caller="Slash"}'
+        values: '0x10 0+1.9x10 19x70'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="1.25"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="1.5"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="1.75"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="2.0"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="2.5"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="3.0"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="4.0"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="5.0"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="7.5"}'
+        values: '0x25 1x65'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="10.0"}'
+        values: '0x25 1x65'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="+Inf"}'
+        values: '0x25 1x65'
+      - series: 'wojtus_meme_search_duration_seconds_count{job="wojtusdiscord",instance="b",caller="PageButton"}'
+        values: '0x25 1x65'
+      - series: 'wojtus_meme_search_duration_seconds_sum{job="wojtusdiscord",instance="b",caller="PageButton"}'
+        values: '0x25 6x65'
+      - series: 'wojtus_meme_search_log_writes_total{job="wojtusdiscord",instance="b",outcome="written"}'
+        values: '_ 1+1x30 31x59'
       - series: 'wojtus_meme_dashboard_unavailable_total{job="wojtusdiscord",instance="b",endpoint="thumbnail",reason="budget"}'
         values: '_x10 40+5x20 140x59'
       - series: 'wojtus_meme_dashboard_unavailable_total{job="wojtusdiscord",instance="b",endpoint="thumbnail",reason="recent_failure"}'
@@ -235,29 +306,86 @@ tests:
     alert_rule_test:
       - {eval_time: 25m, exp_alerts: [], alertname: WojtusMemeSearchSlow}
       - {eval_time: 30m, exp_alerts: [], alertname: WojtusMemeSearchSlow}
+      - {eval_time: 45m, exp_alerts: [], alertname: WojtusMemeSearchSlow}
+      - {eval_time: 30m, exp_alerts: [], alertname: WojtusMemeSearchLogWriteFailed}
       - {eval_time: 20m, exp_alerts: [], alertname: WojtusMemeDashboardUnavailable}
       - {eval_time: 30m, exp_alerts: [], alertname: WojtusMemeDashboardUnavailable}
       - {eval_time: 20m, exp_alerts: [], alertname: WojtusApiServerErrors}
       - {eval_time: 30m, exp_alerts: [], alertname: WojtusApiServerErrors}
     promql_expr_test:
-      # what the old rule compared with 2 s
-      - expr: 'histogram_quantile(0.95, sum by (le)(increase(wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord"}[30m])))'
+      # what the rule compares with 2.5 s: rank 29.45 of 31 is in (1.75, 2]
+      - expr: 'histogram_quantile(0.95, sum by (le)(increase(wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord"}[1h])))'
         eval_time: 30m
-        exp_samples: [{labels: '{}', value: 2.425}]
-      - expr: 'sum(increase(wojtus_meme_search_duration_seconds_sum{job="wojtusdiscord"}[30m])) / sum(increase(wojtus_meme_search_duration_seconds_count{job="wojtusdiscord"}[30m])) < bool 3'
+        exp_samples: [{labels: '{}', value: 1.98625}]
+      # the buckets until PR #420 (1 s, 2.5 s) read 2.4 s for the same searches
+      - expr: 'histogram_quantile(0.95, sum by (le)(increase(wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",le=~"2.5|[+]Inf"}[1h]))) > bool 2.3'
         eval_time: 30m
         exp_samples: [{labels: '{}', value: 1}]
-  # Round 3, real problems: searches of 4 s, a dashboard answer that stays busy, an API that throws.
+  # Round 3 and 4, real problems. Meme search: 24 searches of 1.66 s and 6 of 4 s. The mean is
+  # 2.13 s (the mean rule, > 3 s, was silent); the p95 reads 3.75 s and the rule fires. A search
+  # log row is lost at 20m. A dashboard answer that stays busy, an API that throws.
   - interval: 1m
     input_series:
       - series: 'wojtus_process_start_time_seconds{job="wojtusdiscord",instance="b"}'
         values: '1000x90'
       - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
         values: '5000+60x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="1.25"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="1.5"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="1.75"}'
+        values: '0+1x24 24x66'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="2.0"}'
+        values: '0+1x24 24x66'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="2.5"}'
+        values: '0+1x24 24x66'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="3.0"}'
+        values: '0+1x24 24x66'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="4.0"}'
+        values: '0+1x24 24x66'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="5.0"}'
+        values: '0+1x24 24x66'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="7.5"}'
+        values: '0+1x24 24x66'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="10.0"}'
+        values: '0+1x24 24x66'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="Slash",le="+Inf"}'
+        values: '0+1x24 24x66'
       - series: 'wojtus_meme_search_duration_seconds_count{job="wojtusdiscord",instance="b",caller="Slash"}'
-        values: '0+1x30 30x60'
+        values: '0+1x24 24x66'
       - series: 'wojtus_meme_search_duration_seconds_sum{job="wojtusdiscord",instance="b",caller="Slash"}'
-        values: '0+4x30 120x60'
+        values: '0+1.66x24 39.84x66'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="1.25"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="1.5"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="1.75"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="2.0"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="2.5"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="3.0"}'
+        values: '0x90'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="4.0"}'
+        values: '0+1x6 6x84'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="5.0"}'
+        values: '0+1x6 6x84'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="7.5"}'
+        values: '0+1x6 6x84'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="10.0"}'
+        values: '0+1x6 6x84'
+      - series: 'wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord",instance="b",caller="PageButton",le="+Inf"}'
+        values: '0+1x6 6x84'
+      - series: 'wojtus_meme_search_duration_seconds_count{job="wojtusdiscord",instance="b",caller="PageButton"}'
+        values: '0+1x6 6x84'
+      - series: 'wojtus_meme_search_duration_seconds_sum{job="wojtusdiscord",instance="b",caller="PageButton"}'
+        values: '0+4x6 24x84'
+      - series: 'wojtus_meme_search_log_writes_total{job="wojtusdiscord",instance="b",outcome="written"}'
+        values: '_ 1+1x28 29x60'
+      - series: 'wojtus_meme_search_log_writes_total{job="wojtusdiscord",instance="b",outcome="failed"}'
+        values: '_x20 1x70'
       - series: 'wojtus_meme_dashboard_unavailable_total{job="wojtusdiscord",instance="b",endpoint="index",reason="busy"}'
         values: '_x10 2+2x29 60x50'
       - series: 'http_server_request_duration_seconds_count{job="wojtusdiscord",instance="b",http_route="api/guild",http_response_status_code="500"}'
@@ -265,13 +393,27 @@ tests:
       - series: 'http_server_request_duration_seconds_count{job="wojtusdiscord",instance="b",http_route="api/guild",http_response_status_code="200"}'
         values: '0+1x30 30x60'
     alert_rule_test:
-      - eval_time: 25m
+      # 20 searches at 14m, then 10 minutes of "for"
+      - {eval_time: 20m, exp_alerts: [], alertname: WojtusMemeSearchSlow}
+      - eval_time: 30m
         alertname: WojtusMemeSearchSlow
         exp_alerts:
           - exp_labels: {severity: warning, service: wojtusdiscord}
             exp_annotations:
-              summary: "Meme search takes 4s on average"
-              description: "At least 10 searches in 30 minutes took more than 3 s on average. Normal is 1.5 to 1.9 s. Open the Conversation & Memes dashboard, panel 'Mean search time by phase': a tall sql phase means Postgres (load, query plan)."
+              summary: "Meme search p95 is 3.75s"
+              description: "More than 5% of at least 20 searches in one hour took longer than 2.5 s. Normal is 1.5 to 1.9 s (issue #401), which reads as a p95 of 1.75 to 2 s. Open the Conversation & Memes dashboard, panel 'Mean search time by phase': a tall sql phase means Postgres (load, query plan, a larger table)."
+      # the searches leave the 1 h window: the alert clears
+      - {eval_time: 89m, exp_alerts: [], alertname: WojtusMemeSearchSlow}
+      # a lost search log row creates its series: fires at once, clears after the 15 m window
+      - {eval_time: 19m, exp_alerts: [], alertname: WojtusMemeSearchLogWriteFailed}
+      - eval_time: 25m
+        alertname: WojtusMemeSearchLogWriteFailed
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord}
+            exp_annotations:
+              summary: "1 meme search log row(s) lost in 15 minutes"
+              description: "The bot could not write a row of meme_search_log: that search is missing from the search log (the data of issue #384). The search itself answered. Search the bot log for the search log error and check that Postgres accepts writes."
+      - {eval_time: 40m, exp_alerts: [], alertname: WojtusMemeSearchLogWriteFailed}
       - eval_time: 30m
         alertname: WojtusMemeDashboardUnavailable
         exp_alerts:
@@ -286,3 +428,85 @@ tests:
             exp_annotations:
               summary: "50% of dashboard API requests return 5xx"
               description: "More than 10% of at least 20 /api requests in 15 minutes failed with a 5xx other than 503. Check the bot log for unhandled exceptions and the Runtime & HTTP dashboard for the route."
+  # Round 4. Event handler at its normal speed, in the buckets of PR #420: 20 events a minute,
+  # 19 under 100 ms and 1 in (100, 150] ms, plus the guild replay of a start (5 events in
+  # (250, 350] ms). The p95 reads 0.1 s. Nothing fires.
+  - interval: 1m
+    input_series:
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="0.075"}'
+        values: '0+15x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="0.1"}'
+        values: '0+19x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="0.15"}'
+        values: '0+20x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="0.25"}'
+        values: '0+20x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="0.35"}'
+        values: '0+20x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="0.5"}'
+        values: '0+20x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="1.0"}'
+        values: '0+20x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="2.5"}'
+        values: '0+20x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="5.0"}'
+        values: '0+20x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="PresenceUpdated",le="+Inf"}'
+        values: '0+20x60'
+      - series: 'wojtus_event_handler_duration_seconds_count{job="wojtusdiscord",instance="b",event_type="PresenceUpdated"}'
+        values: '0+20x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="GuildCreated",le="0.075"}'
+        values: '0x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="GuildCreated",le="0.1"}'
+        values: '0x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="GuildCreated",le="0.15"}'
+        values: '0x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="GuildCreated",le="0.25"}'
+        values: '0x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="GuildCreated",le="0.35"}'
+        values: '0 5x59'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="GuildCreated",le="0.5"}'
+        values: '0 5x59'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="GuildCreated",le="1.0"}'
+        values: '0 5x59'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="GuildCreated",le="2.5"}'
+        values: '0 5x59'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="GuildCreated",le="5.0"}'
+        values: '0 5x59'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="GuildCreated",le="+Inf"}'
+        values: '0 5x59'
+      - series: 'wojtus_event_handler_duration_seconds_count{job="wojtusdiscord",instance="b",event_type="GuildCreated"}'
+        values: '0 5x59'
+    alert_rule_test:
+      - {eval_time: 20m, exp_alerts: [], alertname: WojtusEventHandlerSlow}
+      - {eval_time: 45m, exp_alerts: [], alertname: WojtusEventHandlerSlow}
+    promql_expr_test:
+      - expr: 'histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord"}[15m]))) < bool 0.11'
+        eval_time: 45m
+        exp_samples: [{labels: '{}', value: 1}]
+  # Round 4, a real problem: 1 event in 10 takes 2.5 to 5 s (a lock in Postgres). The p95 reads 3.75 s.
+  - interval: 1m
+    input_series:
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="MessageCreated",le="0.1"}'
+        values: '0+18x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="MessageCreated",le="0.5"}'
+        values: '0+18x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="MessageCreated",le="1.0"}'
+        values: '0+18x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="MessageCreated",le="2.5"}'
+        values: '0+18x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="MessageCreated",le="5.0"}'
+        values: '0+20x60'
+      - series: 'wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord",instance="b",event_type="MessageCreated",le="+Inf"}'
+        values: '0+20x60'
+      - series: 'wojtus_event_handler_duration_seconds_count{job="wojtusdiscord",instance="b",event_type="MessageCreated"}'
+        values: '0+20x60'
+    alert_rule_test:
+      - {eval_time: 10m, exp_alerts: [], alertname: WojtusEventHandlerSlow}
+      - eval_time: 30m
+        alertname: WojtusEventHandlerSlow
+        exp_alerts:
+          - exp_labels: {severity: warning, service: wojtusdiscord}
+            exp_annotations:
+              summary: "Event handler p95 is 3.75s"
+              description: "The p95 of at least 50 events in 15 minutes is above 2 s. Normal is about 90 ms. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard."

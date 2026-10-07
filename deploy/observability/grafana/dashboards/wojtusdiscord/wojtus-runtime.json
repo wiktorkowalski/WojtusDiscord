@@ -1953,7 +1953,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.5, sum by (le)(sum_over_time(((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0))[$__interval:1m])))",
+          "expr": "histogram_quantile(0.5, sum by (le)(sum_over_time((((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0)) and on () (vector(time()) >= 1791336415))[$__interval:1m])))",
           "refId": "A",
           "legendFormat": "p50",
           "editorMode": "code",
@@ -1965,7 +1965,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.95, sum by (le)(sum_over_time(((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0))[$__interval:1m])))",
+          "expr": "histogram_quantile(0.95, sum by (le)(sum_over_time((((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0)) and on () (vector(time()) >= 1791336415))[$__interval:1m])))",
           "refId": "B",
           "legendFormat": "p95",
           "editorMode": "code",
@@ -1978,7 +1978,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le)(sum_over_time(((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0))[$__interval:1m])))",
+          "expr": "histogram_quantile(0.99, sum by (le)(sum_over_time((((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0)) and on () (vector(time()) >= 1791336415))[$__interval:1m])))",
           "refId": "C",
           "legendFormat": "p99",
           "editorMode": "code",
@@ -2098,7 +2098,7 @@
           "hideZeros": false
         }
       },
-      "description": "Duration of inbound requests, all routes, for the requests in each interval. One point per interval with a request. Scrapes of /metrics and health checks of /health are left out. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one.",
+      "description": "Duration of inbound requests, all routes, for the requests in each interval. One point per interval with a request. Estimates from buckets: 5, 10, 25, 50, 75, 100, 150, 200, 300, 500, 750 ms, 1, 1.5, 2, 3, 5, 10 s. Scrapes of /metrics and health checks of /health are left out. The percentiles count from 2026-10-07 01:27 UTC: the bot changed the bucket bounds then, and buckets of two layouts do not add up. A dot is one request with a trace (an exemplar): click it to open the trace in Tempo. Only a request inside a kept trace has one.",
       "interval": "1m"
     },
     {
@@ -2121,7 +2121,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sort_desc(histogram_quantile(0.95, sum by (le, http_route)(sum_over_time(((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0))[$__range:1m]))) > 0)",
+          "expr": "sort_desc(histogram_quantile(0.95, sum by (le, http_route)(sum_over_time((((http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} - (((last_over_time(http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} > 660)) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job=\"wojtusdiscord\"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job=\"wojtusdiscord\"} == last_over_time(wojtus_process_start_time_seconds{job=\"wojtusdiscord\"}[10m] offset 1m))) >= 0) or (http_server_request_duration_seconds_bucket{job=\"wojtusdiscord\",http_route!~\"/?(health|metrics)\"} + 0)) and on () (vector(time()) >= 1791336415))[$__range:1m]))) > 0)",
           "refId": "A",
           "legendFormat": "{{http_route}}",
           "editorMode": "code",
@@ -2146,7 +2146,7 @@
               },
               {
                 "color": "#fab219",
-                "value": 2.5
+                "value": 3
               },
               {
                 "color": "#d03b3b",
@@ -2183,7 +2183,7 @@
           "values": false
         }
       },
-      "description": "95th percentile request duration per route over the range. Yellow from 2.5 s, red from 5 s: the meme search route takes 1.5 to 1.9 s (see Conversation & Memes), and its p95 reads up to 2.5 s because the buckets end at 1 s and 2.5 s. Scrapes of /metrics and health checks of /health are left out."
+      "description": "95th percentile request duration per route over the range. Yellow from 3 s, red from 5 s: the meme search route takes 1.5 to 1.9 s (see Conversation & Memes), and its p95 reads up to 2 s because the buckets near it end at 1.5, 2 and 3 s. Scrapes of /metrics and health checks of /health are left out. The percentiles count from 2026-10-07 01:27 UTC: the bot changed the bucket bounds then, and buckets of two layouts do not add up."
     },
     {
       "type": "timeseries",

@@ -257,22 +257,37 @@ groups:
           summary: "Conversation cost cap {{ $labels.cap }} was crossed"
           description: "The bot's own cost-cap alert fired in the last hour. Read the usage_alerts table and decide whether to keep the assistant on."
 
-      # Mean, not p95. Measured on prod 2026-10-06: 1.5 to 1.9 s per search (mean 1.58 s). The buckets
-      # near that end at 1 s and 2.5 s, so the p95 of normal searches reads 2.4 s and the old rule
-      # (p95 > 2 s) fired on normal behaviour. The mean is exact; 3 s is 1.9 times the measured mean
-      # and the time Discord gives an interaction. increase() is enough here: the 10-search floor
-      # already needs a series that exists.
+      # p95 above 2.5 s, at least 20 searches in one hour. Buckets step 0.25 s from 0.5 to 2 s, then
+      # 2.5 and 3 s (PR #420): searches of 1.5 to 1.9 s read as a p95 of at most 2 s, and 2.5 s is a
+      # bucket bound, so the rule says 'more than 5% took longer than 2.5 s'.
+      # Why not the mean (the rule until 2026-10-07: mean > 3 s, 10 searches): 24 searches of 1.66 s
+      # and 6 of 4 s have a mean of 2.13 s and a p95 of 3.75 s. The mean is silent until every search
+      # takes twice its time.
+      # Why 20 searches: with 20 or more, one slow search is at most 5% and does not move the p95
+      # (19 of 1.7 s and 1 of 6 s read 1.75 s). With 10 the p95 is the slowest search.
+      # Restart-aware counts: searches are rare and the bot restarts on a deploy.
       - alert: WojtusMemeSearchSlow
         expr: |
-          sum(increase(wojtus_meme_search_duration_seconds_sum{job="wojtusdiscord"}[30m])) / sum(increase(wojtus_meme_search_duration_seconds_count{job="wojtusdiscord"}[30m])) > 3
-          and sum(increase(wojtus_meme_search_duration_seconds_count{job="wojtusdiscord"}[30m])) >= 10
+          histogram_quantile(0.95, sum by (le)(sum_over_time(((wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord"} - (((last_over_time(wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord"} + 0))[1h:1m]))) > 2.5
+          and sum(sum_over_time(((wojtus_meme_search_duration_seconds_count{job="wojtusdiscord"} - (((last_over_time(wojtus_meme_search_duration_seconds_count{job="wojtusdiscord"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (wojtus_meme_search_duration_seconds_count{job="wojtusdiscord"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_duration_seconds_count{job="wojtusdiscord"} + 0))[1h:1m])) >= 20
         for: 10m
         labels:
           severity: warning
           service: wojtusdiscord
         annotations:
-          summary: "Meme search takes {{ $value | humanizeDuration }} on average"
-          description: "At least 10 searches in 30 minutes took more than 3 s on average. Normal is 1.5 to 1.9 s. Open the Conversation & Memes dashboard, panel 'Mean search time by phase': a tall sql phase means Postgres (load, query plan)."
+          summary: "Meme search p95 is {{ $value | humanizeDuration }}"
+          description: "More than 5% of at least 20 searches in one hour took longer than 2.5 s. Normal is 1.5 to 1.9 s (issue #401), which reads as a p95 of 1.75 to 2 s. Open the Conversation & Memes dashboard, panel 'Mean search time by phase': a tall sql phase means Postgres (load, query plan, a larger table)."
+
+      # Any failed write. The alert stays for 15 minutes after the last one.
+      - alert: WojtusMemeSearchLogWriteFailed
+        expr: |
+          sum(sum_over_time(((wojtus_meme_search_log_writes_total{job="wojtusdiscord",outcome="failed"} - (((last_over_time(wojtus_meme_search_log_writes_total{job="wojtusdiscord",outcome="failed"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (wojtus_meme_search_log_writes_total{job="wojtusdiscord",outcome="failed"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (wojtus_meme_search_log_writes_total{job="wojtusdiscord",outcome="failed"} + 0))[15m:1m])) > 0
+        labels:
+          severity: warning
+          service: wojtusdiscord
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} meme search log row(s) lost in 15 minutes"
+          description: "The bot could not write a row of meme_search_log: that search is missing from the search log (the data of issue #384). The search itself answered. Search the bot log for the search log error and check that Postgres accepts writes."
 
       # Counted: busy, refresh_timeout, refresh_failed. Not counted: the caps doing their work
       # (budget, wait_timeout, queue_full) and recent_failure (a failure of the last 30 s answered
@@ -315,6 +330,10 @@ groups:
           summary: "The bot uses {{ $value | humanize1024 }}B of process memory"
           description: "Anonymous memory of the discord-event-service container is above 1 GiB for 30 minutes. Normal is about 160 MiB. Look for a leak: GC heap by generation on the Runtime & HTTP dashboard."
 
+      # Normal p95 is about 90 ms; the guild replay at a start (GuildCreated) takes 250 to 500 ms and is
+      # a few events, well under 5% of 50. The buckets near the threshold end at 1, 2.5 and
+      # 5 s (PR #420 kept them): the p95 reads above 2 s when more than 5% of the events take over
+      # 2.5 s, or more than about 15% take over 1 s. rate() is enough: 50 events need series that exist.
       - alert: WojtusEventHandlerSlow
         expr: |
           histogram_quantile(0.95, sum by (le)(rate(wojtus_event_handler_duration_seconds_bucket{job="wojtusdiscord"}[15m]))) > 2
@@ -325,7 +344,7 @@ groups:
           service: wojtusdiscord
         annotations:
           summary: "Event handler p95 is {{ $value | humanizeDuration }}"
-          description: "5% of at least 50 events in 15 minutes spent more than 2 s in the pipeline. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard."
+          description: "The p95 of at least 50 events in 15 minutes is above 2 s. Normal is about 90 ms. Check Postgres (locks, long transactions) and the per-type panel on the Events & Ingest dashboard."
 
       - alert: WojtusHealthCheckWebhookFailed
         expr: |
