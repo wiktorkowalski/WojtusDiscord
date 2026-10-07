@@ -143,6 +143,7 @@ builder.Services.AddSingleton(sp =>
 });
 
 builder.Services.AddHttpClient();
+builder.Services.AddHealthCheckWebhookClient();
 builder.Services.AddScoped<HealthCheckJob>();
 
 // Meme indexing (#219): OpenRouter vision calls + Discord CDN image downloads.

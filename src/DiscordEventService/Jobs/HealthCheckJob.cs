@@ -15,6 +15,9 @@ internal sealed class HealthCheckJob(
     IOptions<HealthCheckOptions> options,
     ILogger<HealthCheckJob> logger)
 {
+    // A client of its own, with no logger: see HealthCheckRegistration.
+    public const string WebhookHttpClientName = "HealthCheckWebhook";
+
     // Inline tuning knobs; the operator-facing thresholds live in HealthCheckOptions.
     private const int RecentFailureDisplayCount = 5;
     private const int HeartbeatFreshSeconds = 30;
@@ -364,7 +367,7 @@ internal sealed class HealthCheckJob(
 
         try
         {
-            var client = httpClientFactory.CreateClient();
+            var client = httpClientFactory.CreateClient(WebhookHttpClientName);
             client.Timeout = WebhookTimeout;
             var payload = JsonSerializer.Serialize(new { content = message });
             using var response = await client.PostAsync(webhookUrl,
