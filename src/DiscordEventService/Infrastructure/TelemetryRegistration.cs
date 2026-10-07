@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using DiscordEventService.Commands;
 using DiscordEventService.Configuration;
 using DiscordEventService.Jobs;
@@ -15,7 +16,7 @@ namespace DiscordEventService.Infrastructure;
 
 // The OpenTelemetry wiring, root container only: metrics for the Prometheus scrape on /metrics
 // (always on), and traces for Langfuse and Grafana Tempo (each on only when configured).
-internal static class TelemetryRegistration
+internal static partial class TelemetryRegistration
 {
     public const string ServiceName = "discord-event-service";
 
@@ -100,12 +101,14 @@ internal static class TelemetryRegistration
                 return;
             }
 
-            // The roots outside a request: a slash command and a traced Hangfire job.
+            // The roots outside a request: a slash command and a traced Hangfire job. The
+            // redaction comes before the exporters: the processors of a provider run in order.
             tracing
                 .AddSource(CommandMetrics.SourceName, TracedJobAttribute.SourceName)
                 .AddAspNetCoreInstrumentation(aspNet => aspNet.Filter = context => !IsProbe(context.Request.Path))
                 .AddHttpClientInstrumentation()
                 .AddNpgsql()
+                .AddProcessor(new UrlTokenRedactionProcessor())
                 .AddProcessor(new FilteredBatchActivityExportProcessor(
                     new OtlpTraceExporter(new OtlpExporterOptions
                     {
@@ -136,6 +139,15 @@ internal static class TelemetryRegistration
         activity.ParentSpanId != default
         || (activity.Source.Name != NpgsqlSourceName && activity.Source.Name != HttpClientSourceName);
 
+    // A Discord webhook URL and an interaction URL hold their secret in the path:
+    // /webhooks/{id}/{token} and /interactions/{id}/{token}/callback. The runtime hides the
+    // query of a client span URL, not its path, so the token segment is replaced here. The
+    // health check webhook and every answer of a slash command are such calls.
+    internal static string RedactUrlTokens(string url) => TokenInPath().Replace(url, "$1/REDACTED");
+
+    [GeneratedRegex(@"(/(?:webhooks|interactions)/\d+)/[^/?#]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TokenInPath();
+
     // The scrape and the Docker HEALTHCHECK: periodic, and never the request someone looks for.
     internal static bool IsProbe(PathString path) =>
         path.StartsWithSegments("/metrics") || path.StartsWithSegments("/health");
@@ -147,6 +159,22 @@ internal static class TelemetryRegistration
         exporter.Protocol = OtlpExportProtocol.HttpProtobuf;
         exporter.Headers = "Authorization=Basic " + Convert.ToBase64String(
             Encoding.UTF8.GetBytes($"{conversation.LangfusePublicKey}:{conversation.LangfuseSecretKey}"));
+    }
+}
+
+// Rewrites the URL tags of a span before any exporter reads them: see RedactUrlTokens.
+// "url.full" is the current name of the tag, "http.url" the one before it.
+internal sealed class UrlTokenRedactionProcessor : BaseProcessor<Activity>
+{
+    private static readonly string[] UrlTags = ["url.full", "http.url"];
+
+    public override void OnEnd(Activity data)
+    {
+        foreach (var tag in UrlTags)
+        {
+            if (data.GetTagItem(tag) is string url)
+                data.SetTag(tag, TelemetryRegistration.RedactUrlTokens(url));
+        }
     }
 }
 

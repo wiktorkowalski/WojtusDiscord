@@ -82,6 +82,35 @@ public sealed class TelemetryRegistrationTests
         }
     }
 
+    // The token of a webhook or an interaction is a path segment of the URL of a client span.
+    [Theory]
+    [InlineData("https://discord.com/api/webhooks/123/s3cret-Token_x", "https://discord.com/api/webhooks/123/REDACTED")]
+    [InlineData("https://discord.com/api/v10/webhooks/123/s3cret/messages/@original?*", "https://discord.com/api/v10/webhooks/123/REDACTED/messages/@original?*")]
+    [InlineData("https://discord.com/api/v10/interactions/456/s3cret/callback", "https://discord.com/api/v10/interactions/456/REDACTED/callback")]
+    [InlineData("https://discord.com/api/v10/channels/1/messages/2", "https://discord.com/api/v10/channels/1/messages/2")]
+    public void RedactUrlTokens_ReplacesTheTokenSegmentAndNothingElse(string url, string expected) =>
+        Assert.Equal(expected, TelemetryRegistration.RedactUrlTokens(url));
+
+    [Fact]
+    public void RedactionProcessor_RewritesTheUrlTagOfASpanBeforeItIsExported()
+    {
+        var sourceName = $"Client-{Guid.NewGuid():N}";
+        using var source = new ActivitySource(sourceName);
+        var exporter = new CapturingExporter();
+
+        using (var provider = Sdk.CreateTracerProviderBuilder()
+            .AddSource(sourceName)
+            .AddProcessor(new UrlTokenRedactionProcessor())
+            .AddProcessor(new SimpleActivityExportProcessor(exporter))
+            .Build())
+        {
+            using var span = source.StartActivity("POST");
+            span!.SetTag("url.full", "https://discord.com/api/webhooks/123/s3cret");
+        }
+
+        Assert.Equal("https://discord.com/api/webhooks/123/REDACTED", Assert.Single(exporter.Urls));
+    }
+
     [Theory]
     [InlineData("/metrics", true)]
     [InlineData("/health", true)]
@@ -212,13 +241,19 @@ public sealed class TelemetryRegistrationTests
     {
         public List<(string SourceName, string DisplayName)> Exported { get; } = [];
 
+        public List<object?> Urls { get; } = [];
+
         public Resource? Resource { get; private set; }
 
         public override ExportResult Export(in Batch<Activity> batch)
         {
             Resource = ParentProvider.GetResource();
             foreach (var activity in batch)
+            {
                 Exported.Add((activity.Source.Name, activity.DisplayName));
+                if (activity.GetTagItem("url.full") is { } url)
+                    Urls.Add(url);
+            }
             return ExportResult.Success;
         }
     }
