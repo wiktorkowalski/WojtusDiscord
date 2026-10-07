@@ -129,7 +129,7 @@ BOT = 'name="discord-event-service"'
 # Outcome colours by series name. Later entries win, so the exact "failed" comes last.
 OUTCOME_COLORS = [
     (r"/(^|[ ,])(ok|success|completed|indexed|imported|information|inserted)$/", GOOD),
-    (r"/(cancelled|skipped|debug|trace)/", NEUTRAL),
+    (r"/(cancelled|skipped|debug|trace|existing)/", NEUTRAL),
     (r"/(timeout|transient|short_circuit|serialization_failed|warning|refusal|rejected|unknown_tool|check_failed|bad_argument|not_executable|conflict|updated)/", WARN),
     (r"/(^|[ ,])(failed|error|critical)$/", CRIT),
 ]
@@ -142,7 +142,12 @@ SER_FAILED = 'outcome="serialization_failed"'
 NOT_OK = 'outcome!="ok"'
 ERRORS = 'level=~"error|critical"'
 WARNINGS_UP = 'level=~"warning|error|critical"'
-LE_ZERO = 'le="0"'
+# Prometheus 3 stores a bucket bound as a float text: the bot's le="0" is scraped as le="0.0".
+LE_ZERO = 'le=~"0(.0)?"'
+LE_2_5 = 'le="2.5"'
+AUTHOR_HUMAN = 'author="human"'
+IS_REPLY = 'reply="true"'
+THUMBNAIL = 'endpoint="thumbnail"'
 NON_2XX = 'http_response_status_code!~"2.."'
 HTTP_429 = 'http_response_status_code="429"'
 HAS_ERROR = 'error_type!=""'
@@ -180,9 +185,14 @@ def xinc(metric, selector, rng, step="1m"):
     return f"sum_over_time((({m} - ({prev}) >= 0) or ({m} + 0))[{rng}:{step}])"
 
 
-def q(expr, legend="", instant=False, fmt=None, ref=None):
+def q(expr, legend="", instant=False, fmt=None, ref=None, exemplar=False):
+    """exemplar=True: Grafana also asks Prometheus for the trace exemplars of the series in expr
+    and draws each as a dot that opens the trace in Tempo. Only a time series panel shows them,
+    and only a histogram the bot records inside a trace has any."""
     t = {"datasource": PROM, "expr": expr, "refId": ref or "A", "legendFormat": legend,
          "editorMode": "code", "instant": instant, "range": not instant}
+    if exemplar:
+        t["exemplar"] = True
     if fmt:
         t["format"] = fmt
     return t
@@ -215,7 +225,7 @@ STAT_OPTS = {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values":
 
 def stat(title, expr, unit="short", desc=None, thresholds=None, color_mode=None, graph="none",
          mappings=None, decimals=None, no_value=None, legend="", text_mode="auto", instant=True,
-         ds=PROM, calc="lastNotNull"):
+         ds=PROM, calc="lastNotNull", value_size=None):
     if graph != "none":
         instant = False
     target = q(expr, legend, instant=instant) if ds is PROM else lq(expr, legend)
@@ -230,6 +240,9 @@ def stat(title, expr, unit="short", desc=None, thresholds=None, color_mode=None,
     opts["graphMode"] = graph
     opts["textMode"] = text_mode
     opts["reduceOptions"]["calcs"] = [calc]
+    if value_size:
+        # A tall tile otherwise scales one digit to the full height.
+        opts["text"] = {"valueSize": value_size}
     p = {"type": "stat", "title": title, "datasource": ds, "targets": [target],
          "fieldConfig": {"defaults": defaults, "overrides": []}, "options": opts}
     if desc:
@@ -274,11 +287,15 @@ def color_overrides(colors):
 def ts(title, targets, unit="short", desc=None, style="line", stack=False, colors=None, vmin=0,
        vmax=None, decimals=None, legend=True, legend_table=False, threshold=None, fixed=None,
        min_interval=None, points="never", fill=None, line_interp="linear", ds=PROM, no_value=None,
-       soft_max=None):
+       soft_max=None, log_y=False):
     defaults = {"unit": unit,
                 "custom": _custom(style, stack, fill, line_interp, points, threshold is not None),
                 "color": {"mode": "fixed", "fixedColor": fixed} if fixed else {"mode": "palette-classic"},
                 "thresholds": threshold or NEUTRAL_STEPS, "mappings": []}
+    if log_y:
+        # For series that differ by orders of magnitude. A log axis has no zero.
+        defaults["custom"]["scaleDistribution"] = {"type": "log", "log": 10}
+        vmin = None
     if vmin is not None:
         defaults["min"] = vmin
     if vmax is not None:
@@ -453,6 +470,11 @@ EMPTY_TEXT = [
     (r"Orphan replay", "No orphan replay run in this time range"),
     (r"Backfill", "No backfill run in this time range"),
     (r"Usage alerts", "No cost cap crossed"),
+    (r"[Ww]eb search", "No web search yet"),
+    (r"First token|Context", "No conversation turns yet"),
+    (r"unavailable", "No dashboard request answered 503"),
+    (r"Voice state", "No voice state change in this time range"),
+    (r"Message|Attachments per", "No message in this time range"),
     (r"Tool", "No tool calls yet"),
     (r"Turn|Rounds|Round latency|Tokens by model|Cost by model", "No conversation turns yet"),
     (r"[Ss]earch|Hits per", "No meme searches yet"),
@@ -503,15 +525,35 @@ def add_deploy_annotation(dashboard):
 AVAILABILITY = steps((CRIT, None), (WARN, 0.99), (GOOD, 0.999))
 
 
+WINDOW_SECONDS = {"7d": 7 * 86400, "30d": 30 * 86400}
+
+
 def availability_exprs(window, step):
-    """Share of the window each part was up. A part with no sample while the bot target exists counts as down."""
+    """1 - (time each part was seen down) / (the whole window).
+
+    The down share of the samples, times the share of the window that has samples. Time with
+    no sample (before the series existed) counts as up: a plain avg_over_time over two hours
+    of history turned one missed scrape into 99.8% "of 7 days". A deploy restart counts, at
+    its real weight: about 15 s, 0.0025% of a week. A part with no sample while the bot
+    target exists counts as down.
+    """
     up = 'max(up{job="wojtusdiscord"})'
-    return [
-        ("Bot process", f'avg_over_time(up{{job="wojtusdiscord"}}[{window}])'),
-        ("Discord gateway", f'avg_over_time((min(wojtus_gateway_connected{{job="wojtusdiscord"}}) or on () (0 * {up}))[{window}:{step}])'),
-        ("Public URL", f'avg_over_time(probe_success{{job="wojtusdiscord-http"}}[{window}])'),
-        ("Postgres", f'avg_over_time(pg_up{{job="wojtus-postgres"}}[{window}])'),
-    ]
+    steps_in_window = WINDOW_SECONDS[window] // STEP_SECONDS[step]
+
+    def share(avg, series):
+        return (f"1 - (1 - {avg}) * count_over_time(({series})[{window}:{step}]) / {steps_in_window}")
+
+    gateway = f'min(wojtus_gateway_connected{{job="wojtusdiscord"}}) or on () (0 * {up})'
+    out = []
+    for name, series in (("Bot process", 'up{job="wojtusdiscord"}'),
+                         ("Gateway", None),
+                         ("Public URL", 'probe_success{job="wojtusdiscord-http"}'),
+                         ("Postgres", 'pg_up{job="wojtus-postgres"}')):
+        if series is None:
+            out.append((name, share(f"avg_over_time(({gateway})[{window}:{step}])", gateway)))
+        else:
+            out.append((name, share(f"max(avg_over_time({series}[{window}]))", f"max({series})")))
+    return out
 
 
 class Dash:

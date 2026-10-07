@@ -11,6 +11,13 @@ import os
 
 from lib import ERRORS, FAILED, J, NOT_OK, xinc
 
+MS = "wojtus_meme_search_duration_seconds"
+API = 'http_route=~"/?api/.*"'
+# A 503 of the meme dashboard is an answer the bot chose (a cap or a wait that ran out):
+# WojtusMemeDashboardUnavailable judges those, WojtusApiServerErrors leaves them out.
+ERR_5XX = 'http_response_status_code=~"5..",http_response_status_code!="503"'
+HSC = "http_server_request_duration_seconds_count"
+
 PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "prometheus", "wojtusdiscord-alerts.yml")
 
 HEAD = r'''
@@ -204,23 +211,30 @@ b += rule("WojtusRestartLoop",
 b += rule("WojtusConversationCostHigh",
           f"sum({xi('wojtus_conversation_cost_usd_total', '', '24h', '5m')}) > 2", "10m",
           'Conversation cost is {{ $value | printf \\"%.2f\\" }} USD in 24 hours',
-          "Normal is a few cents a day. Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user.")
+          "Normal is a few cents a day. Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user.",
+          "The counter is what the provider billed for each call: the web search fee is inside it.")
 b += rule("WojtusConversationUsageAlert",
           f"sum by (cap)({xi('wojtus_conversation_usage_alerts_total', '', '1h')}) > 0", None,
           "Conversation cost cap {{ $labels.cap }} was crossed",
           "The bot's own cost-cap alert fired in the last hour. Read the usage_alerts table and decide whether to keep the assistant on.")
 b += rule("WojtusMemeSearchSlow",
-          f"""histogram_quantile(0.95, sum by (le)(increase(wojtus_meme_search_duration_seconds_bucket{{{J}}}[30m]))) > 2
-and sum(increase(wojtus_meme_search_duration_seconds_count{{{J}}}[30m])) >= 10""", "10m",
-          "Meme search p95 is {{ $value | humanizeDuration }}",
-          "At least 10 searches in 30 minutes and 5% of them took more than 2 s. Normal is about 0.8 s per page. Check Postgres load and the search query plan.",
-          "Buckets near the threshold end at 1 s and 2.5 s. increase() is enough here: the 10-sample floor\nalready needs a series that exists.")
+          f"""sum(increase({MS}_sum{{{J}}}[30m])) / sum(increase({MS}_count{{{J}}}[30m])) > 3
+and sum(increase({MS}_count{{{J}}}[30m])) >= 10""", "10m",
+          "Meme search takes {{ $value | humanizeDuration }} on average",
+          "At least 10 searches in 30 minutes took more than 3 s on average. Normal is 1.5 to 1.9 s. Open the Conversation & Memes dashboard, panel 'Mean search time by phase': a tall sql phase means Postgres (load, query plan).",
+          "Mean, not p95. Measured on prod 2026-10-06: 1.5 to 1.9 s per search (mean 1.58 s). The buckets\nnear that end at 1 s and 2.5 s, so the p95 of normal searches reads 2.4 s and the old rule\n(p95 > 2 s) fired on normal behaviour. The mean is exact; 3 s is 1.9 times the measured mean\nand the time Discord gives an interaction. increase() is enough here: the 10-search floor\nalready needs a series that exists.")
+b += rule("WojtusMemeDashboardUnavailable",
+          f"""sum by (endpoint)({xi('wojtus_meme_dashboard_unavailable_total', 'reason=~"busy|refresh_timeout|refresh_failed"', '15m')}) > 20""", "5m",
+          '{{ $value | printf \\"%.0f\\" }} meme dashboard requests to {{ $labels.endpoint }} answered 503 in 15 minutes',
+          "The meme dashboard could not answer: the answer was still being computed after the wait limit (busy), or Discord gave no fresh thumbnail URL (refresh_timeout, refresh_failed). Open the Conversation & Memes dashboard, panel 'Dashboard requests unavailable (503)', for the reason; then Postgres load for busy, the bot log and Discord status for a refresh failure.",
+          "Counted: busy, refresh_timeout, refresh_failed. Not counted: the caps doing their work\n(budget, wait_timeout, queue_full) and recent_failure (a failure of the last 30 s answered\nfrom memory: the failure itself is counted once).\nThreshold is a first guess: no baseline exists yet. Tune after a week of data.")
 b += rule("WojtusApiServerErrors",
-          f"""sum(increase(http_server_request_duration_seconds_count{{{J},http_route=~"/?api/.*",http_response_status_code=~"5.."}}[15m]))
-  / sum(increase(http_server_request_duration_seconds_count{{{J},http_route=~"/?api/.*"}}[15m])) > 0.1
-and sum(increase(http_server_request_duration_seconds_count{{{J},http_route=~"/?api/.*"}}[15m])) >= 20""", "5m",
+          f"""sum(increase({HSC}{{{J},{API},{ERR_5XX}}}[15m]))
+  / sum(increase({HSC}{{{J},{API}}}[15m])) > 0.1
+and sum(increase({HSC}{{{J},{API}}}[15m])) >= 20""", "5m",
           "{{ $value | humanizePercentage }} of dashboard API requests return 5xx",
-          "More than 10% of at least 20 /api requests in 15 minutes failed. Check the bot log for unhandled exceptions and the Runtime & HTTP dashboard for the route.")
+          "More than 10% of at least 20 /api requests in 15 minutes failed with a 5xx other than 503. Check the bot log for unhandled exceptions and the Runtime & HTTP dashboard for the route.",
+          "503 is left out: the meme dashboard answers it on purpose (WojtusMemeDashboardUnavailable).")
 b += rule("WojtusBotMemoryHigh",
           'docker_container_memory_anon_bytes{name="discord-event-service"} > 1024 * 1024 * 1024', "30m",
           "The bot uses {{ $value | humanize1024 }}B of process memory",
@@ -264,7 +278,7 @@ and
 sum by (command)({xi('wojtus_command_executions_total', 'outcome="failed"', '1h')})
   / sum by (command)({xi('wojtus_command_executions_total', '', '1h')}) > 0.3""", None,
           'Slash command {{ $labels.command }} fails',
-          "At least 3 executions of /{{ $labels.command }} ended with an unhandled exception in one hour, more than 30% of its runs. Search the bot log for the command name.",
+          "At least 3 executions of /{{ $labels.command }} failed in one hour, more than 30% of its runs: an exception left the command, or the command caught its own error and told the user (/meme). Search the bot log for the command name.",
           "Only 'failed' counts: check_failed, bad_argument and cancelled are the user's side.")
 b += rule("WojtusFkUnresolvedBurst",
           f"sum by (entity)({xi('wojtus_fk_unresolved_total', '', '15m')}) > 20", "5m",

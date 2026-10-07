@@ -1159,7 +1159,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Cost of conversation and meme vision model calls in the last 24 hours. The conversation alert fires above 2 USD."
+      "description": "Cost of conversation and meme vision model calls in the last 24 hours. The conversation cost is what the provider billed for the call, so it holds the web search fee already. The conversation alert fires above 2 USD."
     },
     {
       "type": "stat",
@@ -1557,7 +1557,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time(up{job=\"wojtusdiscord\"}[7d])",
+          "expr": "1 - (1 - max(avg_over_time(up{job=\"wojtusdiscord\"}[7d]))) * count_over_time((max(up{job=\"wojtusdiscord\"}))[7d:1m]) / 10080",
           "refId": "A",
           "legendFormat": "Bot process",
           "editorMode": "code",
@@ -1569,9 +1569,9 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[7d:1m])",
+          "expr": "1 - (1 - avg_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[7d:1m])) * count_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[7d:1m]) / 10080",
           "refId": "B",
-          "legendFormat": "Discord gateway",
+          "legendFormat": "Gateway",
           "editorMode": "code",
           "instant": true,
           "range": false
@@ -1581,7 +1581,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time(probe_success{job=\"wojtusdiscord-http\"}[7d])",
+          "expr": "1 - (1 - max(avg_over_time(probe_success{job=\"wojtusdiscord-http\"}[7d]))) * count_over_time((max(probe_success{job=\"wojtusdiscord-http\"}))[7d:1m]) / 10080",
           "refId": "C",
           "legendFormat": "Public URL",
           "editorMode": "code",
@@ -1593,7 +1593,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "avg_over_time(pg_up{job=\"wojtus-postgres\"}[7d])",
+          "expr": "1 - (1 - max(avg_over_time(pg_up{job=\"wojtus-postgres\"}[7d]))) * count_over_time((max(pg_up{job=\"wojtus-postgres\"}))[7d:1m]) / 10080",
           "refId": "D",
           "legendFormat": "Postgres",
           "editorMode": "code",
@@ -1650,7 +1650,7 @@
           "valueSize": 18
         }
       },
-      "description": "Share of the last 7 days each part was up: bot process, Discord gateway, public URL, Postgres. Green from 99.9%, yellow from 99%. The window holds only the time since a series exists, and one deploy costs the bot about 0.01% of a week."
+      "description": "1 minus the time each part was seen down, as a share of the full 7 days: bot process, Discord gateway, public URL, Postgres. Green from 99.9% (10 minutes down in a week), yellow from 99%. A deploy restart counts as down time: about 15 s, 0.0025% of a week, so a few deploys a day stay green and a crash loop does not. Time before a series existed counts as up."
     },
     {
       "type": "stat",
@@ -1856,7 +1856,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/(cancelled|skipped|debug|trace)/"
+              "options": "/(cancelled|skipped|debug|trace|existing)/"
             },
             "properties": [
               {
@@ -2241,7 +2241,7 @@
           "hideZeros": false
         }
       },
-      "description": "Time one gateway event spends in the event pipeline, all event types. No point when no event arrives."
+      "description": "Time one gateway event spends in the event pipeline, all event types. No point when no event arrives. A spike at a bot start is the guild replay (GuildCreated). No trace exemplars: a gateway event runs outside any trace."
     },
     {
       "type": "timeseries",

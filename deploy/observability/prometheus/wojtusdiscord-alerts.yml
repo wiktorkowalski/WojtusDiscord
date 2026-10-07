@@ -235,6 +235,7 @@ groups:
           summary: "The bot restarted {{ $value | printf \"%.0f\" }} times in one hour"
           description: "Check 'docker logs discord-event-service' for the exception before each exit, and docker_container_memory_oom_kills_total for an OOM kill."
 
+      # The counter is what the provider billed for each call: the web search fee is inside it.
       - alert: WojtusConversationCostHigh
         expr: |
           sum(sum_over_time(((wojtus_conversation_cost_usd_total{job="wojtusdiscord"} - (((last_over_time(wojtus_conversation_cost_usd_total{job="wojtusdiscord"}[10m] offset 5m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 900)) or (wojtus_conversation_cost_usd_total{job="wojtusdiscord"} offset 5m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 900))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 5m))) >= 0) or (wojtus_conversation_cost_usd_total{job="wojtusdiscord"} + 0))[24h:5m])) > 2
@@ -256,23 +257,42 @@ groups:
           summary: "Conversation cost cap {{ $labels.cap }} was crossed"
           description: "The bot's own cost-cap alert fired in the last hour. Read the usage_alerts table and decide whether to keep the assistant on."
 
-      # Buckets near the threshold end at 1 s and 2.5 s. increase() is enough here: the 10-sample floor
+      # Mean, not p95. Measured on prod 2026-10-06: 1.5 to 1.9 s per search (mean 1.58 s). The buckets
+      # near that end at 1 s and 2.5 s, so the p95 of normal searches reads 2.4 s and the old rule
+      # (p95 > 2 s) fired on normal behaviour. The mean is exact; 3 s is 1.9 times the measured mean
+      # and the time Discord gives an interaction. increase() is enough here: the 10-search floor
       # already needs a series that exists.
       - alert: WojtusMemeSearchSlow
         expr: |
-          histogram_quantile(0.95, sum by (le)(increase(wojtus_meme_search_duration_seconds_bucket{job="wojtusdiscord"}[30m]))) > 2
+          sum(increase(wojtus_meme_search_duration_seconds_sum{job="wojtusdiscord"}[30m])) / sum(increase(wojtus_meme_search_duration_seconds_count{job="wojtusdiscord"}[30m])) > 3
           and sum(increase(wojtus_meme_search_duration_seconds_count{job="wojtusdiscord"}[30m])) >= 10
         for: 10m
         labels:
           severity: warning
           service: wojtusdiscord
         annotations:
-          summary: "Meme search p95 is {{ $value | humanizeDuration }}"
-          description: "At least 10 searches in 30 minutes and 5% of them took more than 2 s. Normal is about 0.8 s per page. Check Postgres load and the search query plan."
+          summary: "Meme search takes {{ $value | humanizeDuration }} on average"
+          description: "At least 10 searches in 30 minutes took more than 3 s on average. Normal is 1.5 to 1.9 s. Open the Conversation & Memes dashboard, panel 'Mean search time by phase': a tall sql phase means Postgres (load, query plan)."
 
+      # Counted: busy, refresh_timeout, refresh_failed. Not counted: the caps doing their work
+      # (budget, wait_timeout, queue_full) and recent_failure (a failure of the last 30 s answered
+      # from memory: the failure itself is counted once).
+      # Threshold is a first guess: no baseline exists yet. Tune after a week of data.
+      - alert: WojtusMemeDashboardUnavailable
+        expr: |
+          sum by (endpoint)(sum_over_time(((wojtus_meme_dashboard_unavailable_total{job="wojtusdiscord",reason=~"busy|refresh_timeout|refresh_failed"} - (((last_over_time(wojtus_meme_dashboard_unavailable_total{job="wojtusdiscord",reason=~"busy|refresh_timeout|refresh_failed"}[10m] offset 1m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 660)) or (wojtus_meme_dashboard_unavailable_total{job="wojtusdiscord",reason=~"busy|refresh_timeout|refresh_failed"} offset 1m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 660))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 1m))) >= 0) or (wojtus_meme_dashboard_unavailable_total{job="wojtusdiscord",reason=~"busy|refresh_timeout|refresh_failed"} + 0))[15m:1m])) > 20
+        for: 5m
+        labels:
+          severity: warning
+          service: wojtusdiscord
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} meme dashboard requests to {{ $labels.endpoint }} answered 503 in 15 minutes"
+          description: "The meme dashboard could not answer: the answer was still being computed after the wait limit (busy), or Discord gave no fresh thumbnail URL (refresh_timeout, refresh_failed). Open the Conversation & Memes dashboard, panel 'Dashboard requests unavailable (503)', for the reason; then Postgres load for busy, the bot log and Discord status for a refresh failure."
+
+      # 503 is left out: the meme dashboard answers it on purpose (WojtusMemeDashboardUnavailable).
       - alert: WojtusApiServerErrors
         expr: |
-          sum(increase(http_server_request_duration_seconds_count{job="wojtusdiscord",http_route=~"/?api/.*",http_response_status_code=~"5.."}[15m]))
+          sum(increase(http_server_request_duration_seconds_count{job="wojtusdiscord",http_route=~"/?api/.*",http_response_status_code=~"5..",http_response_status_code!="503"}[15m]))
             / sum(increase(http_server_request_duration_seconds_count{job="wojtusdiscord",http_route=~"/?api/.*"}[15m])) > 0.1
           and sum(increase(http_server_request_duration_seconds_count{job="wojtusdiscord",http_route=~"/?api/.*"}[15m])) >= 20
         for: 5m
@@ -281,7 +301,7 @@ groups:
           service: wojtusdiscord
         annotations:
           summary: "{{ $value | humanizePercentage }} of dashboard API requests return 5xx"
-          description: "More than 10% of at least 20 /api requests in 15 minutes failed. Check the bot log for unhandled exceptions and the Runtime & HTTP dashboard for the route."
+          description: "More than 10% of at least 20 /api requests in 15 minutes failed with a 5xx other than 503. Check the bot log for unhandled exceptions and the Runtime & HTTP dashboard for the route."
 
       # Anonymous memory is process memory without the page cache. The container has no limit.
       - alert: WojtusBotMemoryHigh
@@ -384,7 +404,7 @@ groups:
           service: wojtusdiscord
         annotations:
           summary: "Slash command {{ $labels.command }} fails"
-          description: "At least 3 executions of /{{ $labels.command }} ended with an unhandled exception in one hour, more than 30% of its runs. Search the bot log for the command name."
+          description: "At least 3 executions of /{{ $labels.command }} failed in one hour, more than 30% of its runs: an exception left the command, or the command caught its own error and told the user (/meme). Search the bot log for the command name."
 
       # Threshold is a first guess: no baseline exists yet. Tune after a week of data.
       - alert: WojtusFkUnresolvedBurst

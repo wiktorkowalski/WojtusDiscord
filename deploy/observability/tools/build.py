@@ -74,6 +74,18 @@ def meanx(metric, extra="", rng=R, by=""):
 
 
 HTTP = 'job="wojtusdiscord-http"'
+EX = (" A dot is one request with a trace (an exemplar): click it to open the trace in Tempo."
+      " Only a request inside a kept trace has one.")
+# Event types that arrive only when the bot connects: each start replays the guild.
+BOOT_TYPES = 'event_type!~"GuildCreated|GuildMembersChunked|ThreadListSynced"'
+MSG_KIND_COLORS = {"text": BLUE, "attachment": ORANGE, "embed": PURPLE, "sticker": TEAL, "empty": NEUTRAL}
+PHASE_COLORS = {"tokenize": PURPLE, "sql": BLUE, "map": TEAL}
+
+
+def buckets(title, metric, desc, extra="", w_unit="short"):
+    """One bar per histogram bucket, named by its upper bound, over the range."""
+    return bargauge(title, f"sum by (le)({xi(metric + '_bucket', extra, R)})", unit=w_unit, legend="{{le}}",
+                    fmt="heatmap", decimals=0, desc=desc)
 EVENTS_LINK = link("Open this event type on Events & Ingest", "/d/wojtus-events/?var-event_type=${__field.labels.event_type}")
 HC = "wojtus_healthcheck_"
 
@@ -93,9 +105,10 @@ def uptime_panel(window, step, decimals, orientation):
     days = window[:-1]
     p = stat(f"Uptime, {days} d", "", unit="percentunit", decimals=decimals, thresholds=AVAILABILITY,
              text_mode="value_and_name",
-             desc=f"Share of the last {days} days each part was up: bot process, Discord gateway, public URL,"
-                  " Postgres. Green from 99.9%, yellow from 99%. The window holds only the time since a series"
-                  " exists, and one deploy costs the bot about 0.01% of a week.")
+             desc=f"1 minus the time each part was seen down, as a share of the full {days} days: bot process,"
+                  " Discord gateway, public URL, Postgres. Green from 99.9% (10 minutes down in a week), yellow"
+                  " from 99%. A deploy restart counts as down time: about 15 s, 0.0025% of a week, so a few"
+                  " deploys a day stay green and a crash loop does not. Time before a series existed counts as up.")
     p["targets"] = [q(e, name, instant=True, ref="ABCD"[i]) for i, (name, e) in enumerate(availability_exprs(window, step))]
     p["options"]["orientation"] = orientation
     if orientation == "horizontal":
@@ -191,7 +204,8 @@ def overview():
                unit="currencyUSD", decimals=2, no_value="$0.00",
                thresholds=steps((GOOD, None), (WARN, 1), (CRIT, 2)),
                desc="Cost of conversation and meme vision model calls in the last 24 hours. The conversation"
-                    " alert fires above 2 USD."), 3, 3)
+                    " cost is what the provider billed for the call, so it holds the web search fee already."
+                    " The conversation alert fires above 2 USD."), 3, 3)
     d.add(stat("Restarts, 24 h", f"sum(changes(wojtus_process_start_time_seconds{{{J}}}[24h]))", decimals=0,
                no_value="0", thresholds=steps((GOOD, None), (WARN, 4), (CRIT, 10)),
                desc="Process starts in the last 24 hours. A deploy is one restart; a few a day is normal."), 3, 3)
@@ -225,7 +239,8 @@ def overview():
                                   q(hq(0.95, "wojtus_event_handler_duration_seconds"), "p95")],
              unit="s", colors={"p50": BLUE, "p95": ORANGE},
              desc="Time one gateway event spends in the event pipeline, all event types."
-                  " No point when no event arrives."), 8, 8)
+                  " No point when no event arrives. A spike at a bot start is the guild replay"
+                  " (GuildCreated). No trace exemplars: a gateway event runs outside any trace."), 8, 8)
     d.add(with_links(bars("Log events: warning and above",
                [q(f'sum by (level)({xi("wojtus_log_events_total", WARNINGS_UP)})', "{{level}}")],
                "Log events per interval that passed the level filter, counted in the bot. Click a bar for"
@@ -305,9 +320,12 @@ def events():
     d.add(stat("Dead letters", f'sum({xi("wojtus_event_dead_letters_total", E, R)})', decimals=0, no_value="0",
                thresholds=steps((GOOD, None), (CRIT, 1)),
                desc="Failures the database refused, written to the JSONL fallback file in the range."), 4, 4)
-    d.add(stat("Handler p95", hq(0.95, HD, E, R), unit="s",
+    d.add(stat("Handler p95", hq(0.95, HD, sel(E, BOOT_TYPES), R), unit="s", no_value="n/a",
                thresholds=steps((GOOD, None), (WARN, 0.5), (CRIT, 2)),
-               desc="95th percentile of the time an event spends in the pipeline, over the range."), 4, 4)
+               desc="95th percentile of the time an event spends in the pipeline, over the range. Without"
+                    " the event types that arrive only when the bot connects (GuildCreated,"
+                    " GuildMembersChunked, ThreadListSynced): one guild replay of 250 to 500 ms at a start"
+                    " was the whole p95 of a quiet night. 'Handler p95 by type' below shows them."), 4, 4)
     d.add(stat("Failed share", f'sum({xi(EV, sel(E, FAILED), R)}) / sum({xi(EV, E, R)})',
                unit="percentunit", decimals=2, no_value="0%",
                thresholds=steps((GOOD, None), (WARN, 0.01), (CRIT, 0.05)),
@@ -329,10 +347,45 @@ def events():
                    decimals=0, desc="95th percentile of the JSON size stored in raw_event_logs, over the range."
                                     " Buckets end at 1 MiB."), 8, 10)
 
+    d.row("Messages")
+    MS, ML, MA = "wojtus_messages_total", "wojtus_message_length", "wojtus_message_attachments"
+    msgs = f"sum({xi(MS, '', R)})"
+    d.add(stat("Messages", msgs, decimals=0, no_value="0",
+               desc="Guild messages created in the range, counted from the event itself: a message whose"
+                    " database write fails still counts. Not filtered by the event type picker." + BIRTH), 4, 4)
+    d.add(stat("From humans", f"sum({xi(MS, AUTHOR_HUMAN, R)}) / ({msgs} > 0)", unit="percentunit", decimals=0,
+               no_value="n/a", desc="Share of the messages in the range that a person wrote. The rest are bots,"
+                                    " this bot included."), 4, 4)
+    d.add(stat("Replies", f"sum({xi(MS, IS_REPLY, R)}) / ({msgs} > 0)", unit="percentunit", decimals=0,
+               no_value="n/a", desc="Share of the messages in the range that reply to another message."), 4, 4)
+    d.add(stat("With an attachment",
+               f"1 - sum({xi(MA + '_bucket', LE_ZERO, R)}) / (sum({xi(MA + '_count', '', R)}) > 0)",
+               unit="percentunit", decimals=0, no_value="n/a",
+               desc="Share of the messages in the range with at least one attachment."), 4, 4)
+    d.add(stat("Mean length", meanx(ML), unit="none", decimals=0, no_value="n/a",
+               desc="Mean length of a message in characters, over the range. A message with only an"
+                    " attachment has length 0."), 4, 4)
+    d.add(stat("Median length", hqx(0.5, ML), unit="none", decimals=0, no_value="n/a",
+               desc="Median length of a message in characters, over the range: an estimate from the"
+                    " buckets 0, 1, 10, 25, 50, 100, 200, 500, 1000, 2000, 4000."), 4, 4)
+    d.add(bars("Messages per minute by kind", [q(f"sum by (kind)({xi(MS)}){PER_MIN}", "{{kind}}")],
+               "Guild messages by content kind. The kind is the first that holds of: attachment, sticker,"
+               " embed, text, empty." + BIRTH, colors=MSG_KIND_COLORS, decimals=1), 9, 9)
+    d.add(bars("Messages by author", [q(f"sum by (author)({xi(MS)})", "{{author}}")],
+               "Messages per interval by author type: human or bot.",
+               colors={"human": BLUE, "bot": NEUTRAL}), 5, 9)
+    d.add(buckets("Message length", ML,
+                  "Messages in the range by length in characters. Each bar is a bucket, named by its upper"
+                  " bound: 0 (no text), 1, 10, 25, 50, 100, 200, 500, 1000, 2000, 4000, +Inf."), 5, 9)
+    d.add(buckets("Attachments per message", MA,
+                  "Messages in the range by attachment count. Each bar is a bucket, named by its upper"
+                  " bound: 0, 1, 2, 3, 5, 10, +Inf."), 5, 9)
+
     d.row("Handler duration")
     d.add(ts("Handler duration percentiles", [q(hq(0.5, HD, E), "p50"), q(hq(0.95, HD, E), "p95"), q(hq(0.99, HD, E), "p99")],
              unit="s", colors={"p50": BLUE, "p95": ORANGE, "p99": PINK},
-             desc="Time one gateway event spends in the event pipeline, selected event types."), 8, 9)
+             desc="Time one gateway event spends in the event pipeline, selected event types. No trace"
+                  " exemplars here: a gateway event runs outside any trace, so there is no trace to open."), 8, 9)
     d.add(heatmap("Handler duration heatmap", f"sum by (le)(increase({HD}_bucket{{{sel(J, E)}}}[$__interval]))",
                   "Events per duration bucket and interval. Bucket bounds: 5 ms to 30 s."), 8, 9)
     d.add(bargauge("Handler p95 by type", f"sort_desc({hq(0.95, HD, E, R, by='event_type')} > 0)", unit="s",
@@ -389,10 +442,17 @@ def events():
              [q(f"time() - max by (kind)(wojtus_last_event_by_kind_timestamp_seconds{{{J}}} > 0)", "{{kind}}")],
              unit="s", colors={"message": BLUE, "presence": PURPLE, "voice": TEAL, "other": NEUTRAL},
              desc="Time since the last gateway event of each kind. A sawtooth: it grows until the next event."
-                  " Long teeth at night are normal."), 16, 7)
+                  " Long teeth at night are normal."), 10, 8)
     d.add(ts("Members in voice channels", [q(f"max(wojtus_voice_members{{{J}}})", "members")], unit="short",
              decimals=0, fixed=TEAL, legend=False, line_interp="stepAfter",
-             desc="Members connected to a voice channel now, as the bot's cache sees them."), 8, 7)
+             desc="Members connected to a voice channel now, as the bot's cache sees them."), 6, 8)
+    d.add(bars("Voice state changes",
+               [q(f'sum by (change)({xi("wojtus_voice_state_changes_total")})', "{{change}}")],
+               "Voice state changes per interval: join, leave, move, mute, unmute, deafen, undeafen,"
+               " stream_start, stream_stop, video_start, video_stop, and 'other' (a change of none of"
+               " these, such as a suppress flag). One event can count more than one change. Mute and"
+               " deafen do not tell the member's own switch from the server's." + BIRTH,
+               legend_table=True), 8, 8)
 
     d.row("Health checks and downtime")
     d.add(state_timeline("Health checks", [q(f"max by (check)({HC}failing{{{J}}})", "{{check}}")],
@@ -422,11 +482,14 @@ def events():
     d.row("Database writes")
     d.add(bars("Upserts per minute by entity",
                [q(f'sum by (entity)({xi("wojtus_upserts_total")}){PER_MIN}', "{{entity}}")],
-               "Entity upserts (guild, channel, user, member, ...) per minute." + BIRTH, decimals=1, legend_table=True), 9, 8)
+               "Entity upserts and insert-or-get writes (guild, channel, user, member, message, ...) per"
+               " minute." + BIRTH, decimals=1, legend_table=True), 9, 8)
     d.add(bars("Upserts per minute by result",
                [q(f'sum by (result)({xi("wojtus_upserts_total")}){PER_MIN}', "{{result}}")],
-               "The same upserts by result. 'conflict' means another writer won the race and the row was read back.",
-               colors={"inserted": GOOD, "updated": BLUE, "conflict": WARN}, decimals=1), 5, 8)
+               "The same writes by result. 'conflict' means another writer won the race and the row was then"
+               " updated. 'existing' is an insert-or-get that found the row and left it as it was"
+               " (a message that arrives twice).",
+               colors={"inserted": GOOD, "updated": BLUE, "existing": NEUTRAL, "conflict": WARN}, decimals=1), 5, 8)
     d.add(bars("Foreign keys not resolved",
                [q(f'sum by (entity)({xi("wojtus_fk_unresolved_total")})', "{{entity}}")],
                "Required foreign keys FkResolver could not resolve, by entity. Each one is an event whose row"
@@ -473,28 +536,37 @@ def ai():
 
     d.add(text("**What do the assistant and the meme search do, how long do they take, what do they cost?** Volume is low: widen the time range for history."), 24, 2)
     d.row("Conversation")
+    fee = (" The cost is what the provider billed for the call: it holds the web search fee already,"
+           " so the fee is not added a second time.")
     d.add(stat("Turns", f"sum({xi(C + 'turns_total', '', R)})", decimals=0, no_value="0",
-               desc="Conversation turns in the range." + BIRTH), 4, 4)
+               desc="Conversation turns in the range." + BIRTH), 3, 4)
     d.add(stat("Failed turns", f"sum({xi(C + 'turns_total', NOT_OK, R)})", decimals=0,
                no_value="0", thresholds=steps((GOOD, None), (CRIT, 1)),
-               desc="Turns in the range that ended in a timeout or an error."), 4, 4)
+               desc="Turns in the range that ended in a timeout or an error."), 3, 4)
     d.add(stat("Cost, 24 h", f"sum({xi(C + 'cost_usd_total', '', '24h', '5m')})", unit="currencyUSD", decimals=2,
-               no_value="$0.00", thresholds=cost_t, desc="Cost of conversation model calls, last 24 hours."), 4, 4)
+               no_value="$0.00", thresholds=cost_t,
+               desc="Cost of conversation model calls, last 24 hours." + fee), 3, 4)
     d.add(stat("Cost, 7 d", f"sum({xi(C + 'cost_usd_total', '', '7d', '5m')})", unit="currencyUSD", decimals=2,
-               no_value="$0.00", desc="Cost of conversation model calls, last 7 days."), 4, 4)
+               no_value="$0.00", desc="Cost of conversation model calls, last 7 days." + fee), 3, 4)
     d.add(stat("Cost, 30 d", f"sum({xi(C + 'cost_usd_total', '', '30d', '5m')})", unit="currencyUSD", decimals=2,
-               no_value="$0.00", desc="Cost of conversation model calls, last 30 days."), 4, 4)
+               no_value="$0.00", desc="Cost of conversation model calls, last 30 days." + fee), 3, 4)
+    d.add(stat("Web fee, 30 d", f"sum({xi(C + 'web_search_cost_usd_total', '', '30d', '5m')})",
+               unit="currencyUSD", decimals=2, no_value="$0.00",
+               desc="The part of 'Cost, 30 d' that is the web search fee: the cost of a call less the cost of"
+                    " the model itself. Zero when the provider did not report both costs."), 3, 4)
+    d.add(stat("Web search", f"sum({xi(C + 'web_search_requests_total', '', R)})", decimals=0, no_value="0",
+               desc="Web searches the provider ran for conversation model calls in the range."), 3, 4)
     d.add(stat("Retries", f"sum({xi(C + 'retries_total', '', R)})", decimals=0, no_value="0",
                thresholds=steps((GOOD, None), (WARN, 1)),
-               desc="Model calls in the range that were a second or later attempt of a round."), 4, 4)
+               desc="Model calls in the range that were a second or later attempt of a round."), 3, 4)
 
     d.add(bars("Turns by outcome", [q(f"sum by (outcome)({xi(C + 'turns_total')})", "{{outcome}}")],
                "Conversation turns per interval." + BIRTH, colors="outcome"), 8, 8)
     d.add(ts("Turn duration", [q(meanx(C + "turn_duration_seconds", rng=IV), "mean"),
-                               q(hqx(0.95, C + "turn_duration_seconds", rng=IV), "p95")],
+                               q(hqx(0.95, C + "turn_duration_seconds", rng=IV), "p95", exemplar=True)],
              unit="s", points="always", min_interval="1m", colors={"mean": BLUE, "p95": ORANGE},
              desc="Time from the start of a turn to its last message, for the turns that ended in each"
-                  " interval. One point per interval with a turn."), 8, 8)
+                  " interval. One point per interval with a turn." + EX), 8, 8)
     d.add(bars("Cost by model", [q(f"sum by (model)({xi(C + 'cost_usd_total')})", "{{model}}")],
                "Cost of conversation model calls per interval, by model.", unit="currencyUSD", decimals=3), 8, 8)
     d.add(bars("Tokens by model and direction",
@@ -507,19 +579,45 @@ def ai():
         "Model calls of the conversation loop per interval, one per usage ledger row. A retry is a"
         " second or later attempt of a round and is also a round.", colors="outcome", stack=False), 8, 8)
     d.add(ts("Round latency by model", [q(meanx(C + "round_duration_seconds", rng=IV, by="model"), "{{model}} mean"),
-                                        q(hqx(0.95, C + "round_duration_seconds", rng=IV, by="model"), "{{model}} p95")],
+                                        q(hqx(0.95, C + "round_duration_seconds", rng=IV, by="model"), "{{model}} p95",
+                                          exemplar=True)],
              unit="s", points="always", min_interval="1m",
-             desc="Latency of one conversation model call, for the calls in each interval."), 8, 8)
+             desc="Latency of one conversation model call, for the calls in each interval." + EX), 8, 8)
+    d.add(ts("First token latency by model",
+             [q(meanx(C + "first_token_seconds", rng=IV, by="model"), "{{model}} mean"),
+              q(hqx(0.95, C + "first_token_seconds", rng=IV, by="model"), "{{model}} p95", exemplar=True)],
+             unit="s", points="always", min_interval="1m",
+             desc="Time from the start of a model call to its first visible text: what the person waits"
+                  " before the answer starts. Reasoning and tool-call chunks come before it. A call that"
+                  " ends with tool calls only records nothing." + EX), 8, 8)
+    d.add(ts("Context size by model",
+             [q(meanx(C + "context_messages", rng=IV, by="model"), "{{model}} mean"),
+              q(hqx(0.95, C + "context_messages", rng=IV, by="model"), "{{model}} p95")],
+             unit="none", decimals=0, points="always", min_interval="1m",
+             desc="Messages sent to the model in one call: system prompt, memory window and tool results."
+                  " The p95 is an estimate from the buckets 0, 1, 2, 5, 10, 25, 50, 100: above 100 it"
+                  " reads 100. A larger context costs more input tokens."), 8, 8)
+    d.add(bars("Web searches", [
+        q(f"sum by (model)({xi(C + 'web_search_requests_total')})", "{{model}} searches")],
+        "Web searches the provider ran for conversation model calls, per interval and model. The fee is on the"
+         " 'Web search fee' panel: a count and a cost do not share one axis."), 4, 8)
+    d.add(bars("Web search fee", [q(f"sum by (model)({xi(C + 'web_search_cost_usd_total')})", "{{model}}")],
+               "Web search fee per interval and model: the cost of a call less the cost of the model itself. It is a"
+               " part of 'Cost by model', not an addition to it.", unit="currencyUSD", decimals=3), 4, 8)
     d.add(bargauge("Tool calls by tool", f"sort_desc(sum by (tool)({xi(C + 'tool_calls_total', '', R)}))",
-                   legend="{{tool}}", decimals=0, desc="Conversation tool calls in the range, by tool."), 6, 8)
+                   legend="{{tool}}", decimals=0, desc="Conversation tool calls in the range, by tool."), 5, 8)
     d.add(bars("Tool calls by outcome", [q(f"sum by (outcome)({xi(C + 'tool_calls_total')})", "{{outcome}}")],
                "Tool calls per interval. 'error' means the tool threw and the model got the error text;"
-               " 'unknown_tool' means the model invented a tool name.", colors="outcome"), 6, 8)
-    d.add(bargauge("Tool duration p95 by tool",
+               " 'unknown_tool' means the model invented a tool name.", colors="outcome"), 5, 8)
+    d.add(bargauge("Tool p95 by tool",
                    f"sort_desc({hqx(0.95, C + 'tool_duration_seconds', '', R, by='tool')} > 0)", unit="s",
-                   legend="{{tool}}", desc="95th percentile of the time one tool call takes, over the range."), 6, 8)
+                   legend="{{tool}}", desc="95th percentile of the time one tool call takes, over the range."), 4, 8)
+    d.add(ts("Tool duration p95 over time",
+             [q(hqx(0.95, C + "tool_duration_seconds", rng=IV, by="tool"), "{{tool}}", exemplar=True)],
+             unit="s", points="always", min_interval="1m",
+             desc="95th percentile of the time one tool call takes, for the calls in each interval, by tool." + EX), 6, 8)
     d.add(bars("Usage alerts by cap", [q(f"sum by (cap)({xi(C + 'usage_alerts_total')})", "{{cap}}")],
-               "Cost-cap alerts the bot fired, per interval."), 6, 8)
+               "Cost-cap alerts the bot fired, per interval."), 4, 8)
 
     d.add(logs("Conversation turns (log)", '{container_name="discord-event-service"} |= "Conversation turn "',
                "One line per conversation turn: outcome, invoker, rounds, tools, cost, duration, trace id,"
@@ -532,8 +630,9 @@ def ai():
                "Slash command executions per interval." + BIRTH), 8, 8)
     d.add(bars("Command executions by outcome",
                [q(f"sum by (outcome)({xi(CD + 'executions_total')})", "{{outcome}}")],
-               "ok, failed (an exception left the command), check_failed, bad_argument, not_executable or"
-               " cancelled. A command that catches its own error counts as ok.", colors="outcome"), 6, 8)
+               "ok, failed, check_failed, bad_argument, not_executable or cancelled. 'failed' is an exception"
+               " that left the command, or an error the command caught and answered itself (/meme does"
+               " that when its search fails).", colors="outcome"), 6, 8)
     d.add(bargauge("Command p95",
                    f"sort_desc({hqx(0.95, CD + 'duration_seconds', '', R, by='command')} > 0)", unit="s",
                    legend="{{command}}", thresholds=steps((GOOD, None), (WARN, 1.5), (CRIT, 3)),
@@ -546,38 +645,70 @@ def ai():
 
     M = "wojtus_meme_"
     SD = M + "search_duration_seconds"
-    lat_t = steps((GOOD, None), (WARN, 0.8), (CRIT, 2))
+    SP = M + "search_phase_duration_seconds"
+    # Measured on prod 2026-10-06: 1.5 to 1.9 s per search (mean 1.58 s). Buckets near it end at
+    # 1 s and 2.5 s, so the p95 of normal searches reads up to 2.5 s. Yellow from 2.5 s, red from
+    # 3 s: the WojtusMemeSearchSlow alert (mean above 3 s) and the time Discord gives an interaction.
+    lat_t = steps((GOOD, None), (WARN, 2.5), (CRIT, 3))
     d.row("Meme search")
     d.add(stat("Searches", f"sum({xi(M + 'searches_total', '', R)})", decimals=0, no_value="0",
                desc="Meme searches in the range, every caller." + BIRTH), 6, 4)
     d.add(stat("Mean search latency", meanx(SD), unit="s", thresholds=lat_t, no_value="n/a",
                desc="Mean time of one meme search over the range. This value is exact; the percentiles"
-                    " are estimates from buckets."), 6, 4)
+                    " are estimates from buckets. Measured on prod: 1.5 to 1.9 s (issue #401 expected"
+                    " 0.8 s). Yellow from 2.5 s, red from 3 s (the alert)."), 6, 4)
     d.add(stat("Search latency p95", hqx(0.95, SD), unit="s", thresholds=lat_t, no_value="n/a",
-               desc="95th percentile over the range. Bucket bounds near the target are 0.5 s, 1 s and"
-                    " 2.5 s, so the value is coarse between them."), 6, 4)
+               desc="95th percentile over the range, an estimate from buckets that end at 1 s and 2.5 s:"
+                    " searches of 1.5 to 1.9 s read as up to 2.4 s. Above 2.5 s means more than 5% of the"
+                    " searches took longer than 2.5 s."), 6, 4)
     d.add(stat("Searches with no hit",
                f"sum({xi(M + 'search_results_bucket', LE_ZERO, R)}) / sum({xi(M + 'search_results_count', '', R)})",
                unit="percentunit", decimals=0, no_value="n/a",
                desc="Share of search pages that returned no meme, over the range."), 6, 4)
-    d.add(ts("Meme search latency", [q(hqx(0.5, SD, rng=IV), "p50"), q(hqx(0.95, SD, rng=IV), "p95"),
+    d.add(ts("Meme search latency", [q(hqx(0.5, SD, rng=IV), "p50"), q(hqx(0.95, SD, rng=IV), "p95", exemplar=True),
                                      q(hqx(0.99, SD, rng=IV), "p99"), q(meanx(SD, rng=IV), "mean")],
              unit="s", points="always", min_interval="1m", threshold=lat_t,
              colors={"p50": BLUE, "p95": ORANGE, "p99": PINK, "mean": PURPLE},
-             desc="Time one meme search takes, for the searches in each interval. The lines mark 0.8 s"
-                  " (the known time per page on the full corpus) and 2 s (the alert). One point per"
-                  " interval with a search."), 16, 10)
+             desc="Time one meme search takes (tokenize and SQL; the map phase runs after it), for the"
+                  " searches in each interval. The lines mark 2.5 s and 3 s (the alert on the mean)."
+                  " The mean is exact; the percentiles are estimates from buckets that end at 1 s and"
+                  " 2.5 s. One point per interval with a search." + EX), 8, 10)
+    d.add(bars("Mean search time by phase", [q(meanx(SP, rng=IV, by="phase"), "{{phase}}")],
+               "Where the time of a search goes: mean time of each phase per interval, stacked. A bar is one"
+               " interval wide: zoom in, or read the two bar gauges below for the whole range."
+               " tokenize = split the query in memory, sql = the Postgres query, map = build the hits in"
+               " memory. tokenize plus sql is the search latency on the left; if sql is the tall part,"
+               " the time is in Postgres (issue #401).", unit="s", decimals=None, colors=PHASE_COLORS), 8, 10)
+    d.add(ts("Search phase p95", [q(hqx(0.95, SP, rng=IV, by="phase"), "{{phase}}", exemplar=True)],
+             unit="s", points="always", min_interval="1m", colors=PHASE_COLORS, log_y=True,
+             desc="95th percentile of each phase, for the searches in each interval, on a log axis: the"
+                  " phases differ by a factor of 1000 and more. An estimate from buckets: 0.1 ms to 10 s,"
+                  " near the SQL time they end at 1 s and 2.5 s." + EX), 8, 10)
+    d.add(bargauge("Phase share of search time",
+                   f"sum by (phase)({xi(SP + '_sum', '', R)}) / scalar(sum({xi(SP + '_sum', '', R)}))",
+                   unit="percentunit", legend="{{phase}}", decimals=1, vmax=1,
+                   desc="Each phase as a share of the total phase time of the searches in the range."), 6, 8)
+    d.add(bargauge("Search phase mean", meanx(SP, by="phase"), unit="s", legend="{{phase}}",
+                   desc="Mean time of each phase over the range. Exact: sum divided by count."), 6, 8)
     d.add(bargauge("Hits per search page",
                    f"sum by (le)({xi(M + 'search_results_bucket', '', R)})", legend="{{le}}", fmt="heatmap",
                    decimals=0, desc="Search pages in the range by hit count. Each bar is a bucket, named by"
-                                    " its upper bound: 0, 1, 2, 5, 10, 25, 50, 100, +Inf."), 8, 10)
+                                    " its upper bound: 0, 1, 2, 5, 10, 25, 50, 100, +Inf."), 6, 8)
+    d.add(bars("Dashboard requests unavailable (503)",
+               [q(f"sum by (endpoint, reason)({xi(M + 'dashboard_unavailable_total')})", "{{endpoint}} {{reason}}")],
+               "Meme dashboard requests answered 503, per interval. endpoint: index, search_usage or"
+               " thumbnail. reason: busy (the answer is being computed for another request), and for a"
+               " thumbnail wait_timeout, queue_full, budget (the caps), refresh_timeout, refresh_failed"
+               " (Discord gave no fresh URL) or recent_failure (a failure of the last minutes, answered"
+               " from memory). The browser retries a 503." + BIRTH), 6, 8)
     d.add(bars("Searches by caller", [q(f"sum by (caller)({xi(M + 'searches_total')})", "{{caller}}")],
-               "Meme searches per interval, by the kind of caller."), 12, 8)
+               "Meme searches per interval, by the kind of caller. 'Tester' is the dashboard."), 12, 8)
     d.add(ts("Mean search latency by caller", [q(meanx(SD, rng=IV, by="caller"), "{{caller}}")], unit="s",
              points="always", min_interval="1m", threshold=lat_t,
              desc="Mean time of one meme search per interval, by caller."), 12, 8)
 
-    d.row("Meme indexing")
+    # Collapsed: AutomaticIndexing is off in prod, so the row is empty outside a catch-up or an import.
+    d.row("Meme indexing (empty outside a catch-up or an import)", collapsed=True)
     d.add(bars("Index outcomes", [q(f"sum by (outcome)({xi(M + 'index_outcomes_total')})", "{{outcome}}")],
                "Meme indexing outcomes per attachment, per interval. AutomaticIndexing is off in prod, so"
                " this stays empty outside a catch-up.", colors="outcome"), 8, 8)
@@ -653,24 +784,29 @@ def runtime():
 
     d.row("ASP.NET Core (inbound HTTP)")
     probe_note = " Scrapes of /metrics and health checks of /health are left out."
-    d.add(ts("Requests per minute by route",
-             [q(f"sum by (http_request_method, http_route)(rate({HS}_count{{{sel(J, NOT_PROBE)}}}[$__rate_interval])) * 60",
-                "{{http_request_method}} {{http_route}}")],
-             unit="short", decimals=1, style="bars", stack=True, legend_table=True,
-             desc="Requests the bot served, by route template. An empty route is a request no endpoint"
-                  " matched (static file or 404)." + probe_note), 12, 9)
-    d.add(ts("Request duration percentiles", [q(hq(0.5, HS, NOT_PROBE), "p50"), q(hq(0.95, HS, NOT_PROBE), "p95"),
-                                              q(hq(0.99, HS, NOT_PROBE), "p99")],
-             unit="s", colors={"p50": BLUE, "p95": ORANGE, "p99": PINK},
-             desc="Duration of inbound requests, all routes." + probe_note), 12, 9)
-    d.add(bargauge("Request p95 by route", f"sort_desc({hq(0.95, HS, NOT_PROBE, R, by='http_route')} > 0)", unit="s",
-                   legend="{{http_route}}", thresholds=steps((GOOD, None), (WARN, 0.5), (CRIT, 2)),
-                   desc="95th percentile request duration per route over the range." + probe_note), 8, 9)
-    d.add(ts("Responses per minute by status code",
-             [q(f"sum by (http_response_status_code)(rate({HS}_count{{{sel(J, NOT_PROBE)}}}[$__rate_interval])) * 60",
-                "{{http_response_status_code}}")],
-             unit="short", decimals=1, style="bars", stack=True,
-             colors=None, desc="Responses by HTTP status code." + probe_note), 8, 9)
+    HSN = HS + "_count"
+    d.add(bars("Requests per minute by route",
+               [q(f"sum by (http_request_method, http_route)({xi(HSN, NOT_PROBE)}){PER_MIN}",
+                  "{{http_request_method}} {{http_route}}")],
+               "Requests the bot served, by route template. An empty route is a request no endpoint"
+               " matched (static file or 404)." + probe_note + BIRTH, decimals=1, legend_table=True), 12, 9)
+    d.add(ts("Request duration percentiles", [q(hqx(0.5, HS, NOT_PROBE, rng=IV), "p50"),
+                                              q(hqx(0.95, HS, NOT_PROBE, rng=IV), "p95", exemplar=True),
+                                              q(hqx(0.99, HS, NOT_PROBE, rng=IV), "p99")],
+             unit="s", colors={"p50": BLUE, "p95": ORANGE, "p99": PINK}, points="always", min_interval="1m",
+             desc="Duration of inbound requests, all routes, for the requests in each interval. One point"
+                  " per interval with a request." + probe_note + EX), 12, 9)
+    d.add(bargauge("Request p95 by route", f"sort_desc({hqx(0.95, HS, NOT_PROBE, R, by='http_route')} > 0)", unit="s",
+                   legend="{{http_route}}", thresholds=steps((GOOD, None), (WARN, 2.5), (CRIT, 5)),
+                   desc="95th percentile request duration per route over the range. Yellow from 2.5 s, red"
+                        " from 5 s: the meme search route takes 1.5 to 1.9 s (see Conversation & Memes), and"
+                        " its p95 reads up to 2.5 s because the buckets end at 1 s and 2.5 s." + probe_note), 8, 9)
+    d.add(bars("Responses per minute by status code",
+               [q(f"sum by (http_response_status_code)({xi(HSN, NOT_PROBE)}){PER_MIN}", "{{http_response_status_code}}")],
+               "Responses by HTTP status code. 503 and 429 from the meme dashboard are caps the bot set"
+               " itself." + probe_note, decimals=1,
+               colors={"200": GOOD, "204": GOOD, "302": BLUE, "304": BLUE, "400": ORANGE, "404": ORANGE,
+                       "429": WARN, "500": CRIT, "503": WARN}), 8, 9)
     d.add(ts("Active requests and connections", [q(f"sum(http_server_active_requests{{{J}}})", "active requests"),
                                                  q(f"sum(kestrel_active_connections{{{J}}})", "Kestrel connections")],
              unit="short", decimals=0, colors={"active requests": BLUE, "Kestrel connections": PURPLE},
@@ -686,7 +822,7 @@ def runtime():
     d.add(state_timeline("Probe result", [q(f"max(probe_success{{{HTTP}}})", "Public URL")],
                          "Green while the probe gets HTTP 200 from /health.", row_height=0.6), 6, 8)
     d.add(stat("HTTP status", f"max(probe_http_status_code{{{HTTP}}})", unit="none", decimals=0,
-               thresholds=steps((CRIT, None), (GOOD, 200), (CRIT, 300)), no_value="no answer",
+               thresholds=steps((CRIT, None), (GOOD, 200), (CRIT, 300)), no_value="no answer", value_size=48,
                desc="Status code of the last probe. 0 means no HTTP answer."), 4, 8)
 
     d.row("Outbound dependencies (HttpClient)")
@@ -715,17 +851,18 @@ def runtime():
                "Requests per minute to discord.com by HTTP status." + BIRTH, decimals=1,
                colors={"200": GOOD, "201": GOOD, "204": GOOD, "429": WARN, "400": ORANGE, "403": ORANGE, "404": ORANGE,
                        "500": CRIT, "502": CRIT, "503": CRIT}), 8, 8)
-    d.add(ts("Discord REST latency", [q(hq(0.5, HC, DISCORD), "p50"), q(hq(0.95, HC, DISCORD), "p95")], unit="s",
-             colors={"p50": BLUE, "p95": ORANGE}, points="auto",
-             desc="Duration of requests to discord.com. No point when no request is sent."), 8, 8)
+    d.add(ts("Discord REST latency", [q(hq(0.5, HC, DISCORD), "p50"), q(hq(0.95, HC, DISCORD), "p95", exemplar=True)],
+             unit="s", colors={"p50": BLUE, "p95": ORANGE}, points="auto",
+             desc="Duration of requests to discord.com. No point when no request is sent." + EX), 8, 8)
     d.add(bars("OpenRouter requests by status",
                [q(f"sum by (http_response_status_code)({xi(HCC, OPENROUTER)}){PER_MIN}", "{{http_response_status_code}}")],
                "Requests per minute to OpenRouter by HTTP status.", decimals=1,
                colors={"200": GOOD, "429": WARN, "500": CRIT, "502": CRIT, "503": CRIT}), 8, 8)
-    d.add(ts("OpenRouter latency", [q(hqx(0.5, HC, OPENROUTER, rng=IV), "p50"), q(hqx(0.95, HC, OPENROUTER, rng=IV), "p95")],
+    d.add(ts("OpenRouter latency", [q(hqx(0.5, HC, OPENROUTER, rng=IV), "p50"),
+                                    q(hqx(0.95, HC, OPENROUTER, rng=IV), "p95", exemplar=True)],
              unit="s", colors={"p50": BLUE, "p95": ORANGE}, points="always", min_interval="1m",
              desc="Duration of requests to OpenRouter, for the requests in each interval. A model call runs for"
-                  " seconds to minutes."), 8, 8)
+                  " seconds to minutes." + EX), 8, 8)
     d.add(bars("Other hosts, requests by host",
                [q(f"sum by (server_address)({xi(HCC, OTHER)}){PER_MIN}", "{{server_address}}")],
                "Requests per minute to every other host: the Discord gateway upgrade, Tempo, Langfuse, webhooks.",
@@ -748,11 +885,11 @@ def runtime():
                   " that wait for a connection."), 6, 8)
     d.add(ts("Command duration",
              [q(hq(0.5, "db_client_operation_duration_seconds"), "p50"),
-              q(hq(0.95, "db_client_operation_duration_seconds"), "p95"),
+              q(hq(0.95, "db_client_operation_duration_seconds"), "p95", exemplar=True),
               q(f"sum(rate(db_client_operation_duration_seconds_sum{{{J}}}[$__rate_interval]))"
                 f" / sum(rate(db_client_operation_duration_seconds_count{{{J}}}[$__rate_interval]))", "mean")],
              unit="s", colors={"p50": BLUE, "p95": ORANGE, "mean": PURPLE},
-             desc="Duration of database commands as the driver measures it, network time included."), 6, 8)
+             desc="Duration of database commands as the driver measures it, network time included." + EX), 6, 8)
     d.add(ts("Bytes read and written",
              [q(f"sum(rate(db_client_operation_npgsql_bytes_read_bytes_total{{{J}}}[$__rate_interval]))", "read"),
               q(f"sum(rate(db_client_operation_npgsql_bytes_written_bytes_total{{{J}}}[$__rate_interval]))", "written")],
@@ -772,9 +909,11 @@ def runtime():
              unit="short", decimals=0, fixed=GOOD, legend=False,
              desc="Jobs that succeeded in the last hour. The succeeded state is a lifetime total in the"
                   " Hangfire tables, so a bot restart does not reset it."), 6, 8)
-    d.add(stat("Hangfire servers", f"max(wojtus_hangfire_servers{{{J}}})", decimals=0,
-               thresholds=steps((CRIT, None), (GOOD, 1)), desc="Hangfire servers alive. The bot runs one."), 4, 8)
-    d.add(stat("Recurring jobs", f"max(wojtus_hangfire_recurring_jobs{{{J}}})", decimals=0,
+    d.add(stat("Hangfire servers", f"max(max_over_time(wojtus_hangfire_servers{{{J}}}[2m]))", decimals=0,
+               thresholds=steps((CRIT, None), (GOOD, 1)), value_size=48,
+               desc="Hangfire servers alive, the highest value of the last 2 minutes: the first read after a"
+                    " bot start is 0. The bot runs one."), 4, 8)
+    d.add(stat("Recurring jobs", f"max(wojtus_hangfire_recurring_jobs{{{J}}})", decimals=0, value_size=48,
                desc="Hangfire recurring jobs registered."), 4, 8)
 
     d.row("Traces: Tempo span metrics", collapsed=True)

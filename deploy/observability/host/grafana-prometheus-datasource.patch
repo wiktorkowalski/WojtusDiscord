@@ -1,0 +1,11 @@
+--- grafana/config/datasources/prometheus.yml.bak-20261007
++++ grafana/config/datasources/prometheus.yml
+@@ -11,4 +11,8 @@
+       timeInterval: 15s
+       queryTimeout: 60s
+       httpMethod: POST
++      # Histogram exemplars from discord-event-service link to the trace in Tempo.
++      exemplarTraceIdDestinations:
++        - name: trace_id
++          datasourceUid: tempo
+     version: 1
