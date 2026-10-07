@@ -94,6 +94,10 @@ def buckets(title, metric, desc, extra="", w_unit="short"):
                     fmt="heatmap", decimals=0, desc=desc)
 EVENTS_LINK = link("Open this event type on Events & Ingest", "/d/wojtus-events/?var-event_type=${__field.labels.event_type}")
 HC = "wojtus_healthcheck_"
+DOWNTIME_NOTE = (" Deploy and restart gaps are not counted here: the bot counts the row in the process that"
+                 " stops, or before its metrics are up, so no scrape sees it. The series shows only a downtime"
+                 " that opens while the process keeps running (gateway loss, database unreachable). For a"
+                 " deploy gap see the Deploy markers and the table bot_downtime_intervals.")
 
 
 def availability_panel():
@@ -114,7 +118,9 @@ def uptime_panel(window, step, decimals, orientation):
              desc=f"1 minus the time each part was seen down, as a share of the full {days} days: bot process,"
                   " Discord gateway, public URL, Postgres. Green from 99.9% (10 minutes down in a week), yellow"
                   " from 99%. A deploy restart counts as down time: about 15 s, 0.0025% of a week, so a few"
-                  " deploys a day stay green and a crash loop does not. Time before a series existed counts as up.")
+                  " deploys a day stay green and a crash loop does not. Time before a series existed counts as up."
+                  " The gateway is read once per minute: a reconnect of a few seconds counts as one minute"
+                  " when a sample falls inside it, and not at all when none does.")
     p["targets"] = [q(e, name, instant=True, ref="ABCD"[i]) for i, (name, e) in enumerate(availability_exprs(window, step))]
     p["options"]["orientation"] = orientation
     if orientation == "horizontal":
@@ -264,8 +270,10 @@ def overview():
     d.add(bars("HTTP requests through Traefik by status class",
                [q('sum by (class)(label_replace(increase(traefik_service_requests_total{service=~"wojtusdiscord.*"}[$__interval]),'
                   ' "class", "${1}xx", "code", "(.).."))', "{{class}}")],
-               "Requests Traefik sent to the bot (dashboard and API) per interval. Scrapes and health checks"
-               " do not pass through Traefik.",
+               "Requests Traefik sent to the bot per interval. The flat base is the blackbox probe of"
+               " /health: 2 requests per minute, all through Traefik. Dashboard and API requests sit on"
+               " top of it. The Traefik counter has no path label, so the probe cannot be left out."
+               " The Prometheus scrape of /metrics does not pass through Traefik.",
                colors={"2xx": GOOD, "3xx": BLUE, "4xx": WARN, "5xx": CRIT}), 8, 8)
 
     d.row("Jobs, connection and alerts")
@@ -274,7 +282,7 @@ def overview():
         q(f'sum({xi("wojtus_downtime_intervals_total")})', "downtime intervals"),
         q(f'sum({xi("wojtus_gateway_socket_closed_total")})', "socket closes"),
         q(f'sum({xi("wojtus_gateway_session_resumed_total")})', "session resumes")],
-        "Downtime rows written, gateway socket closes and warm reconnects per interval." + BIRTH,
+        "Downtime rows written, gateway socket closes and warm reconnects per interval." + DOWNTIME_NOTE + BIRTH,
         colors={"downtime intervals": CRIT, "socket closes": ORANGE, "session resumes": BLUE}, stack=False), 8, 8)
     d.add(table("Firing alerts", [q('ALERTS{service="wojtusdiscord",alertstate="firing"}', instant=True, fmt="table")],
                 "Prometheus alerts with service=wojtusdiscord that fire now. Empty means no alert fires.",
@@ -493,7 +501,7 @@ def events():
                colors={"webhook failures": CRIT}), 4, 8)
     d.add(bars("Downtime by type",
                [q(f'sum by (type)({xi("wojtus_downtime_intervals_total")})', "{{type}}")],
-               "Downtime rows the bot wrote, per interval, by type."), 4, 8)
+               "Downtime rows the bot wrote, per interval, by type." + DOWNTIME_NOTE), 4, 8)
 
     d.row("Database writes")
     d.add(bars("Upserts per minute by entity",
@@ -780,7 +788,7 @@ def runtime():
     d.add(text("**Is the process healthy and is HTTP fast?** .NET runtime, HTTP in and out, the public URL probe, the Npgsql pool, Hangfire, traces."), 24, 2)
     d.row("Availability")
     d.add(uptime_panel("7d", "1m", 3, "vertical"), 12, 4)
-    d.add(uptime_panel("30d", "5m", 3, "vertical"), 12, 4)
+    d.add(uptime_panel("30d", "1m", 3, "vertical"), 12, 4)
     d.add(availability_panel(), 24, 6)
 
     d.row("Process")
@@ -810,7 +818,12 @@ def runtime():
     d.add(ts("Exceptions per minute by type",
              [q(f"sum by (error_type)(rate(dotnet_exceptions_total{{{J}}}[$__rate_interval])) * 60", "{{error_type}}")],
              unit="short", decimals=1, style="bars", stack=True,
-             desc="Exceptions thrown in managed code, caught ones included, by exception type."), 8, 8)
+             desc="Exceptions thrown in managed code, caught ones included, by exception type. Read it for a"
+                  " change in rate, not for the level: a steady background is normal and writes no error log"
+                  " line. Measured 2026-10-07, 3.7 h: 47 IOException, the same count as the trace exports to"
+                  " Tempo and the Tempo connections closed (one per export); 136 SocketException against 140"
+                  " new Npgsql connections, with the same rate per 5 minutes. Neither follows the /health"
+                  " (878) or /metrics (903) requests. The count matches; the throw site is not identified."), 8, 8)
     d.add(ts("Lock contentions per minute",
              [q(f"sum(rate(dotnet_monitor_lock_contentions_total{{{J}}}[$__rate_interval])) * 60", "contentions")],
              unit="short", decimals=1, fixed=BLUE, legend=False,

@@ -10,6 +10,9 @@ import re
 # The frame every dashboard shares: annotations (bot start, Postgres start), the links
 # to the other WojtusDiscord dashboards, tags, schema version, 6 h range, 30 s refresh.
 # Dash() fills uid, title, description, variables and panels, and adds the Deploy annotation.
+# Only Deploy is on by default. Bot start and Postgres start are switches at the top left:
+# a deploy is a bot start, so both on drew every restart twice, and over 7 days the two
+# Loki annotations (up to 50 lines each) hid the data of a sparse panel.
 TEMPLATE = json.loads(r'''
 {
  "annotations": {
@@ -31,7 +34,7 @@ TEMPLATE = json.loads(r'''
      "type": "loki",
      "uid": "P8E80F9AEF21F6940"
     },
-    "enable": true,
+    "enable": false,
     "hide": false,
     "iconColor": "#9085e9",
     "name": "Bot start",
@@ -53,7 +56,7 @@ TEMPLATE = json.loads(r'''
      "type": "loki",
      "uid": "P8E80F9AEF21F6940"
     },
-    "enable": true,
+    "enable": false,
     "hide": false,
     "iconColor": "#d95926",
     "name": "Postgres start",
@@ -495,9 +498,9 @@ EMPTY_TEXT = [
     (r"Serialization failures", "No serialization failures"),
     (r"Handler failures", "No handler failures recorded"),
     (r"warning and above", "No warnings or errors logged"),
-    (r"Downtime, socket closes", "No downtime, socket close or resume recorded"),
+    (r"Downtime, socket closes", "No downtime, socket close or resume while the process was running"),
     (r"Socket closes", "No socket closes recorded"),
-    (r"Downtime (intervals|by type)", "No downtime recorded"),
+    (r"Downtime (intervals|by type)", "No downtime while the process was running"),
     (r"Session resumes", "No reconnect recorded"),
     (r"[Ww]ebhook failures", "No webhook failures"),
     (r"Health-check alerts", "No health-check alerts sent"),
@@ -546,8 +549,9 @@ def empty_text(title):
 
 DEPLOY_ANNOTATION = {
     "datasource": PROM, "enable": True, "hide": False, "iconColor": TEAL, "name": "Deploy",
-    # A commit label that was not there two minutes ago: a new build went live.
-    "expr": 'wojtus_build_info{job="wojtusdiscord"} unless (wojtus_build_info{job="wojtusdiscord"} offset 2m)',
+    # A commit label that was not there one minute ago: a new build went live. One minute at a
+    # 60 s step is one sample, so one line; two minutes drew a region with two edges.
+    "expr": 'wojtus_build_info{job="wojtusdiscord"} unless (wojtus_build_info{job="wojtusdiscord"} offset 1m)',
     "step": "60s", "titleFormat": "Deploy", "textFormat": "{{commit}}", "tagKeys": "commit",
     "useValueForTime": False}
 

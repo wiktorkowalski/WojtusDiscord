@@ -18,7 +18,7 @@
           "type": "loki",
           "uid": "P8E80F9AEF21F6940"
         },
-        "enable": true,
+        "enable": false,
         "hide": false,
         "iconColor": "#9085e9",
         "name": "Bot start",
@@ -40,7 +40,7 @@
           "type": "loki",
           "uid": "P8E80F9AEF21F6940"
         },
-        "enable": true,
+        "enable": false,
         "hide": false,
         "iconColor": "#d95926",
         "name": "Postgres start",
@@ -66,7 +66,7 @@
         "hide": false,
         "iconColor": "#199e70",
         "name": "Deploy",
-        "expr": "wojtus_build_info{job=\"wojtusdiscord\"} unless (wojtus_build_info{job=\"wojtusdiscord\"} offset 2m)",
+        "expr": "wojtus_build_info{job=\"wojtusdiscord\"} unless (wojtus_build_info{job=\"wojtusdiscord\"} offset 1m)",
         "step": "60s",
         "titleFormat": "Deploy",
         "textFormat": "{{commit}}",
@@ -4654,7 +4654,7 @@
           "mappings": [],
           "min": 0,
           "decimals": 0,
-          "noValue": "No downtime recorded"
+          "noValue": "No downtime while the process was running"
         },
         "overrides": []
       },
@@ -4671,7 +4671,7 @@
           "hideZeros": false
         }
       },
-      "description": "Downtime rows the bot wrote, per interval, by type.",
+      "description": "Downtime rows the bot wrote, per interval, by type. Deploy and restart gaps are not counted here: the bot counts the row in the process that stops, or before its metrics are up, so no scrape sees it. The series shows only a downtime that opens while the process keeps running (gateway loss, database unreachable). For a deploy gap see the Deploy markers and the table bot_downtime_intervals.",
       "interval": "1m"
     },
     {
