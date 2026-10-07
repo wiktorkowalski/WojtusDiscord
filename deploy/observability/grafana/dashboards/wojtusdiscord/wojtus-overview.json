@@ -18,7 +18,7 @@
           "type": "loki",
           "uid": "P8E80F9AEF21F6940"
         },
-        "enable": true,
+        "enable": false,
         "hide": false,
         "iconColor": "#9085e9",
         "name": "Bot start",
@@ -40,7 +40,7 @@
           "type": "loki",
           "uid": "P8E80F9AEF21F6940"
         },
-        "enable": true,
+        "enable": false,
         "hide": false,
         "iconColor": "#d95926",
         "name": "Postgres start",
@@ -66,7 +66,7 @@
         "hide": false,
         "iconColor": "#199e70",
         "name": "Deploy",
-        "expr": "wojtus_build_info{job=\"wojtusdiscord\"} unless (wojtus_build_info{job=\"wojtusdiscord\"} offset 2m)",
+        "expr": "wojtus_build_info{job=\"wojtusdiscord\"} unless (wojtus_build_info{job=\"wojtusdiscord\"} offset 1m)",
         "step": "60s",
         "titleFormat": "Deploy",
         "textFormat": "{{commit}}",
@@ -1650,7 +1650,7 @@
           "valueSize": 18
         }
       },
-      "description": "1 minus the time each part was seen down, as a share of the full 7 days: bot process, Discord gateway, public URL, Postgres. Green from 99.9% (10 minutes down in a week), yellow from 99%. A deploy restart counts as down time: about 15 s, 0.0025% of a week, so a few deploys a day stay green and a crash loop does not. Time before a series existed counts as up."
+      "description": "1 minus the time each part was seen down, as a share of the full 7 days: bot process, Discord gateway, public URL, Postgres. Green from 99.9% (10 minutes down in a week), yellow from 99%. A deploy restart counts as down time: about 15 s, 0.0025% of a week, so a few deploys a day stay green and a crash loop does not. Time before a series existed counts as up. The gateway is read once per minute: a reconnect of a few seconds counts as one minute when a sample falls inside it, and not at all when none does."
     },
     {
       "type": "stat",
@@ -2977,7 +2977,7 @@
           "hideZeros": false
         }
       },
-      "description": "Requests Traefik sent to the bot (dashboard and API) per interval. Scrapes and health checks do not pass through Traefik.",
+      "description": "Requests Traefik sent to the bot per interval. The flat base is the blackbox probe of /health: 2 requests per minute, all through Traefik. Dashboard and API requests sit on top of it. The Traefik counter has no path label, so the probe cannot be left out. The Prometheus scrape of /metrics does not pass through Traefik.",
       "interval": "1m"
     },
     {
@@ -3257,7 +3257,7 @@
           "mappings": [],
           "min": 0,
           "decimals": 0,
-          "noValue": "No downtime, socket close or resume recorded"
+          "noValue": "No downtime, socket close or resume while the process was running"
         },
         "overrides": [
           {
@@ -3320,7 +3320,7 @@
           "hideZeros": false
         }
       },
-      "description": "Downtime rows written, gateway socket closes and warm reconnects per interval. Counts include the first sample of a new series, which increase() and rate() miss: the bot creates a counter series on its first increment.",
+      "description": "Downtime rows written, gateway socket closes and warm reconnects per interval. Deploy and restart gaps are not counted here: the bot counts the row in the process that stops, or before its metrics are up, so no scrape sees it. The series shows only a downtime that opens while the process keeps running (gateway loss, database unreachable). For a deploy gap see the Deploy markers and the table bot_downtime_intervals. Counts include the first sample of a new series, which increase() and rate() miss: the bot creates a counter series on its first increment.",
       "interval": "1m"
     },
     {

@@ -18,7 +18,7 @@
           "type": "loki",
           "uid": "P8E80F9AEF21F6940"
         },
-        "enable": true,
+        "enable": false,
         "hide": false,
         "iconColor": "#9085e9",
         "name": "Bot start",
@@ -66,7 +66,7 @@
         "hide": false,
         "iconColor": "#199e70",
         "name": "Deploy",
-        "expr": "wojtus_build_info{job=\"wojtusdiscord\"} unless (wojtus_build_info{job=\"wojtusdiscord\"} offset 2m)",
+        "expr": "wojtus_build_info{job=\"wojtusdiscord\"} unless (wojtus_build_info{job=\"wojtusdiscord\"} offset 1m)",
         "step": "60s",
         "titleFormat": "Deploy",
         "textFormat": "{{commit}}",

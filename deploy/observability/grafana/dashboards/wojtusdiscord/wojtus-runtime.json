@@ -18,7 +18,7 @@
           "type": "loki",
           "uid": "P8E80F9AEF21F6940"
         },
-        "enable": true,
+        "enable": false,
         "hide": false,
         "iconColor": "#9085e9",
         "name": "Bot start",
@@ -40,7 +40,7 @@
           "type": "loki",
           "uid": "P8E80F9AEF21F6940"
         },
-        "enable": true,
+        "enable": false,
         "hide": false,
         "iconColor": "#d95926",
         "name": "Postgres start",
@@ -66,7 +66,7 @@
         "hide": false,
         "iconColor": "#199e70",
         "name": "Deploy",
-        "expr": "wojtus_build_info{job=\"wojtusdiscord\"} unless (wojtus_build_info{job=\"wojtusdiscord\"} offset 2m)",
+        "expr": "wojtus_build_info{job=\"wojtusdiscord\"} unless (wojtus_build_info{job=\"wojtusdiscord\"} offset 1m)",
         "step": "60s",
         "titleFormat": "Deploy",
         "textFormat": "{{commit}}",
@@ -263,7 +263,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "1 minus the time each part was seen down, as a share of the full 7 days: bot process, Discord gateway, public URL, Postgres. Green from 99.9% (10 minutes down in a week), yellow from 99%. A deploy restart counts as down time: about 15 s, 0.0025% of a week, so a few deploys a day stay green and a crash loop does not. Time before a series existed counts as up."
+      "description": "1 minus the time each part was seen down, as a share of the full 7 days: bot process, Discord gateway, public URL, Postgres. Green from 99.9% (10 minutes down in a week), yellow from 99%. A deploy restart counts as down time: about 15 s, 0.0025% of a week, so a few deploys a day stay green and a crash loop does not. Time before a series existed counts as up. The gateway is read once per minute: a reconnect of a few seconds counts as one minute when a sample falls inside it, and not at all when none does."
     },
     {
       "type": "stat",
@@ -285,7 +285,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "1 - (1 - max(avg_over_time(up{job=\"wojtusdiscord\"}[30d]))) * count_over_time((max(up{job=\"wojtusdiscord\"}))[30d:5m]) / 8640",
+          "expr": "1 - (1 - max(avg_over_time(up{job=\"wojtusdiscord\"}[30d]))) * count_over_time((max(up{job=\"wojtusdiscord\"}))[30d:1m]) / 43200",
           "refId": "A",
           "legendFormat": "Bot process",
           "editorMode": "code",
@@ -297,7 +297,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "1 - (1 - avg_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[30d:5m])) * count_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[30d:5m]) / 8640",
+          "expr": "1 - (1 - avg_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[30d:1m])) * count_over_time((min(wojtus_gateway_connected{job=\"wojtusdiscord\"}) or on () (0 * max(up{job=\"wojtusdiscord\"})))[30d:1m]) / 43200",
           "refId": "B",
           "legendFormat": "Gateway",
           "editorMode": "code",
@@ -309,7 +309,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "1 - (1 - max(avg_over_time(probe_success{job=\"wojtusdiscord-http\"}[30d]))) * count_over_time((max(probe_success{job=\"wojtusdiscord-http\"}))[30d:5m]) / 8640",
+          "expr": "1 - (1 - max(avg_over_time(probe_success{job=\"wojtusdiscord-http\"}[30d]))) * count_over_time((max(probe_success{job=\"wojtusdiscord-http\"}))[30d:1m]) / 43200",
           "refId": "C",
           "legendFormat": "Public URL",
           "editorMode": "code",
@@ -321,7 +321,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "1 - (1 - max(avg_over_time(pg_up{job=\"wojtus-postgres\"}[30d]))) * count_over_time((max(pg_up{job=\"wojtus-postgres\"}))[30d:5m]) / 8640",
+          "expr": "1 - (1 - max(avg_over_time(pg_up{job=\"wojtus-postgres\"}[30d]))) * count_over_time((max(pg_up{job=\"wojtus-postgres\"}))[30d:1m]) / 43200",
           "refId": "D",
           "legendFormat": "Postgres",
           "editorMode": "code",
@@ -374,7 +374,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "1 minus the time each part was seen down, as a share of the full 30 days: bot process, Discord gateway, public URL, Postgres. Green from 99.9% (10 minutes down in a week), yellow from 99%. A deploy restart counts as down time: about 15 s, 0.0025% of a week, so a few deploys a day stay green and a crash loop does not. Time before a series existed counts as up."
+      "description": "1 minus the time each part was seen down, as a share of the full 30 days: bot process, Discord gateway, public URL, Postgres. Green from 99.9% (10 minutes down in a week), yellow from 99%. A deploy restart counts as down time: about 15 s, 0.0025% of a week, so a few deploys a day stay green and a crash loop does not. Time before a series existed counts as up. The gateway is read once per minute: a reconnect of a few seconds counts as one minute when a sample falls inside it, and not at all when none does."
     },
     {
       "type": "state-timeline",
@@ -1473,7 +1473,7 @@
           "hideZeros": false
         }
       },
-      "description": "Exceptions thrown in managed code, caught ones included, by exception type."
+      "description": "Exceptions thrown in managed code, caught ones included, by exception type. Read it for a change in rate, not for the level: a steady background is normal and writes no error log line. Measured 2026-10-07, 3.7 h: 47 IOException, the same count as the trace exports to Tempo and the Tempo connections closed (one per export); 136 SocketException against 140 new Npgsql connections, with the same rate per 5 minutes. Neither follows the /health (878) or /metrics (903) requests. The count matches; the throw site is not identified."
     },
     {
       "type": "timeseries",
