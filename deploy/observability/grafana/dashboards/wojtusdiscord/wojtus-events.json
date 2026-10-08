@@ -4356,7 +4356,7 @@
           "hideZeros": false
         }
       },
-      "description": "The checks that count: failed events, restarts in 30 minutes (crash_loop), event types below their baseline (event_ratio), stalled backfills, rows that break the timestamp invariant."
+      "description": "The checks that count: failed events, restarts in 30 minutes (crash_loop), stalled backfills, rows that break the timestamp invariant."
     },
     {
       "type": "timeseries",

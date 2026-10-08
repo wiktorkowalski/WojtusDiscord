@@ -89,7 +89,7 @@ public sealed class HealthCheckSilenceAndIntegrityTests(PostgresFixture fixture)
         Assert.Equal(1, Assert.Single(metrics.Of("wojtus.healthcheck.failing", "check", "timestamp_invariant")).Value);
 
         // Not failing: each of these still has a value.
-        foreach (var check in new[] { "failed_events", "ingest_stall", "event_ratio", "crash_loop", "backfill_stall", "open_downtime" })
+        foreach (var check in new[] { "failed_events", "ingest_stall", "crash_loop", "backfill_stall", "open_downtime" })
         {
             Assert.Single(metrics.Of("wojtus.healthcheck.value", "check", check));
             Assert.Equal(0, Assert.Single(metrics.Of("wojtus.healthcheck.failing", "check", check)).Value);

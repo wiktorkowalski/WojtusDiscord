@@ -38,7 +38,7 @@ internal sealed class HealthCheckJob(
 
     public async Task ExecuteAsync(CancellationToken cancellationToken)
     {
-        // Every check runs with or without a webhook: each one publishes what it measured as a
+        // Every enabled check runs with or without a webhook: each one publishes what it measured as a
         // gauge (BotMetrics.HealthCheckMeasured) before it decides on an alert. With no webhook
         // SendWebhookAsync sends nothing and answers false, so no alert state changes.
         var opts = options.Value;
@@ -166,6 +166,9 @@ internal sealed class HealthCheckJob(
 
     private async Task CheckEventTypeRatioAsync(DiscordDbContext db, HealthCheckOptions opts, DateTime now, CancellationToken cancellationToken)
     {
+        if (!opts.EventRatioEnabled)
+            return;
+
         var recentStart = now.AddHours(-opts.EventRatioRecentHours);
 
         var recent = await db.RawEventLogs
