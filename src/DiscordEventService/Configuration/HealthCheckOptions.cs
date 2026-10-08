@@ -8,6 +8,11 @@ internal sealed class HealthCheckOptions
     public int FailedEventWindowMinutes { get; set; } = 5;
     public int IngestStallMinutes { get; set; } = 360;
     public int AlertCooldownMinutes { get; set; } = 30;
+
+    // Off: one burst of a type (bot edits fire MessageUpdated in bursts) lifts the mean baseline over
+    // the floor, then every window with 0 events alerts until the burst leaves the baseline.
+    public bool EventRatioEnabled { get; set; }
+
     public int EventRatioBaselineDays { get; set; } = 7;
     public int EventRatioRecentHours { get; set; } = 6;
 

@@ -131,7 +131,7 @@ def health_tiles():
     return tiles("Bot health checks",
                  f'max by (check)({HC}failing{{{J}}}) or on () label_replace(vector(-1), "check", "HealthCheckJob", "", "")',
                  "{{check}}",
-                 "The bot's own HealthCheckJob, every 5 minutes: failed events, ingest stall, event-type ratio,"
+                 "The bot's own HealthCheckJob, every 5 minutes: failed events, ingest stall,"
                  " crash loop, event silence, backfill stall, open downtime, timestamp invariant. A red tile"
                  " also fires the WojtusHealthCheckFailing alert after 10 minutes.",
                  no_value="no health-check run yet")
@@ -489,8 +489,8 @@ def events():
     d.add(ts("Health-check counts", [
         q(f'max by (check)({HC}value{{{J},check!~"ingest_stall|open_downtime|event_silence"}})', "{{check}}")],
         unit="short", decimals=0, line_interp="stepAfter",
-        desc="The checks that count: failed events, restarts in 30 minutes (crash_loop), event types below their"
-             " baseline (event_ratio), stalled backfills, rows that break the timestamp invariant."), 8, 8)
+        desc="The checks that count: failed events, restarts in 30 minutes (crash_loop), stalled"
+             " backfills, rows that break the timestamp invariant."), 8, 8)
     d.add(bars("Health-check alerts by check",
                [q(f'sum by (check)({xi("wojtus_healthcheck_alerts_total")})', "{{check}}")],
                "Alerts the bot's HealthCheckJob sent to Discord, per interval." + BIRTH), 8, 8)

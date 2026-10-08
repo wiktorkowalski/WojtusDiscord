@@ -1740,7 +1740,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "The bot's own HealthCheckJob, every 5 minutes: failed events, ingest stall, event-type ratio, crash loop, event silence, backfill stall, open downtime, timestamp invariant. A red tile also fires the WojtusHealthCheckFailing alert after 10 minutes."
+      "description": "The bot's own HealthCheckJob, every 5 minutes: failed events, ingest stall, crash loop, event silence, backfill stall, open downtime, timestamp invariant. A red tile also fires the WojtusHealthCheckFailing alert after 10 minutes."
     },
     {
       "type": "row",

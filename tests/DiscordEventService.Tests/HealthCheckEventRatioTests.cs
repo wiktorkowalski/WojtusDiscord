@@ -16,6 +16,7 @@ public sealed class HealthCheckEventRatioTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
     private DiscordDbContext _db = null!;
+    private ServiceProvider? _provider;
 
     public async Task InitializeAsync()
     {
@@ -24,10 +25,48 @@ public sealed class HealthCheckEventRatioTests(PostgresFixture fixture)
         await _db.RawEventLogs.ExecuteDeleteAsync();
     }
 
-    public Task DisposeAsync() => _db.DisposeAsync().AsTask();
+    public async Task DisposeAsync()
+    {
+        if (_provider is not null)
+            await _provider.DisposeAsync();
+        await _db.DisposeAsync();
+    }
 
     [Fact]
     public async Task ExecuteAsync_EventRatioDrop_DebouncesAcrossRunsAndExcludesVoice()
+    {
+        await SeedCollapsedBaselineAsync();
+        var (job, handler) = NewJob(eventRatioEnabled: true);
+
+        // Runs 1 & 2: drop detected but below the consecutive-run threshold -> stays silent.
+        await job.ExecuteAsync(CancellationToken.None);
+        await job.ExecuteAsync(CancellationToken.None);
+        Assert.Empty(handler.Bodies);
+
+        // Run 3: streak reaches 3 -> alert fires. MessageCreated has an identical baseline/recent
+        // profile to the voice type, so its presence proves the collapse *would* trip an alert —
+        // the voice type's absence is therefore solely due to the exclusion list, not quiet data.
+        await job.ExecuteAsync(CancellationToken.None);
+        var body = Assert.Single(handler.Bodies);
+        Assert.Contains("MessageCreated", body);
+        Assert.Contains("1 event type(s)", body);     // exactly one type reported...
+        Assert.DoesNotContain("VoiceStateUpdated", body); // ...and the excluded voice type is never it
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_EventRatioDisabled_StaysQuiet()
+    {
+        await SeedCollapsedBaselineAsync();
+        var (job, handler) = NewJob(eventRatioEnabled: false);
+
+        // The same data alerts on run 3 when the check is on.
+        for (var run = 0; run < 3; run++)
+            await job.ExecuteAsync(CancellationToken.None);
+
+        Assert.Empty(handler.Bodies);
+    }
+
+    private async Task SeedCollapsedBaselineAsync()
     {
         var now = DateTime.UtcNow;
 
@@ -50,9 +89,12 @@ public sealed class HealthCheckEventRatioTests(PostgresFixture fixture)
         }
         // Recent 6h window: nothing seeded for either type -> both read as a near-total drop.
         await _db.SaveChangesAsync();
+    }
 
+    private (HealthCheckJob Job, CapturingHandler Handler) NewJob(bool eventRatioEnabled)
+    {
         var handler = new CapturingHandler();
-        await using var provider = new ServiceCollection()
+        _provider = new ServiceCollection()
             .AddDbContext<DiscordDbContext>(o => o
                 .UseNpgsql(fixture.ConnectionString)
                 .UseSnakeCaseNamingConvention())
@@ -61,27 +103,15 @@ public sealed class HealthCheckEventRatioTests(PostgresFixture fixture)
         var opts = Options.Create(new HealthCheckOptions
         {
             WebhookUrl = "https://example.test/webhook",
+            EventRatioEnabled = eventRatioEnabled,
             EventRatioConsecutiveRuns = 3,
         });
         var job = new HealthCheckJob(
-            provider.GetRequiredService<IServiceScopeFactory>(),
+            _provider.GetRequiredService<IServiceScopeFactory>(),
             new StubHttpClientFactory(handler),
             opts,
             NullLogger<HealthCheckJob>.Instance);
-
-        // Runs 1 & 2: drop detected but below the consecutive-run threshold -> stays silent.
-        await job.ExecuteAsync(CancellationToken.None);
-        await job.ExecuteAsync(CancellationToken.None);
-        Assert.Empty(handler.Bodies);
-
-        // Run 3: streak reaches 3 -> alert fires. MessageCreated has an identical baseline/recent
-        // profile to the voice type, so its presence proves the collapse *would* trip an alert —
-        // the voice type's absence is therefore solely due to the exclusion list, not quiet data.
-        await job.ExecuteAsync(CancellationToken.None);
-        var body = Assert.Single(handler.Bodies);
-        Assert.Contains("MessageCreated", body);
-        Assert.Contains("1 event type(s)", body);     // exactly one type reported...
-        Assert.DoesNotContain("VoiceStateUpdated", body); // ...and the excluded voice type is never it
+        return (job, handler);
     }
 
     private DiscordDbContext NewContext()
