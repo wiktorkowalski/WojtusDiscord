@@ -190,11 +190,18 @@ internal sealed class CacheUsageTagChatClient(IChatClient innerClient, Conversat
 
         await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken))
         {
-            if (span is not null && update.Contents.OfType<UsageContent>().LastOrDefault() is { } usage)
+            if (span is not null)
             {
-                if (usage.Details.AdditionalCounts?.TryGetValue(RoundTokens.CacheWriteKey, out var written) is true)
-                    span.SetTag(CacheCreationTag, written);
-                TagLangfuseUsage(span, RoundTokens.From([update]));
+                // One update per stream carries the usage; a plain loop keeps the per-delta path cheap.
+                foreach (var content in update.Contents)
+                {
+                    if (content is not UsageContent usage)
+                        continue;
+                    if (usage.Details.AdditionalCounts?.TryGetValue(RoundTokens.CacheWriteKey, out var written) is true)
+                        span.SetTag(CacheCreationTag, written);
+                    TagLangfuseUsage(span, RoundTokens.From([update]));
+                    break;
+                }
             }
 
             yield return update;
