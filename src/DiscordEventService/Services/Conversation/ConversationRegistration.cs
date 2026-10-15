@@ -220,8 +220,10 @@ internal sealed class CacheUsageTagChatClient(IChatClient innerClient, Conversat
             usage[CacheWriteKey] = tokens.CacheWrite.Value;
         span.SetTag(LangfuseUsageTag, JsonSerializer.Serialize(usage));
 
-        // ConversationService computes the same cost for the ledger and logs a missing price.
-        if (ConversationCost.Compute(options, tokens, NullLogger.Instance) is not { } cost)
+        // No price: skip the cost tag before Compute, which would take the warn-once slot with a
+        // NullLogger. ConversationService computes the same cost for the ledger and logs the gap.
+        if (!options.Prices.ContainsKey(options.Model)
+            || ConversationCost.Compute(options, tokens, NullLogger.Instance) is not { } cost)
             return;
 
         var costs = new Dictionary<string, double> { ["input"] = cost.InputUsd, ["output"] = cost.OutputUsd };
