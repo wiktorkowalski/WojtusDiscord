@@ -122,6 +122,24 @@ public sealed class MemeSearchServiceTests(PostgresFixture fixture) : IClassFixt
         Assert.Equal(31UL, hit.AttachmentDiscordId);
     }
 
+    // word_similarity("postgresowych", "postgres") is 0.57: above the search threshold of 0.4,
+    // below the pg_trgm default of 0.6 that the <% filter falls back to when the search does not
+    // set its own (#401).
+    [Fact]
+    public async Task SearchAsync_TrigramMatchBelowThePgTrgmDefault_IsStillFound()
+    {
+        await SeedIndexedMemeAsync(32UL, 1202UL,
+            descriptionPl: "Mem o bazie danych",
+            ocrText: "",
+            tags: ["postgres"]);
+
+        var hits = await RunSearchAsync("postgresowych");
+
+        var hit = Assert.Single(hits);
+        Assert.Equal(32UL, hit.AttachmentDiscordId);
+        Assert.InRange(hit.TrigramSimilarity, 0.4, 0.6);
+    }
+
     [Fact]
     public async Task SearchAsync_RowOnSoftDeletedMessage_IsExcluded()
     {

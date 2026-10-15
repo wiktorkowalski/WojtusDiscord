@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using DiscordEventService.Data;
@@ -138,7 +139,26 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         return new MemeSearchPage(hits, rows.Count > 0 ? (int)rows[0].TotalCount : 0);
     }
 
+    // The trigram half of the filter is the <% operator, not word_similarity(…) >= threshold (#401):
+    // only the operator can use the gin_trgm_ops index, so only then can the planner take a
+    // BitmapOr over both GIN indexes instead of a scan of every annotation. The operator reads its
+    // threshold from pg_trgm.word_similarity_threshold (default 0.6), and <% is the same test as
+    // word_similarity(…) >= that setting. set_config with is_local = true keeps the setting inside
+    // this transaction, so it never reaches another user of the pooled connection. The DbContext
+    // retries on failure, and such a strategy runs a user transaction only through ExecuteAsync.
     private Task<List<MemeSearchRow>> QueryAsync(
+        ulong guildId, string query, List<string> tokens, List<string> rankTokens, int offset, int limit, CancellationToken cancellationToken) =>
+        db.Database.CreateExecutionStrategy().ExecuteAsync(async ct =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlAsync(
+                $"SELECT set_config('pg_trgm.word_similarity_threshold', {TrigramThreshold.ToString(CultureInfo.InvariantCulture)}, true)", ct);
+            var rows = await RankAsync(guildId, query, tokens, rankTokens, offset, limit, ct);
+            await transaction.CommitAsync(ct);
+            return rows;
+        }, cancellationToken);
+
+    private Task<List<MemeSearchRow>> RankAsync(
         ulong guildId, string query, List<string> tokens, List<string> rankTokens, int offset, int limit, CancellationToken cancellationToken)
     {
         // OR not AND: the 'simple' config keeps stopwords, so AND-semantics would
@@ -168,6 +188,10 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
         // model_id, prompt_version, ts_rank and trigram_similarity are for the search log (#384)
         // and the dashboard tester (#395): the winning annotation and the two parts of its score.
         // image_kind and templates are for the tester only. Nothing in the ranking reads them.
+        //
+        // part computes ts_rank and word_similarity once per row (#401): Postgres does not share a
+        // repeated expression, and score, ts_rank and trigram_similarity each read both. OFFSET 0
+        // keeps the planner from pulling the subquery up, which would copy the calls back in.
         return db.Database.SqlQuery<MemeSearchRow>($"""
             SELECT channel_discord_id,
                    message_discord_id,
@@ -197,20 +221,24 @@ public sealed class MemeSearchService(DiscordDbContext db, MemeSearchLogWriter s
                        a.image_kind,
                        a.templates,
                        msg.created_at_utc AS message_created_at_utc,
-                       (ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({rankQuery})))
-                        + {TrigramWeight} * word_similarity(public.f_unaccent({query}), a.search_text))::float8 AS score,
+                       (part.ts_rank + {TrigramWeight} * part.trigram_similarity)::float8 AS score,
                        a.model_id,
                        a.prompt_version,
-                       ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({rankQuery})))::float8 AS ts_rank,
-                       word_similarity(public.f_unaccent({query}), a.search_text)::float8 AS trigram_similarity
+                       part.ts_rank::float8 AS ts_rank,
+                       part.trigram_similarity::float8 AS trigram_similarity
                 FROM meme_annotations AS a
                 JOIN meme_index AS m ON m.id = a.meme_index_id
                 JOIN messages AS msg ON msg.id = m.message_id
+                CROSS JOIN LATERAL (
+                    SELECT ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({rankQuery}))) AS ts_rank,
+                           word_similarity(public.f_unaccent({query}), a.search_text) AS trigram_similarity
+                    OFFSET 0
+                ) AS part
                 WHERE m.guild_discord_id = {guild}
                   AND m.status = {indexed}
                   AND NOT msg.is_deleted
                   AND (a.search_vector @@ to_tsquery('simple', public.f_unaccent({filterQuery}))
-                       OR word_similarity(public.f_unaccent({query}), a.search_text) >= {TrigramThreshold})
+                       OR public.f_unaccent({query}) <% a.search_text)
                 ORDER BY m.attachment_discord_id, score DESC, a.indexed_at_utc DESC, a.model_id, a.prompt_version
             ) AS best
             ORDER BY score DESC, message_created_at_utc DESC, attachment_discord_id
