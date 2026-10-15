@@ -95,8 +95,11 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
         Assert.Equal(2, rows.Count);
         Assert.True(rows[0].Failed);
-        // The dead stream never sent its final usage: the failed row has no tokens.
-        Assert.Null(rows[0].PromptTokens);
+        // The dead stream never sent its final usage, but message_start billed the input:
+        // the failed row keeps it (and its cost); the output count is unknown.
+        Assert.Equal(100, rows[0].PromptTokens);
+        Assert.Null(rows[0].CompletionTokens);
+        Assert.Equal(0.0002, rows[0].CostUsd!.Value, precision: 9);
         Assert.False(rows[1].Failed);
         Assert.NotNull(rows[1].CostUsd);
     }

@@ -1,11 +1,13 @@
 using System.Collections.Concurrent;
+using Anthropic.Models.Messages;
 using DiscordEventService.Configuration;
 using Microsoft.Extensions.AI;
 
 namespace DiscordEventService.Services.Conversation;
 
 // The native usage of one model call (#426), from the UsageContent the MEAI adapter emits at
-// the end of a stream. A stream that died before message_delta has none: every field null.
+// the end of a stream. A stream that died after message_start keeps its input counts (from
+// the raw event); one that died before it has none: every field null.
 //   Input       total input = uncached + cache read + cache write (the adapter's sum)
 //   CacheRead   cache_read_input_tokens (UsageDetails.CachedInputTokenCount)
 //   CacheWrite  cache_creation_input_tokens (AdditionalCounts, absent when 0)
@@ -19,12 +21,13 @@ internal sealed record RoundTokens(int? Input, int? Output, int? CacheRead, int?
 
     public static RoundTokens From(IEnumerable<ChatResponseUpdate> updates)
     {
-        var usage = updates
+        var list = updates as IReadOnlyList<ChatResponseUpdate> ?? [.. updates];
+        var usage = list
             .SelectMany(update => update.Contents)
             .OfType<UsageContent>()
             .LastOrDefault();
         if (usage is null)
-            return None;
+            return FromMessageStart(list);
 
         var details = usage.Details;
         var hasInput = details.InputTokenCount is not null;
@@ -35,6 +38,25 @@ internal sealed record RoundTokens(int? Input, int? Output, int? CacheRead, int?
             hasInput ? ToInt(details.CachedInputTokenCount) ?? 0 : null,
             hasInput ? ToInt(Additional(details, CacheWriteKey)) ?? 0 : null,
             ToInt(Additional(details, WebSearchesKey)));
+    }
+
+    // The adapter emits UsageContent only when a stream ends normally. A stream that died after
+    // message_start has still billed its input: read it from the raw message_start event. The
+    // output count is unknown then (message_start reports a placeholder), so it stays null.
+    private static RoundTokens FromMessageStart(IEnumerable<ChatResponseUpdate> updates)
+    {
+        var start = updates
+            .Select(update => update.RawRepresentation)
+            .OfType<RawMessageStreamEvent>()
+            .Select(raw => raw.TryPickStart(out var started) ? started.Message.Usage : null)
+            .FirstOrDefault(found => found is not null);
+        if (start is null)
+            return None;
+
+        var cacheRead = start.CacheReadInputTokens ?? 0;
+        var cacheWrite = start.CacheCreationInputTokens ?? 0;
+        return new RoundTokens(
+            ToInt(start.InputTokens + cacheRead + cacheWrite), null, ToInt(cacheRead), ToInt(cacheWrite), null);
     }
 
     private static long? Additional(UsageDetails details, string key) =>

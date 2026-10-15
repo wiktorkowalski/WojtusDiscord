@@ -266,6 +266,7 @@ internal sealed class ConversationMemoryService(
             included.Add(groups[i]);
         }
         included.Reverse();
+        DropUnreplayableEdges(included);
 
         return included
             .SelectMany(RehydrateGroup)
@@ -273,6 +274,26 @@ internal sealed class ConversationMemoryService(
             // stripped) — don't replay an empty message some providers could reject.
             .Where(message => message.Contents.Count > 0)
             .ToList();
+    }
+
+    // Two shapes the Claude API rejects with thinking on (#426), trimmed from the window:
+    // - a window that starts with an assistant row (the budget cut off its user row): the
+    //   first message must be a user message;
+    // - a last assistant message that is a tool-call group: a turn that failed after its tool
+    //   results left no answer row. The API reads the next request as a continuation of that
+    //   tool loop, which needs the round's thinking block — replay strips it, so a 400 on
+    //   every later turn until the group leaves the window.
+    private void DropUnreplayableEdges(List<List<ConversationMessageEntity>> groups)
+    {
+        while (groups.Count > 0 && groups[0][0].Role != ConversationMessageRole.User)
+            groups.RemoveAt(0);
+
+        while (groups.FindLastIndex(group => group[0].Role == ConversationMessageRole.Assistant) is var last
+               && last >= 0 && groups[last][0].ToolCallsJson is not null)
+        {
+            logger.LogDebug("Dropping an unanswered tool-call group from the end of the replay window");
+            groups.RemoveAt(last);
+        }
     }
 
     // The tool-result rows of a group replay as ONE Tool message, as the live loop sent them:

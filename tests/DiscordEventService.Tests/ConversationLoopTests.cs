@@ -247,6 +247,68 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         Assert.Equal("Szukam… ", client.Calls[1][^1].Text);
     }
 
+    // A retried round after a pause: the reset clears the renderer's whole buffer, so the
+    // paused text must be rendered again before the retry streams.
+    [Fact]
+    public async Task GenerateReplyAsync_PauseThenRetriedRound_KeepsThePausedText()
+    {
+        var client = new FailingOnceChatClient();
+
+        var events = await CollectAsync(BuildService(client).GenerateReplyAsync(
+            "szukaj", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: false, ChannelId: 7UL),
+            CancellationToken.None));
+
+        var rendered = new System.Text.StringBuilder();
+        foreach (var update in events)
+        {
+            if (update is ConversationUpdate.RoundReset)
+                rendered.Clear();
+            else if (update is ConversationUpdate.AssistantTextDelta delta)
+                rendered.Append(delta.Text);
+        }
+
+        Assert.Contains(events, e => e is ConversationUpdate.RoundReset);
+        Assert.Equal("Szukam… Mam.", rendered.ToString());
+    }
+
+    // Call 1 pauses; call 2 streams text and dies; call 3 answers.
+    private sealed class FailingOnceChatClient : IChatClient
+    {
+        private int _calls;
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            switch (_calls++)
+            {
+                case 0:
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, "Szukam… ")
+                    {
+                        FinishReason = new ChatFinishReason(ConversationService.PauseTurnReason),
+                    };
+                    break;
+                case 1:
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, "Ma");
+                    throw new HttpRequestException("connection reset");
+                default:
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, "Mam.");
+                    break;
+            }
+        }
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
+    }
+
     // A refusal can carry a tool call written before the classifier stopped the model: it
     // must not run, the turn ends with a clear line, and one Warning names the round.
     [Fact]

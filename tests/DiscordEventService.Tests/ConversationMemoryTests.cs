@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
+using DiscordEventService.Data.Entities.Conversations;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services.Conversation;
 using DiscordEventService.Services.MemeIndexing;
@@ -195,7 +196,8 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         await memory.PersistAssistantMessagesAsync(turn, [assistantWithCall], null, null, CancellationToken.None);
         await memory.PersistToolResultAsync(turn, "meme_search",
             new FunctionResultContent("call_1", new string('r', 200)), CancellationToken.None);
-        // A small later answer that fits on its own.
+        // A small later question and answer that fit on their own.
+        await memory.PersistUserMessageAsync(turn, "pytanie", CancellationToken.None);
         await memory.PersistAssistantMessagesAsync(turn,
             [new ChatMessage(ChatRole.Assistant, "krótka odpowiedź")], null, null, CancellationToken.None);
 
@@ -203,8 +205,7 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
 
         // The over-budget group was dropped WHOLE — no dangling FunctionCallContent or
         // FunctionResultContent may survive (a dangling tool_call_id is a provider 400).
-        var replayed = Assert.Single(next.Window);
-        Assert.Equal("krótka odpowiedź", replayed.Text);
+        Assert.Equal(["pytanie", "krótka odpowiedź"], next.Window.Select(m => m.Text));
         Assert.DoesNotContain(next.Window, m => m.Contents.OfType<FunctionCallContent>().Any());
         Assert.DoesNotContain(next.Window, m => m.Contents.OfType<FunctionResultContent>().Any());
     }
@@ -233,17 +234,57 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         var memory = BuildMemory();
         var turn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
 
+        await memory.PersistUserMessageAsync(turn, "pytanie", CancellationToken.None);
         var withReasoning = new ChatMessage(ChatRole.Assistant,
             [new TextReasoningContent("tajne rozumowanie"), new TextContent("odpowiedź")]);
         await memory.PersistAssistantMessagesAsync(turn, [withReasoning], null, null, CancellationToken.None);
 
-        var row = await _db.ConversationMessages.SingleAsync();
+        var row = await _db.ConversationMessages.SingleAsync(m => m.Role == ConversationMessageRole.Assistant);
         Assert.Equal("tajne rozumowanie", row.Reasoning);
 
         var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
-        var replayed = Assert.Single(next.Window);
+        var replayed = Assert.Single(next.Window, m => m.Role == ChatRole.Assistant);
         Assert.Equal("odpowiedź", replayed.Text);
         Assert.DoesNotContain(replayed.Contents, c => c is TextReasoningContent);
+    }
+
+    // #426: the Claude API wants the first message to be a user one.
+    [Fact]
+    public async Task Window_CutBeforeAUserRow_DoesNotStartWithTheAssistant()
+    {
+        var memory = BuildMemory(windowTokenBudget: 30);
+        var turn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        // ~50 est tokens (200 chars / 4): over the budget, so the window stops after the answer.
+        await memory.PersistUserMessageAsync(turn, new string('q', 200), CancellationToken.None);
+        await memory.PersistAssistantMessagesAsync(turn,
+            [new ChatMessage(ChatRole.Assistant, "krótko")], null, null, CancellationToken.None);
+
+        var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        Assert.Empty(next.Window);
+    }
+
+    // #426: a turn that failed after its tool results left no answer. Replayed last (without
+    // its thinking block), it would make every later request a 400: it is not replayed.
+    [Fact]
+    public async Task Window_UnansweredToolGroupAtTheEnd_IsNotReplayed()
+    {
+        var memory = BuildMemory();
+        var turn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        await memory.PersistUserMessageAsync(turn, "pierwsze", CancellationToken.None);
+        await memory.PersistAssistantMessagesAsync(turn,
+            [new ChatMessage(ChatRole.Assistant, "odpowiedź")], null, null, CancellationToken.None);
+        await memory.PersistUserMessageAsync(turn with { TurnIndex = 1 }, "drugie", CancellationToken.None);
+        await memory.PersistAssistantMessagesAsync(turn with { TurnIndex = 1 },
+            [new ChatMessage(ChatRole.Assistant,
+                [new FunctionCallContent("call_1", "meme_search", new Dictionary<string, object?> { ["query"] = "x" })])],
+            null, null, CancellationToken.None);
+        await memory.PersistToolResultAsync(turn with { TurnIndex = 1 }, "meme_search",
+            new FunctionResultContent("call_1", "wynik"), CancellationToken.None);
+
+        var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        Assert.Equal(["pierwsze", "odpowiedź", "drugie"], next.Window.Select(m => m.Text));
     }
 
     [Fact]

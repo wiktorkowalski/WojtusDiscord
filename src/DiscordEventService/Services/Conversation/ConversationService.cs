@@ -47,6 +47,9 @@ internal sealed class ConversationService(
     // The API stopped the model (stop_reason "refusal"): say so instead of a cut-off answer.
     internal const string RefusalMessage = "-# 🚫 Nie mogę pomóc w tej sprawie.";
 
+    // What the model sees for a message with no text.
+    internal const string EmptyUserMessage = "(a message with no text)";
+
     // stop_reason of a long server-tool turn the API paused: send it back to continue.
     internal const string PauseTurnReason = "pause_turn";
 
@@ -74,8 +77,13 @@ internal sealed class ConversationService(
         // Durable memory (#267): rehydrate the conversation's stored window, then persist
         // the incoming user message — awaited, inside the turn, so a crash mid-turn
         // leaves a consistent prefix. The channel snowflake is the conversation key.
+        // A message with no text (an image or a sticker alone): the adapter drops an empty text
+        // block, so the request would end on the last assistant turn — a 400 with thinking on.
+        if (string.IsNullOrWhiteSpace(userMessage))
+            userMessage = EmptyUserMessage;
+
         var memoryTurn = await memory.BeginTurnAsync(context.ChannelId, context.GuildId, cancellationToken);
-        await memory.PersistUserMessageAsync(memoryTurn, userMessage ?? string.Empty, cancellationToken);
+        await memory.PersistUserMessageAsync(memoryTurn, userMessage, cancellationToken);
 
         // The system prompt is a System message, not ChatOptions.Instructions: only a message
         // block can carry the cache breakpoint (AnthropicChatOptions.ShapeMessages).
@@ -83,7 +91,7 @@ internal sealed class ConversationService(
         [
             new(ChatRole.System, BuildSystemPrompt(options)),
             .. memoryTurn.Window,
-            new(ChatRole.User, userMessage ?? string.Empty),
+            new(ChatRole.User, userMessage),
         ];
 
         // Parent span so the per-round generations (MEAI's UseOpenTelemetry) and each tool
@@ -216,17 +224,23 @@ internal sealed class ConversationService(
                 }
 
                 // A failed attempt may still bill: its own ledger row and its cost summed
-                // into the turn — but no conversation_message rows. A stream that died before
-                // its final usage event reports no tokens, so the row's tokens stay null.
+                // into the turn — but no conversation_message rows. A stream that died after
+                // message_start keeps its billed input (RoundTokens); its output is unknown.
                 var failedUsage = ExtractRoundUsage(sink, round, attempt, options,
                     stopwatch.ElapsedMilliseconds, failed: true);
                 turnLog.CostUsd += RecordRoundCost(failedUsage, round, turn, outcome);
                 await memory.RecordUsageAsync(memoryTurn, context.InvokerId, failedUsage, cancellationToken);
 
                 // Partial deltas already reached the handler's buffer; drop them so the
-                // retried stream (or the failure line) renders exactly once.
+                // retried stream (or the failure line) renders exactly once. The reset clears
+                // the whole buffer, which after a pause_turn also holds the paused rounds'
+                // text: render that again.
                 if (streamedVisibleText)
+                {
                     yield return new ConversationUpdate.RoundReset();
+                    if (answer.Length > 0)
+                        yield return new ConversationUpdate.AssistantTextDelta(answer.ToString());
+                }
 
                 if (!ConversationRetryPolicy.IsTransient(failure) || attempt >= options.RetryMaxAttempts)
                 {

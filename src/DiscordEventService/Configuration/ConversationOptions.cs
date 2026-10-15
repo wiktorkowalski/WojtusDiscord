@@ -16,6 +16,8 @@ internal sealed class ConversationOptions
     public string Model { get; set; } = "claude-sonnet-5";
 
     // `output_config.effort` of every call; adaptive thinking decides how much to think within it.
+    // Required: the regex alone lets an empty value through.
+    [Required]
     [RegularExpression("^(" + KnownReasoningEfforts + ")$",
         ErrorMessage = "Conversation:ReasoningEffort must be one of " + KnownReasoningEfforts)]
     public string ReasoningEffort { get; set; } = "medium";

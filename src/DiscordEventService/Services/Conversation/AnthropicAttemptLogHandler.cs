@@ -82,21 +82,27 @@ internal sealed class AnthropicAttemptLogHandler(ILogger logger) : DelegatingHan
     }
 
     // retry-after-ms wins (the API's precise value); retry-after is in seconds. Unparsable or
-    // non-positive values count as absent.
+    // non-positive values count as absent; a huge one is capped (the turn budget ends the
+    // wait long before anyway, and TimeSpan would overflow).
     internal static TimeSpan? ParseRetryAfter(HttpResponseMessage response)
     {
         if (Header(response, RetryAfterMsHeader) is { } ms
             && double.TryParse(ms, NumberStyles.Float, CultureInfo.InvariantCulture, out var milliseconds)
             && milliseconds > 0)
-            return TimeSpan.FromMilliseconds(milliseconds);
+            return Cap(milliseconds);
 
         if (Header(response, RetryAfterHeader) is { } s
             && double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
             && seconds > 0)
-            return TimeSpan.FromSeconds(seconds);
+            return Cap(seconds * 1000);
 
         return null;
     }
+
+    private static TimeSpan Cap(double milliseconds) =>
+        TimeSpan.FromMilliseconds(Math.Min(milliseconds, MaxRetryAfter.TotalMilliseconds));
+
+    private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromMinutes(10);
 
     private static string? Header(HttpResponseMessage response, string name) =>
         response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;

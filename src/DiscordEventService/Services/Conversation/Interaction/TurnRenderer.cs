@@ -47,8 +47,9 @@ internal sealed class TurnRenderer(ITurnSurface surface)
     public Task CompleteTurnAsync() => PostAsync(TakeBuffer());
 
     // A round attempt failed after streaming partial deltas (#268): drop them so the
-    // retried stream (or the failure line) renders exactly once. The buffer only ever
-    // holds the current round — every round boundary already flushes it.
+    // retried stream (or the failure line) renders exactly once. Every tool round boundary
+    // flushes the buffer; a pause_turn does not, so the loop re-sends the paused text after
+    // the reset (#426).
     public void ResetRound() => _text.Clear();
 
     public Task TriggerTypingAsync() => TriggerTypingAsync(force: true);
