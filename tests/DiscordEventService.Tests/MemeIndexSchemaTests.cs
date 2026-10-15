@@ -116,6 +116,25 @@ public sealed class MemeIndexSchemaTests(PostgresFixture fixture) : IClassFixtur
         Assert.NotNull(annotation.SearchVector);
     }
 
+    // #431: description_en is in the vector only. A word that only the English description holds
+    // is found by full-text search, never by trigrams.
+    [Fact]
+    public async Task DescriptionEn_IsInTheVectorButNotInTheTrigramText()
+    {
+        var meme = IndexedMeme(72UL);
+        meme.Annotations.Add(Annotation(72UL, "Żółw na desce", "A turtle on a skateboard", "napis", ["zolw"]));
+        _db.MemeIndex.Add(meme);
+        await _db.SaveChangesAsync();
+
+        await using var verify = NewContext();
+        var annotation = await verify.MemeAnnotations.SingleAsync(a => a.AttachmentDiscordId == 72UL);
+        Assert.Contains("desce", annotation.SearchText);
+        Assert.Contains("napis", annotation.SearchText);
+        Assert.DoesNotContain("skateboard", annotation.SearchText);
+        Assert.Equal([72L], await SearchByVectorAsync("skateboard"));
+        Assert.Empty(await SearchByTrigramAsync("skateboard"));
+    }
+
     [Fact]
     public async Task InsertAnnotation_WhenSameAttachmentModelAndPromptVersion_IsRejected()
     {

@@ -1426,7 +1426,7 @@ namespace DiscordEventService.Data.Migrations
                         .ValueGeneratedOnAddOrUpdate()
                         .HasColumnType("text")
                         .HasColumnName("search_text")
-                        .HasComputedColumnSql("public.f_unaccent(coalesce(public.f_text_array_join(templates), '') || ' ' || coalesce(public.f_text_array_join(search_phrases), '') || ' ' || coalesce(public.f_text_array_join(people_names), '') || ' ' || coalesce(franchise, '') || ' ' || coalesce(public.f_text_array_join(tags), '') || ' ' || coalesce(nullif(source, 'other'), '') || ' ' || coalesce(ocr_text, '') || ' ' || coalesce(description_pl, '') || ' ' || coalesce(description_en, ''))", true);
+                        .HasComputedColumnSql("public.f_unaccent(coalesce(public.f_text_array_join(templates), '') || ' ' || coalesce(public.f_text_array_join(search_phrases), '') || ' ' || coalesce(public.f_text_array_join(people_names), '') || ' ' || coalesce(franchise, '') || ' ' || coalesce(public.f_text_array_join(tags), '') || ' ' || coalesce(nullif(source, 'other'), '') || ' ' || coalesce(ocr_text, '') || ' ' || coalesce(description_pl, ''))", true);
 
                     b.Property<NpgsqlTsVector>("SearchVector")
                         .IsRequired()

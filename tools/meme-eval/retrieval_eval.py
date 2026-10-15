@@ -5,7 +5,8 @@ The SQL in rank_sql is MemeSearchService.SearchAsync, copied verbatim apart from
 parameters and the four columns the service projects for its search log (#384), which take no
 part in the ranking. The trigram threshold of the <% filter (#401) is set once per psql session
 here, per transaction there. Keep the two in step: a change to the ranking there must be repeated here.
-STOP_WORDS is MemeSearchService.RankStopWords.
+STOP_WORDS is MemeSearchService.RankStopWords. search_text comes from the database: since #431 it has
+no description_en, so a corpus copy migrated before #431 still scores with the old text.
 
 A writer set is scored through a temporary view named meme_annotations that holds only that set's
 rows. pg_temp resolves before public, so the query text stays the production query (best
