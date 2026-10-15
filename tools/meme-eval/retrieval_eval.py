@@ -3,7 +3,8 @@
 
 The SQL in rank_sql is MemeSearchService.SearchAsync, copied verbatim apart from inlined
 parameters and the four columns the service projects for its search log (#384), which take no
-part in the ranking. Keep the two in step: a change to the ranking there must be repeated here.
+part in the ranking. The trigram threshold of the <% filter (#401) is set once per psql session
+here, per transaction there. Keep the two in step: a change to the ranking there must be repeated here.
 STOP_WORDS is MemeSearchService.RankStopWords.
 
 A writer set is scored through a temporary view named meme_annotations that holds only that set's
@@ -108,16 +109,20 @@ SELECT {index}, COALESCE((SELECT r FROM (
     SELECT DISTINCT ON (m.attachment_discord_id)
            m.attachment_discord_id,
            msg.created_at_utc AS message_created_at_utc,
-           (ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({rank_query})))
-            + {trigram_weight} * word_similarity(public.f_unaccent({raw}), a.search_text))::float8 AS score
+           (part.ts_rank + {trigram_weight} * part.trigram_similarity)::float8 AS score
     FROM meme_annotations AS a
     JOIN meme_index AS m ON m.id = a.meme_index_id
     JOIN messages AS msg ON msg.id = m.message_id
+    CROSS JOIN LATERAL (
+        SELECT ts_rank(a.search_vector, to_tsquery('simple', public.f_unaccent({rank_query}))) AS ts_rank,
+               word_similarity(public.f_unaccent({raw}), a.search_text) AS trigram_similarity
+        OFFSET 0
+    ) AS part
     WHERE m.guild_discord_id = {guild}
       AND m.status = {INDEXED}
       AND NOT msg.is_deleted
       AND (a.search_vector @@ to_tsquery('simple', public.f_unaccent({filter_query}))
-           OR word_similarity(public.f_unaccent({raw}), a.search_text) >= {TRIGRAM_THRESHOLD})
+           OR public.f_unaccent({raw}) <% a.search_text)
     ORDER BY m.attachment_discord_id, score DESC, a.indexed_at_utc DESC, a.model_id, a.prompt_version
   ) AS best
   ORDER BY score DESC, message_created_at_utc DESC, attachment_discord_id
@@ -128,7 +133,8 @@ SELECT {index}, COALESCE((SELECT r FROM (
 def ranks(db, guild, queries, writers, tokenizer, trigram_weight):
     """Rank of the target per query (0 = not returned), with only `writers` visible."""
     keep = ",".join(lit(m) for m in writers)
-    statements = ["CREATE TEMP VIEW meme_annotations AS "
+    statements = [f"SET pg_trgm.word_similarity_threshold = {TRIGRAM_THRESHOLD};",
+                  "CREATE TEMP VIEW meme_annotations AS "
                   f"SELECT * FROM public.meme_annotations WHERE model_id IN ({keep});"]
     for index, (target, text, _) in enumerate(queries):
         rank_tokens, filter_tokens = tokenizer(text)
