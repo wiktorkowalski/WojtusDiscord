@@ -24,7 +24,7 @@ permissions:
 jobs:
   ci:
     # Format, build (-warnaserror), and run the xUnit + Testcontainers suite.
-    # ubuntu-latest provides Docker for Testcontainers (Postgres 18).
+    # The GitHub-hosted runner provides Docker for Testcontainers (Postgres 18).
     uses: wiktorkowalski/github-workflows/.github/workflows/dotnet-ci.yml@master
     with:
       dotnet-version: "10.0.x"
@@ -37,7 +37,7 @@ jobs:
     # exactly this way. So actually boot the real app — Production environment to match
     # prod's ValidateScopes=false — with a dummy Discord token against a throwaway Postgres
     # and require /health to go green. A boot hang fails the PR instead of the deploy.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     services:
       postgres:
         image: postgres:18
