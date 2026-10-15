@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Services.Conversation;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -162,6 +164,101 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         Assert.All(metrics.Of("wojtus.conversation.first_token"), m => Assert.True(m.Tags.ContainsKey("model")));
     }
 
+    // The prod round of #426 (trace 6b9f6a30…): Langfuse got input 36459 (cache included) and
+    // priced it all at the input rate. The override attributes carry the uncached input and the
+    // ledger's own cost on the generation span.
+    [Fact]
+    public async Task GenerationSpan_LangfuseUsageAndCostDetails_SplitTheCache()
+    {
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.Start(input: 4, cacheRead: 14339, cacheWrite: 22116)
+            .Text("Gotowe.")
+            .End(output: 496, webSearches: 1));
+
+        List<Activity> spans = [];
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == ConversationTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                lock (spans)
+                    spans.Add(activity);
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        await CollectAsync(BuildService(handler, webSearchEnabled: true)
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        List<Activity> stopped;
+        lock (spans)
+            stopped = [.. spans];
+        var turnSpan = stopped.Single(s => s.OperationName == "conversation.turn"
+            && s.GetTagItem("conversation.invoker_id") is ulong id && id == InvokerId);
+        var generation = Assert.Single(stopped, s => s.TraceId == turnSpan.TraceId
+            && s.GetTagItem(CacheUsageTagChatClient.LangfuseUsageTag) is not null);
+        Assert.StartsWith("chat", generation.OperationName);
+        // The gen_ai.* tags stay for other consumers.
+        Assert.Equal(22116L, generation.GetTagItem(CacheUsageTagChatClient.CacheCreationTag));
+
+        using var usage = JsonDocument.Parse((string)generation.GetTagItem(CacheUsageTagChatClient.LangfuseUsageTag)!);
+        Assert.Equal(
+            new Dictionary<string, long>
+            {
+                ["input"] = 4,
+                ["output"] = 496,
+                ["cache_read_input_tokens"] = 14339,
+                ["cache_creation_input_tokens"] = 22116,
+            },
+            usage.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64()));
+
+        using var cost = JsonDocument.Parse((string)generation.GetTagItem(CacheUsageTagChatClient.LangfuseCostTag)!);
+        var costs = cost.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetDouble());
+        Assert.Equal(
+            ["cache_creation_input_tokens", "cache_read_input_tokens", "input", "output", "total", "web_search"],
+            costs.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(4 * 2e-6, costs["input"], precision: 12);
+        Assert.Equal(14339 * 0.2e-6, costs["cache_read_input_tokens"], precision: 12);
+        Assert.Equal(22116 * 2.5e-6, costs["cache_creation_input_tokens"], precision: 12);
+        Assert.Equal(496 * 10e-6, costs["output"], precision: 12);
+        Assert.Equal(0.01, costs["web_search"], precision: 12);
+        Assert.Equal(0.0731258, costs["total"], precision: 12);
+    }
+
+    // Review of #434: the span tagger runs mid-stream, before the ledger's cost call. It must not
+    // take the warn-once slot of a model with no price, or the gap is never logged while tracing is on.
+    [Fact]
+    public async Task ModelWithoutPrice_TracingOn_LedgerStillWarns_AndSpanHasNoCost()
+    {
+        var model = $"claude-unpriced-{Guid.NewGuid():N}";
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.Start(input: 10).Text("Gotowe.").End(output: 5));
+
+        List<Activity> spans = [];
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == ConversationTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                lock (spans)
+                    spans.Add(activity);
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var logs = new RecordingLogger();
+        await CollectAsync(BuildService(handler, webSearchEnabled: false, model, logs.For<ConversationService>())
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        Assert.Contains(logs.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains(model));
+        List<Activity> stopped;
+        lock (spans)
+            stopped = [.. spans];
+        var generation = Assert.Single(stopped, s => s.GetTagItem(CacheUsageTagChatClient.LangfuseUsageTag) is not null
+            && s.GetTagItem("gen_ai.request.model") as string == model);
+        Assert.Null(generation.GetTagItem(CacheUsageTagChatClient.LangfuseCostTag));
+    }
+
     // A web search next to a client tool call (the dev-bot 400 of #426): the API does not run
     // the search in round 1 — the server_tool_use comes WITHOUT its result, and the result opens
     // round 2's response, after the tool_result message. Round 3 must carry that result block in
@@ -269,7 +366,8 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         return text.ToString();
     }
 
-    private ConversationService BuildService(ScriptedClaudeHandler handler, bool webSearchEnabled)
+    private ConversationService BuildService(
+        ScriptedClaudeHandler handler, bool webSearchEnabled, string? model = null, ILogger<ConversationService>? logger = null)
     {
         var conversationOptions = Options.Create(new ConversationOptions
         {
@@ -277,6 +375,8 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             PrimaryGuildId = GuildDiscordId,
             WebSearch = new WebSearchOptions { Enabled = webSearchEnabled },
         });
+        if (model is not null)
+            conversationOptions.Value.Model = model;
 
         var registry = new ConversationToolRegistry(
             MemeSearchTestServices.NewSearch(NewContext(), fixture.ConnectionString),
@@ -296,7 +396,7 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             conversationOptions,
             Options.Create(new AnthropicOptions { ApiKey = "test-key" }),
             new TestHostEnvironment(),
-            NullLogger<ConversationService>.Instance);
+            logger ?? NullLogger<ConversationService>.Instance);
     }
 
     private static async Task<List<ConversationUpdate>> CollectAsync(IAsyncEnumerable<ConversationUpdate> stream)
