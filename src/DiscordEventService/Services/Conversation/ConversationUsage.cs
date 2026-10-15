@@ -16,18 +16,17 @@ internal sealed record RoundTokens(int? Input, int? Output, int? CacheRead, int?
 {
     public static readonly RoundTokens None = new(null, null, null, null, null);
 
-    private const string CacheWriteKey = "CacheCreationInputTokens";
+    internal const string CacheWriteKey = "CacheCreationInputTokens";
     private const string WebSearchesKey = "WebSearchRequests";
 
-    public static RoundTokens From(IEnumerable<ChatResponseUpdate> updates)
+    public static RoundTokens From(IReadOnlyList<ChatResponseUpdate> updates)
     {
-        var list = updates as IReadOnlyList<ChatResponseUpdate> ?? [.. updates];
-        var usage = list
+        var usage = updates
             .SelectMany(update => update.Contents)
             .OfType<UsageContent>()
             .LastOrDefault();
         if (usage is null)
-            return FromMessageStart(list);
+            return FromMessageStart(updates);
 
         var details = usage.Details;
         var hasInput = details.InputTokenCount is not null;
@@ -80,16 +79,17 @@ internal static class ConversationCost
     private static readonly ConcurrentDictionary<string, byte> WarnedModels = new(StringComparer.Ordinal);
 
     // Null when the call reported no usage (it died mid-stream) or the model has no price.
-    public static RoundCost? Compute(ConversationOptions options, string model, RoundTokens tokens, ILogger logger)
+    public static RoundCost? Compute(ConversationOptions options, RoundTokens tokens, ILogger logger)
     {
         if (tokens.Input is not { } input)
             return null;
 
-        if (!options.Prices.TryGetValue(model, out var price))
+        if (!options.Prices.TryGetValue(options.Model, out var price))
         {
-            if (WarnedModels.TryAdd(model, 0))
+            if (WarnedModels.TryAdd(options.Model, 0))
                 logger.LogWarning(
-                    "No price for model {Model} in Conversation:Prices; its conversation_usage rows get no cost", model);
+                    "No price for model {Model} in Conversation:Prices; its conversation_usage rows get no cost",
+                    options.Model);
             return null;
         }
 

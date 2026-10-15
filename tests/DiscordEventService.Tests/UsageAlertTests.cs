@@ -261,7 +261,7 @@ public sealed class UsageAlertTests(PostgresFixture fixture)
             AdditionalCounts = new() { ["WebSearchRequests"] = 3 },
         };
         var tokens = RoundTokens.From([new ChatResponseUpdate(ChatRole.Assistant, [new UsageContent(usage)])]);
-        var cost = ConversationCost.Compute(options, "claude-sonnet-5", tokens, NullLogger.Instance);
+        var cost = ConversationCost.Compute(options, tokens, NullLogger.Instance);
         Assert.NotNull(cost);
         Assert.Equal(0.142, cost.TotalUsd, precision: 9);
         Assert.Equal(0.112, cost.TokensUsd, precision: 9);
@@ -284,11 +284,11 @@ public sealed class UsageAlertTests(PostgresFixture fixture)
     [Fact]
     public void ComputedCost_UnknownModelOrNoUsage_IsNull()
     {
-        var options = new ConversationOptions();
         var tokens = new RoundTokens(1000, 10, 0, 0, null);
 
-        Assert.Null(ConversationCost.Compute(options, "claude-unknown-9", tokens, NullLogger.Instance));
-        Assert.Null(ConversationCost.Compute(options, "claude-sonnet-5", RoundTokens.None, NullLogger.Instance));
+        Assert.Null(ConversationCost.Compute(
+            new ConversationOptions { Model = "claude-unknown-9" }, tokens, NullLogger.Instance));
+        Assert.Null(ConversationCost.Compute(new ConversationOptions(), RoundTokens.None, NullLogger.Instance));
     }
 
     private static void MonthlyCapsOff(ConversationOptions options)

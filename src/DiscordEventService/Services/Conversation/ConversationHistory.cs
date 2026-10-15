@@ -21,7 +21,7 @@ internal static class ConversationHistory
     public static List<ChatMessage> ForReplay(IEnumerable<ChatMessage> responseMessages, ILogger logger)
     {
         List<ChatMessage> replayable = [];
-        HashSet<string> droppedCallIds = new(StringComparer.Ordinal);
+        var droppedCallIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var message in responseMessages)
         {
             List<AIContent> contents = [];
@@ -55,6 +55,8 @@ internal static class ConversationHistory
                         });
                         break;
 
+                    // Before the case below: FunctionCallContent and FunctionResultContent
+                    // derive from ToolCallContent and ToolResultContent.
                     case FunctionCallContent or FunctionResultContent or TextContent or TextReasoningContent:
                         contents.Add(content);
                         break;

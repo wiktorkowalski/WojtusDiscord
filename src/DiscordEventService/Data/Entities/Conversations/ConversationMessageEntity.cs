@@ -35,7 +35,7 @@ public class ConversationMessageEntity
 
     // Tool rows only. ToolResult is the tool's raw string, stored as plain text —
     // NEVER a serialized ChatMessage blob: rehydrating FunctionResultContent with a
-    // string Result keeps the OpenAI adapter's `as string` fast-path and byte-identical
+    // string Result keeps the MEAI adapter's `as string` fast-path and byte-identical
     // wire replay (a JsonElement Result replays quote-wrapped/escaped).
     public string? ToolCallId { get; set; }
     public string? ToolName { get; set; }

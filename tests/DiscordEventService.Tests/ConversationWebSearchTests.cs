@@ -87,7 +87,7 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         });
 
         using var metrics = new MetricsCapture();
-        var spans = new List<Activity>();
+        List<Activity> spans = [];
         using var listener = new ActivityListener
         {
             ShouldListenTo = source => source.Name == ConversationTelemetry.SourceName,

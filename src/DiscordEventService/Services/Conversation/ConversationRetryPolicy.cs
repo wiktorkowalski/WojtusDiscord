@@ -20,12 +20,15 @@ internal static class ConversationRetryPolicy
     // surface the visible failure line instead.
     public static bool IsTransient(Exception failure) => failure switch
     {
-        AnthropicApiException api => (int)api.StatusCode is 408 or 429 or >= 500,
+        AnthropicApiException api => IsTransientStatus((int)api.StatusCode),
         AnthropicSseException or AnthropicIOException => true,
         HttpRequestException or IOException => true,
         TaskCanceledException { InnerException: TimeoutException } => true,
         _ => false,
     };
+
+    // The int, not the enum: 529 (overloaded) has no HttpStatusCode name.
+    public static bool IsTransientStatus(int status) => status is 408 or 429 or >= 500;
 
     // Exponential backoff with full jitter: random(0, base·2^(attempt-1)) capped at
     // RetryMaxDelayMs. The Retry-After the API sent (captured by AnthropicAttemptLogHandler)

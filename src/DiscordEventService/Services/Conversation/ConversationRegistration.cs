@@ -26,6 +26,7 @@ internal static class ConversationRegistration
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        AddAnthropicOptions(services, configuration);
         services.AddSingleton<IChatClient>(CreateChatClient);
 
         // query_database (#238 §4): the cached schema hint for the tool description, derived from the
@@ -60,15 +61,9 @@ internal static class ConversationRegistration
         services.AddOptions<ConversationOptions>()
             .Bind(configuration.GetSection(ConversationOptions.SectionName));
 
-        // Mirror the root's ANTHROPIC_API_KEY fallback so the in-handler IsConfigured
-        // gate agrees with the (root-built) chat client's actual key.
-        services.AddOptions<AnthropicOptions>()
-            .Bind(configuration.GetSection(AnthropicOptions.SectionName))
-            .PostConfigure(options =>
-            {
-                if (string.IsNullOrWhiteSpace(options.ApiKey))
-                    options.ApiKey = configuration[AnthropicOptions.ApiKeyEnvironmentVariable];
-            });
+        // The same binding as the root, so the in-handler IsConfigured gate agrees with the
+        // (root-built) chat client's actual key.
+        AddAnthropicOptions(services, configuration);
 
         services.AddSingleton<IChatClient>(_ => rootSp.GetRequiredService<IChatClient>());
 
@@ -100,6 +95,17 @@ internal static class ConversationRegistration
         services.AddScoped<ConversationFlow>();
         services.AddScoped<ConfirmationFlow>();
     }
+
+    // The Claude API key, boot-safe when unset (the assistant stays inert). ANTHROPIC_API_KEY
+    // is accepted as a fallback for Anthropic__ApiKey.
+    private static void AddAnthropicOptions(IServiceCollection services, IConfiguration configuration) =>
+        services.AddOptions<AnthropicOptions>()
+            .Bind(configuration.GetSection(AnthropicOptions.SectionName))
+            .PostConfigure(options =>
+            {
+                if (string.IsNullOrWhiteSpace(options.ApiKey))
+                    options.ApiKey = configuration[AnthropicOptions.ApiKeyEnvironmentVariable];
+            });
 
     // One attempt's limit for the response headers (the SDK timeout ends once the headers
     // arrive; the stream itself runs under the turn's RequestTimeoutSeconds). Well under the
@@ -160,7 +166,6 @@ internal static class ConversationRegistration
 internal sealed class CacheUsageTagChatClient(IChatClient innerClient) : DelegatingChatClient(innerClient)
 {
     internal const string CacheCreationTag = "gen_ai.usage.cache_creation.input_tokens";
-    internal const string CacheCreationCountKey = "CacheCreationInputTokens";
 
     public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null,
@@ -174,9 +179,10 @@ internal sealed class CacheUsageTagChatClient(IChatClient innerClient) : Delegat
         {
             if (span is not null)
             {
-                foreach (var usage in update.Contents.OfType<UsageContent>())
+                foreach (var content in update.Contents)
                 {
-                    if (usage.Details.AdditionalCounts?.TryGetValue(CacheCreationCountKey, out var written) is true)
+                    if (content is UsageContent usage
+                        && usage.Details.AdditionalCounts?.TryGetValue(RoundTokens.CacheWriteKey, out var written) is true)
                         span.SetTag(CacheCreationTag, written);
                 }
             }

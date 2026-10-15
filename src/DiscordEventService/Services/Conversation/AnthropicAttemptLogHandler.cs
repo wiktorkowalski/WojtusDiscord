@@ -43,6 +43,8 @@ internal sealed class AnthropicAttemptLogHandler(ILogger logger) : DelegatingHan
     private const string RetryAfterMsHeader = "retry-after-ms";
     private const string RetryAfterHeader = "retry-after";
 
+    private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromMinutes(10);
+
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
@@ -62,9 +64,8 @@ internal sealed class AnthropicAttemptLogHandler(ILogger logger) : DelegatingHan
             throw;
         }
 
-        // The int, not the enum: 529 (overloaded) has no HttpStatusCode name.
         var status = (int)response.StatusCode;
-        if (status is 408 or 409 or 429 or >= 500)
+        if (ConversationRetryPolicy.IsTransientStatus(status))
         {
             var retryAfter = ParseRetryAfter(response);
             if (scope is not null)
@@ -101,8 +102,6 @@ internal sealed class AnthropicAttemptLogHandler(ILogger logger) : DelegatingHan
 
     private static TimeSpan Cap(double milliseconds) =>
         TimeSpan.FromMilliseconds(Math.Min(milliseconds, MaxRetryAfter.TotalMilliseconds));
-
-    private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromMinutes(10);
 
     private static string? Header(HttpResponseMessage response, string name) =>
         response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;

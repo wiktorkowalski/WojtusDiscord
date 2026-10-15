@@ -267,7 +267,9 @@ internal sealed class ConversationService(
             var roundUsage = ExtractRoundUsage(sink, round, outcome.Attempt, options, outcome.LatencyMs, failed: false);
             turnLog.CostUsd += RecordRoundCost(roundUsage, round, turn, outcome);
             WebSearchCitations.AccumulateRound(sink, citations);
-            RecordWebSearches(roundUsage, round, turn);
+            // Search spend itemisation (#271): a searchy round is visible without a DB query.
+            if (roundUsage.WebSearchRequests is > 0)
+                turn?.SetTag($"conversation.round{round}.web_search_requests", roundUsage.WebSearchRequests);
 
             var replay = ConversationHistory.ForReplay(response.Messages, logger);
             if (response.FinishReason == ChatFinishReason.ContentFilter)
@@ -341,8 +343,9 @@ internal sealed class ConversationService(
 
             if (toolCalls.Count == 0)
             {
-                var hadText = !string.IsNullOrWhiteSpace(answer.ToString());
-                var finalAnswer = hadText ? answer.ToString() : EmptyAnswerFallback;
+                var answerText = answer.ToString();
+                var hadText = !string.IsNullOrWhiteSpace(answerText);
+                var finalAnswer = hadText ? answerText : EmptyAnswerFallback;
                 turnLog.Finish(TurnLog.Answered, finalAnswer);
                 if (!hadText)
                     yield return new ConversationUpdate.AssistantTextDelta(EmptyAnswerFallback);
@@ -408,8 +411,9 @@ internal sealed class ConversationService(
         var finalReplay = await CompleteRoundAsync(finalSink, finalRound, finalOutcome, finalSink.ToChatResponse());
         answer.Append(ConversationHistory.AnswerText(finalReplay));
 
-        var cappedHadText = !string.IsNullOrWhiteSpace(answer.ToString());
-        var cappedAnswer = cappedHadText ? answer.ToString() : CapReachedFallback;
+        var cappedText = answer.ToString();
+        var cappedHadText = !string.IsNullOrWhiteSpace(cappedText);
+        var cappedAnswer = cappedHadText ? cappedText : CapReachedFallback;
         turnLog.Finish(TurnLog.RoundCap, cappedAnswer);
         if (!cappedHadText)
             yield return new ConversationUpdate.AssistantTextDelta(CapReachedFallback);
@@ -460,14 +464,6 @@ internal sealed class ConversationService(
         return cost;
     }
 
-    // Search spend itemisation (#271): the ledger row already carries the counts; the
-    // trace tag makes a searchy round visible without a DB query.
-    private static void RecordWebSearches(ConversationRoundUsage usage, int round, Activity? turn)
-    {
-        if (usage.WebSearchRequests is > 0)
-            turn?.SetTag($"conversation.round{round}.web_search_requests", usage.WebSearchRequests);
-    }
-
     // Everything one ledger row needs from a round's streamed updates (#267, #426): the
     // native token counts and the cost computed from the price table. The §2 retry policy
     // (#268) writes one row per attempt.
@@ -476,7 +472,7 @@ internal sealed class ConversationService(
         long latencyMs, bool failed)
     {
         var tokens = RoundTokens.From(updates);
-        var cost = ConversationCost.Compute(options, options.Model, tokens, logger);
+        var cost = ConversationCost.Compute(options, tokens, logger);
         return new ConversationRoundUsage(
             round, attempt, options.Model,
             tokens.Input, tokens.Output, tokens.CacheRead, tokens.CacheWrite,

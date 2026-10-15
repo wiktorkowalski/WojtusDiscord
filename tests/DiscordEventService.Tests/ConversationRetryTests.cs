@@ -168,7 +168,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
 
     // What the discrete renderer (#274) would post: deltas buffered, RoundReset drops
     // the current round's buffer, the remainder is the answer.
-    private static string RenderedText(IReadOnlyList<ConversationUpdate> events)
+    internal static string RenderedText(IReadOnlyList<ConversationUpdate> events)
     {
         var text = new StringBuilder();
         foreach (var update in events)

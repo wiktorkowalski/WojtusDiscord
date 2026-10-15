@@ -258,17 +258,8 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             "szukaj", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: false, ChannelId: 7UL),
             CancellationToken.None));
 
-        var rendered = new System.Text.StringBuilder();
-        foreach (var update in events)
-        {
-            if (update is ConversationUpdate.RoundReset)
-                rendered.Clear();
-            else if (update is ConversationUpdate.AssistantTextDelta delta)
-                rendered.Append(delta.Text);
-        }
-
         Assert.Contains(events, e => e is ConversationUpdate.RoundReset);
-        Assert.Equal("Szukam… Mam.", rendered.ToString());
+        Assert.Equal("Szukam… Mam.", ConversationRetryTests.RenderedText(events));
     }
 
     // Call 1 pauses; call 2 streams text and dies; call 3 answers.

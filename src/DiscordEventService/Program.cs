@@ -71,16 +71,6 @@ builder.Services.AddOptions<OpenRouterOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
-// Conversational assistant (#426): the Claude API key, boot-safe when unset (the assistant
-// stays inert). ANTHROPIC_API_KEY is accepted as a fallback for Anthropic__ApiKey.
-builder.Services.AddOptions<AnthropicOptions>()
-    .Bind(builder.Configuration.GetSection(AnthropicOptions.SectionName))
-    .PostConfigure(options =>
-    {
-        if (string.IsNullOrWhiteSpace(options.ApiKey))
-            options.ApiKey = builder.Configuration[AnthropicOptions.ApiKeyEnvironmentVariable];
-    });
-
 builder.Services.AddOptions<MemeIndexOptions>()
     .Bind(builder.Configuration.GetSection(MemeIndexOptions.SectionName));
 
