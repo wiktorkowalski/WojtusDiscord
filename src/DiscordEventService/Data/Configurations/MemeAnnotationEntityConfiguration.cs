@@ -26,10 +26,13 @@ internal sealed class MemeAnnotationEntityConfiguration : IEntityTypeConfigurati
         "setweight(to_tsvector('simple', public.f_unaccent(coalesce(ocr_text, ''))), 'B') || " +
         "setweight(to_tsvector('simple', public.f_unaccent(coalesce(description_pl, '') || ' ' || coalesce(description_en, ''))), 'C')";
 
-    // Trigram side: the same fields as the vector, unweighted.
+    // Trigram side: the fields of the vector, unweighted, but without description_en (#431).
+    // Search pays one word_similarity per row that passes, and its cost grows with the text:
+    // without the English description the text is ~25 % shorter and a broad search ~30 % faster,
+    // with no target lost in retrieval_eval.py. description_en still matches through the vector.
     private const string SearchTextSql =
         "public.f_unaccent(" + WeightASql + " || ' ' || " +
-        "coalesce(ocr_text, '') || ' ' || coalesce(description_pl, '') || ' ' || coalesce(description_en, ''))";
+        "coalesce(ocr_text, '') || ' ' || coalesce(description_pl, ''))";
 
     private const string EmptyTextArraySql = "'{}'::text[]";
 
