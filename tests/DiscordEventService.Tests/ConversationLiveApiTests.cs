@@ -110,6 +110,23 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
         Assert.All(rows, row => Assert.False(row.Failed, Dump(log)));
     }
 
+    // The dev-bot prompt that failed with a 400 (#426): the model calls web_search and
+    // meme_search in one group, so the API defers the search and its result opens the next
+    // response. That result must go back on round 3.
+    [LiveFact]
+    public async Task SearchNextToLocalTool_DeferredSearchResult_IsSentBack()
+    {
+        var (service, log, channel) = BuildService();
+
+        var events = await CollectAsync(service,
+            "wyszukaj w necie jaka jest najnowsza wersja .NET, a potem znajdź mema o programowaniu", channel);
+
+        Assert.DoesNotContain(new ConversationOptions().FailureMessage, Answer(events));
+        var rows = await UsageRowsAsync(channel);
+        Assert.All(rows, row => Assert.False(row.Failed, Dump(log)));
+        Assert.True(rows.Sum(row => row.WebSearchRequests ?? 0) > 0, Dump(log));
+    }
+
     // MaxToolRounds 1: the second call is the post-cap round — tool history, the same tools
     // declared, tool_choice none, round 1's thinking still in the transcript.
     [LiveFact]

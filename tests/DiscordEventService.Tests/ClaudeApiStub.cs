@@ -98,7 +98,12 @@ internal sealed class ClaudeSse
     }
 
     // A server-side web search: the server_tool_use block (query streamed) and its result block.
-    public ClaudeSse WebSearch(string id, string query, params (string Url, string Title)[] results)
+    public ClaudeSse WebSearch(string id, string query, params (string Url, string Title)[] results) =>
+        WebSearchCall(id, query).WebSearchResult(id, results);
+
+    // The server_tool_use block alone: next to a client tool call the API does not run the
+    // search yet; its result opens the NEXT response (WebSearchResult).
+    public ClaudeSse WebSearchCall(string id, string query)
     {
         var call = BlockStart(new JsonObject
         {
@@ -113,8 +118,11 @@ internal sealed class ClaudeSse
             ["type"] = "input_json_delta",
             ["partial_json"] = new JsonObject { ["query"] = query }.ToJsonString(),
         });
-        BlockStop(call);
+        return BlockStop(call);
+    }
 
+    public ClaudeSse WebSearchResult(string id, params (string Url, string Title)[] results)
+    {
         var content = new JsonArray();
         foreach (var (url, title) in results)
         {

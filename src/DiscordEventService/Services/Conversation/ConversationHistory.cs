@@ -15,11 +15,13 @@ namespace DiscordEventService.Services.Conversation;
 // text, tool_use) stays as the model wrote it.
 internal static class ConversationHistory
 {
-    private const string WebSearchToolName = "web_search";
-
+    // A result block is kept even when its call is not in the same response: next to a client
+    // tool call the API defers the search, and its result opens the NEXT response (#426). Only
+    // the result of a call this method itself dropped goes too.
     public static List<ChatMessage> ForReplay(IEnumerable<ChatMessage> responseMessages, ILogger logger)
     {
         List<ChatMessage> replayable = [];
+        HashSet<string> droppedCallIds = new(StringComparer.Ordinal);
         foreach (var message in responseMessages)
         {
             List<AIContent> contents = [];
@@ -29,9 +31,19 @@ internal static class ConversationHistory
                 {
                     case WebSearchToolCallContent call:
                         if (ToServerToolUse(call) is { } serverToolUse)
+                        {
                             contents.Add(serverToolUse);
+                        }
                         else
+                        {
+                            droppedCallIds.Add(call.CallId);
                             logger.LogDebug("Dropping web search call {CallId} with no query from the round history", call.CallId);
+                        }
+                        break;
+
+                    case WebSearchToolResultContent { RawRepresentation: WebSearchToolResultBlock dropped }
+                        when droppedCallIds.Contains(dropped.ToolUseID):
+                        logger.LogDebug("Dropping the web search result of dropped call {CallId}", dropped.ToolUseID);
                         break;
 
                     case WebSearchToolResultContent { RawRepresentation: WebSearchToolResultBlock block }:
@@ -67,7 +79,6 @@ internal static class ConversationHistory
             });
         }
 
-        DropUnpairedSearchResults(replayable, logger);
         return replayable;
     }
 
@@ -107,34 +118,6 @@ internal static class ConversationHistory
                 Input = new Dictionary<string, JsonElement> { ["query"] = JsonSerializer.SerializeToElement(query) },
             },
         };
-    }
-
-    // A web_search_tool_result whose server_tool_use was dropped would be a 400: drop it too.
-    private static void DropUnpairedSearchResults(List<ChatMessage> messages, ILogger logger)
-    {
-        var callIds = messages
-            .SelectMany(message => message.Contents)
-            .Select(content => content.RawRepresentation)
-            .OfType<ContentBlockParam>()
-            .Select(param => param.Value)
-            .OfType<ServerToolUseBlockParam>()
-            .Select(param => param.ID)
-            .ToHashSet(StringComparer.Ordinal);
-
-        for (var i = 0; i < messages.Count; i++)
-        {
-            var message = messages[i];
-            var kept = message.Contents.Where(content =>
-                    content.RawRepresentation is not ContentBlockParam { Value: WebSearchToolResultBlockParam result }
-                    || callIds.Contains(result.ToolUseID))
-                .ToList();
-            if (kept.Count == message.Contents.Count)
-                continue;
-
-            logger.LogDebug("Dropping {Count} web search result(s) without their call from the round history",
-                message.Contents.Count - kept.Count);
-            messages[i] = new ChatMessage(message.Role, kept) { AuthorName = message.AuthorName, MessageId = message.MessageId };
-        }
     }
 
     // Text of a response without the empty citation carriers: Claude splits an answer into

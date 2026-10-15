@@ -162,6 +162,50 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         Assert.All(metrics.Of("wojtus.conversation.first_token"), m => Assert.True(m.Tags.ContainsKey("model")));
     }
 
+    // A web search next to a client tool call (the dev-bot 400 of #426): the API does not run
+    // the search in round 1 — the server_tool_use comes WITHOUT its result, and the result opens
+    // round 2's response, after the tool_result message. Round 3 must carry that result block in
+    // round 2's assistant message; dropping it as "unpaired" is a 400 on messages.1.
+    [Fact]
+    public async Task SearchNextToClientTool_ResultInTheNextResponse_IsSentBack()
+    {
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start()
+                .Thinking()
+                .Text("Sprawdzam. ")
+                .WebSearchCall("srvtoolu_A", "najnowsza wersja .NET")
+                .ToolUse("toolu_1", "meme_search", """{"query":"programowanie","limit":5}""")
+                .End("tool_use"),
+            1 => ClaudeSse.Start()
+                .WebSearchResult("srvtoolu_A", ("https://dotnet.example/download", "Download .NET"))
+                .Thinking()
+                .ToolUse("toolu_2", "meme_search", """{"query":"kod","limit":5}""")
+                .ToolUse("toolu_3", "meme_search", """{"query":"programista","limit":5}""")
+                .End("tool_use", webSearches: 1),
+            _ => ClaudeSse.Start().Text("Najnowsza to .NET 10.", ("https://dotnet.example/download", "Download .NET")).End(),
+        });
+
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
+            .GenerateReplyAsync("wyszukaj w necie jaka jest najnowsza wersja .NET, a potem znajdź mema o programowaniu",
+                Context(), CancellationToken.None));
+
+        Assert.Equal(3, handler.CallCount);
+        Assert.StartsWith("Najnowsza to .NET 10.", FinalAnswer(events));
+
+        var messages = ClaudeRequest.Messages(handler.Requests[2]);
+        var assistantTurns = messages.Where(m => m!["role"]!.GetValue<string>() == "assistant").ToList();
+        Assert.Equal(["thinking", "text", "server_tool_use", "tool_use"], ClaudeRequest.BlockTypes(assistantTurns[0]!));
+        Assert.Equal(["web_search_tool_result", "thinking", "tool_use", "tool_use"], ClaudeRequest.BlockTypes(assistantTurns[1]!));
+        Assert.Equal("srvtoolu_A",
+            assistantTurns[1]!["content"]![0]!["tool_use_id"]!.GetValue<string>());
+        Assert.Equal(["tool_result", "tool_result"], ClaudeRequest.BlockTypes(messages[^1]!));
+
+        // The search ran in round 2's request: that is the round the API bills it to.
+        var rows = await _db.ConversationUsage.OrderBy(u => u.Round).ToListAsync();
+        Assert.Equal([null, 1, null], rows.Select(r => r.WebSearchRequests));
+    }
+
     // A long search turn the API paused: the response goes back unchanged (with its search
     // blocks), the model goes on, and the two halves form one answer.
     [Fact]
