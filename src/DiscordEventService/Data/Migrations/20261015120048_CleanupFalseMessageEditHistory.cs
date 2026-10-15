@@ -26,18 +26,28 @@ namespace DiscordEventService.Data.Migrations
         {
             // A refresh stamped its receive time as edited_at_utc. Put back Discord's own value from
             // the latest raw MessageUpdated: Discord omits edited_timestamp for a message never edited.
-            // Runs before the DELETE, which removes the rows it matches on.
+            // Runs before the DELETE, which removes the rows it matches on. One scan of the raw events,
+            // not one per message: that took 7.4 s on prod, inside the 30 s boot command timeout.
             migrationBuilder.Sql($"""
-                UPDATE messages AS m
-                SET edited_at_utc = (
-                    SELECT (r.event_json->'message'->>'edited_timestamp')::timestamptz
+                WITH affected AS (
+                    SELECT m.id, m.discord_id::text AS discord_id
+                    FROM messages AS m
+                    WHERE EXISTS (
+                        SELECT 1 FROM message_edit_history AS h
+                        WHERE h.message_id = m.id AND h.edited_at_utc = m.edited_at_utc AND {IsRefresh})),
+                latest AS (
+                    SELECT DISTINCT ON (r.event_json->'message'->>'id')
+                        r.event_json->'message'->>'id' AS discord_id,
+                        (r.event_json->'message'->>'edited_timestamp')::timestamptz AS edited_at_utc
                     FROM raw_event_logs AS r
-                    WHERE r.event_type = 'MessageUpdated' AND r.event_json->'message'->>'id' = m.discord_id::text
-                    ORDER BY r.received_at_utc DESC
-                    LIMIT 1)
-                WHERE EXISTS (
-                    SELECT 1 FROM message_edit_history AS h
-                    WHERE h.message_id = m.id AND h.edited_at_utc = m.edited_at_utc AND {IsRefresh});
+                    WHERE r.event_type = 'MessageUpdated'
+                        AND r.event_json->'message'->>'id' IN (SELECT discord_id FROM affected)
+                    ORDER BY r.event_json->'message'->>'id', r.received_at_utc DESC)
+                UPDATE messages AS m
+                SET edited_at_utc = l.edited_at_utc
+                FROM affected AS a
+                LEFT JOIN latest AS l ON l.discord_id = a.discord_id
+                WHERE m.id = a.id;
                 """);
 
             migrationBuilder.Sql($"DELETE FROM message_edit_history AS h WHERE {IsRefresh};");
