@@ -160,6 +160,25 @@ function extractEmote(payload: unknown): HumanEvent['emote'] {
   return { name, id, custom: id !== null }
 }
 
+// Discord sends MessageUpdated when it unfurls a link, when the author suppresses embeds, and when it
+// refreshes an embed or an attachment URL on an old message (#413). Such an update has no
+// edited_timestamp, or the one of an edit made long ago. Only a user edit carries an
+// edited_timestamp of the moment the event arrives.
+const USER_EDIT_MAX_LAG_MS = 5 * 60_000
+
+function verbOf(ev: TimelineEvent): string {
+  if (ev.eventType === 'MessageUpdated' && !isUserEdit(ev)) return 'had a message updated'
+  return VERB[ev.eventType] ?? humanizeFallback(ev.eventType)
+}
+
+function isUserEdit(ev: TimelineEvent): boolean {
+  const message = (ev.payload as { message?: { edited_timestamp?: unknown } } | null)?.message
+  if (typeof message !== 'object' || message === null) return true
+  if (typeof message.edited_timestamp !== 'string') return false
+  const lag = Date.parse(ev.receivedAtUtc) - Date.parse(message.edited_timestamp)
+  return Number.isNaN(lag) || lag < USER_EDIT_MAX_LAG_MS
+}
+
 export function humanizeEvent(ev: TimelineEvent, maps: NameMaps | undefined): HumanEvent {
   const category = categoryOf(ev.eventType)
   const user = ev.userDiscordId ? (maps?.users.get(ev.userDiscordId) ?? null) : null
@@ -171,7 +190,7 @@ export function humanizeEvent(ev: TimelineEvent, maps: NameMaps | undefined): Hu
     meta: metaOf(category),
     user,
     channelName,
-    verb: VERB[ev.eventType] ?? humanizeFallback(ev.eventType),
+    verb: verbOf(ev),
     emote: category === 'reaction' ? extractEmote(ev.payload) : null,
     receivedAtUtc: ev.receivedAtUtc,
     jsonSizeBytes: ev.jsonSizeBytes,
