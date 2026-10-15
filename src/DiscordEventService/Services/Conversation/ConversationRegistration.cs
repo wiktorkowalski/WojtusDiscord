@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Anthropic;
 using Anthropic.Core;
 using DiscordEventService.Configuration;
 using DiscordEventService.Infrastructure;
 using DiscordEventService.Services.Conversation.Interaction;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Services.Conversation;
@@ -157,15 +159,26 @@ internal static class ConversationRegistration
             .UseOpenTelemetry(
                 sourceName: ConversationTelemetry.SourceName,
                 configure: telemetry => telemetry.EnableSensitiveData = enableSensitiveData)
-            .Use(inner => new CacheUsageTagChatClient(inner))
+            .Use(inner => new CacheUsageTagChatClient(inner, conversation))
             .Build();
 }
 
-// MEAI's OTel client tags the cache read (gen_ai.usage.cache_read.input_tokens) but not the
-// cache write. This adds the OpenTelemetry GenAI name for it to the generation span (#426).
-internal sealed class CacheUsageTagChatClient(IChatClient innerClient) : DelegatingChatClient(innerClient)
+// Usage tags on the generation span (#426):
+// - MEAI's OTel client tags the cache read (gen_ai.usage.cache_read.input_tokens) but not the
+//   cache write. This adds the OpenTelemetry GenAI name for it.
+// - Langfuse reads gen_ai.usage.input_tokens (uncached + cache read + cache write) as uncached
+//   input, so its total counts the cache twice and its cost prices it at the full rate. The
+//   langfuse.observation.* JSON attributes take precedence over gen_ai.* in Langfuse: they carry
+//   the uncached input and the ledger's own cost (ConversationCost). Langfuse sums the usage total.
+internal sealed class CacheUsageTagChatClient(IChatClient innerClient, ConversationOptions options)
+    : DelegatingChatClient(innerClient)
 {
     internal const string CacheCreationTag = "gen_ai.usage.cache_creation.input_tokens";
+    internal const string LangfuseUsageTag = "langfuse.observation.usage_details";
+    internal const string LangfuseCostTag = "langfuse.observation.cost_details";
+
+    private const string CacheReadKey = "cache_read_input_tokens";
+    private const string CacheWriteKey = "cache_creation_input_tokens";
 
     public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null,
@@ -177,17 +190,41 @@ internal sealed class CacheUsageTagChatClient(IChatClient innerClient) : Delegat
 
         await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken))
         {
-            if (span is not null)
+            if (span is not null && update.Contents.OfType<UsageContent>().LastOrDefault() is { } usage)
             {
-                foreach (var content in update.Contents)
-                {
-                    if (content is UsageContent usage
-                        && usage.Details.AdditionalCounts?.TryGetValue(RoundTokens.CacheWriteKey, out var written) is true)
-                        span.SetTag(CacheCreationTag, written);
-                }
+                if (usage.Details.AdditionalCounts?.TryGetValue(RoundTokens.CacheWriteKey, out var written) is true)
+                    span.SetTag(CacheCreationTag, written);
+                TagLangfuseUsage(span, RoundTokens.From([update]));
             }
 
             yield return update;
         }
+    }
+
+    private void TagLangfuseUsage(Activity span, RoundTokens tokens)
+    {
+        if (tokens.UncachedInput is not { } uncached)
+            return;
+
+        var usage = new Dictionary<string, long> { ["input"] = uncached, ["output"] = tokens.Output ?? 0 };
+        if (tokens.CacheRead is > 0)
+            usage[CacheReadKey] = tokens.CacheRead.Value;
+        if (tokens.CacheWrite is > 0)
+            usage[CacheWriteKey] = tokens.CacheWrite.Value;
+        span.SetTag(LangfuseUsageTag, JsonSerializer.Serialize(usage));
+
+        // ConversationService computes the same cost for the ledger and logs a missing price.
+        if (ConversationCost.Compute(options, tokens, NullLogger.Instance) is not { } cost)
+            return;
+
+        var costs = new Dictionary<string, double> { ["input"] = cost.InputUsd, ["output"] = cost.OutputUsd };
+        if (usage.ContainsKey(CacheReadKey))
+            costs[CacheReadKey] = cost.CacheReadUsd;
+        if (usage.ContainsKey(CacheWriteKey))
+            costs[CacheWriteKey] = cost.CacheWriteUsd;
+        if (tokens.WebSearches is > 0)
+            costs["web_search"] = cost.WebSearchUsd;
+        costs["total"] = cost.TotalUsd;
+        span.SetTag(LangfuseCostTag, JsonSerializer.Serialize(costs));
     }
 }

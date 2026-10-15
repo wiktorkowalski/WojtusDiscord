@@ -19,6 +19,10 @@ internal sealed record RoundTokens(int? Input, int? Output, int? CacheRead, int?
     internal const string CacheWriteKey = "CacheCreationInputTokens";
     private const string WebSearchesKey = "WebSearchRequests";
 
+    // The input billed at the full input price: total input less the cache read and write.
+    public int? UncachedInput =>
+        Input is { } input ? Math.Max(0, input - (CacheRead ?? 0) - (CacheWrite ?? 0)) : null;
+
     public static RoundTokens From(IReadOnlyList<ChatResponseUpdate> updates)
     {
         var usage = updates
@@ -69,7 +73,14 @@ internal sealed record RoundTokens(int? Input, int? Output, int? CacheRead, int?
 //          + searches × fee per search
 // TokensUsd is the same without the search fee: the ledger keeps it as
 // upstream_inference_cost_usd, so cost − upstream stays the search fee (#271).
-internal sealed record RoundCost(double TotalUsd, double TokensUsd);
+// The parts go to the Langfuse generation span as its cost details.
+internal sealed record RoundCost(
+    double InputUsd, double CacheReadUsd, double CacheWriteUsd, double OutputUsd, double WebSearchUsd)
+{
+    public double TokensUsd => InputUsd + CacheReadUsd + CacheWriteUsd + OutputUsd;
+
+    public double TotalUsd => TokensUsd + WebSearchUsd;
+}
 
 internal static class ConversationCost
 {
@@ -81,7 +92,7 @@ internal static class ConversationCost
     // Null when the call reported no usage (it died mid-stream) or the model has no price.
     public static RoundCost? Compute(ConversationOptions options, RoundTokens tokens, ILogger logger)
     {
-        if (tokens.Input is not { } input)
+        if (tokens.UncachedInput is not { } uncached)
             return null;
 
         if (!options.Prices.TryGetValue(options.Model, out var price))
@@ -93,17 +104,11 @@ internal static class ConversationCost
             return null;
         }
 
-        var cacheRead = tokens.CacheRead ?? 0;
-        var cacheWrite = tokens.CacheWrite ?? 0;
-        var uncached = Math.Max(0, input - cacheRead - cacheWrite);
-
-        var tokensUsd =
-            (uncached * price.InputPerMTokUsd
-             + cacheRead * price.CacheReadPerMTokUsd
-             + cacheWrite * price.CacheWritePerMTokUsd
-             + (tokens.Output ?? 0) * price.OutputPerMTokUsd) / PerMillion;
-        var searchUsd = (tokens.WebSearches ?? 0) * options.WebSearchPerThousandUsd / 1000d;
-
-        return new RoundCost(tokensUsd + searchUsd, tokensUsd);
+        return new RoundCost(
+            InputUsd: uncached * price.InputPerMTokUsd / PerMillion,
+            CacheReadUsd: (tokens.CacheRead ?? 0) * price.CacheReadPerMTokUsd / PerMillion,
+            CacheWriteUsd: (tokens.CacheWrite ?? 0) * price.CacheWritePerMTokUsd / PerMillion,
+            OutputUsd: (tokens.Output ?? 0) * price.OutputPerMTokUsd / PerMillion,
+            WebSearchUsd: (tokens.WebSearches ?? 0) * options.WebSearchPerThousandUsd / 1000d);
     }
 }
