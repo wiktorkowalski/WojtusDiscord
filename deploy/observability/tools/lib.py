@@ -529,7 +529,7 @@ EMPTY_TEXT = [
     (r"Command", "No slash command yet"),
     (r"Trace export", "No trace export failure"),
     (r"Probe|Availability", "No sample in this time range"),
-    (r"Discord REST|OpenRouter|Other hosts", "No request to this host in the time range"),
+    (r"Discord REST|Claude API|OpenRouter|Other hosts","No request to this host in the time range"),
     (r"Outbound errors", "No outbound request failed"),
     (r"error status", "No span with an error status"),
     (r"Traefik", "No requests through Traefik"),

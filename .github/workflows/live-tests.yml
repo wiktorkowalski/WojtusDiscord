@@ -1,0 +1,53 @@
+name: Live tests
+
+# Manual only. Runs ConversationLiveApiTests against the real Claude API (#426): a few cents
+# per run. Testcontainers starts its own Postgres on the runner's Docker.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-tests
+  cancel-in-progress: false
+
+jobs:
+  live-tests:
+    name: Claude API live tests
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      # First step: a missing secret fails in seconds with a clear message.
+      - name: Check the API key secret
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::Repo secret ANTHROPIC_API_KEY is empty or missing. Set it with: gh secret set ANTHROPIC_API_KEY"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+
+      # Restore and build run without the key.
+      - name: Build
+        run: dotnet build tests/DiscordEventService.Tests/DiscordEventService.Tests.csproj --configuration Release
+
+      # FailSkips: a skipped live test fails the job. TreatNoTestsAsError: a filter that matches
+      # no test (class renamed) fails the job.
+      - name: Run the live tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: >-
+          dotnet test tests/DiscordEventService.Tests/DiscordEventService.Tests.csproj
+          --configuration Release --no-build
+          --filter "FullyQualifiedName~ConversationLiveApiTests"
+          --logger "console;verbosity=normal"
+          -- xUnit.FailSkips=true RunConfiguration.TreatNoTestsAsError=true

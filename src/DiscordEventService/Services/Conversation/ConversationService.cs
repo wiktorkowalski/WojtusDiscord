@@ -1,10 +1,11 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Text;
+using Anthropic.Models.Messages;
 using DiscordEventService.Configuration;
 using DiscordEventService.Infrastructure;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Options;
-using ChatTokenUsage = OpenAI.Chat.ChatTokenUsage;
 
 namespace DiscordEventService.Services.Conversation;
 
@@ -20,7 +21,7 @@ namespace DiscordEventService.Services.Conversation;
 // drive one turn, and nothing that would drag a chat client into the flow's tests.
 internal interface IConversationTurnSource
 {
-    // Whether the chat client has a usable OpenRouter key — the flow checks this before
+    // Whether the chat client has a usable Claude API key — the flow checks this before
     // doing anything visible (e.g. spawning a thread) so an unconfigured bot stays inert.
     bool IsConfigured { get; }
 
@@ -33,7 +34,7 @@ internal sealed class ConversationService(
     ConversationToolRegistry toolRegistry,
     ConversationMemoryService memory,
     IOptions<ConversationOptions> conversationOptions,
-    IOptions<OpenRouterOptions> openRouterOptions,
+    IOptions<AnthropicOptions> anthropicOptions,
     IHostEnvironment environment,
     ILogger<ConversationService> logger) : IConversationTurnSource
 {
@@ -43,40 +44,54 @@ internal sealed class ConversationService(
     private const string CapReachedFallback =
         "I hit my step limit before I could finish — try narrowing the question.";
 
-    public bool IsConfigured => openRouterOptions.Value.IsConfigured;
+    // The API stopped the model (stop_reason "refusal"): say so instead of a cut-off answer.
+    internal const string RefusalMessage = "-# 🚫 Nie mogę pomóc w tej sprawie.";
+
+    // What the model sees for a message with no text.
+    internal const string EmptyUserMessage = "(a message with no text)";
+
+    // stop_reason of a long server-tool turn the API paused: send it back to continue.
+    internal const string PauseTurnReason = "pause_turn";
+
+    public bool IsConfigured => anthropicOptions.Value.IsConfigured;
 
     public async IAsyncEnumerable<ConversationUpdate> GenerateReplyAsync(
         string? userMessage, ConversationContext context,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        // The chat client is built with the OpenRouter key; gate here so an unconfigured
+        // The chat client is built with the Claude API key; gate here so an unconfigured
         // bot stays silent instead of firing a doomed 401 on every mention.
-        if (!openRouterOptions.Value.IsConfigured)
+        if (!anthropicOptions.Value.IsConfigured)
         {
-            logger.LogWarning("Conversation triggered but OpenRouter:ApiKey is not configured — no reply sent");
+            logger.LogWarning("Conversation triggered but Anthropic:ApiKey is not configured — no reply sent");
             yield break;
         }
 
         var options = conversationOptions.Value;
         var toolset = toolRegistry.BuildToolset(context);
 
-        // Reuse the §1 helper for the provider pin + reasoning/usage/web-search patch,
-        // then hang the turn's tools off it; the OpenAI adapter merges Tools onto the
-        // patched body (the appended server tool lands after them).
-        var chatOptions = OpenRouterChatOptions.Create(options.ReasoningEffort, options.WebSearch);
-        chatOptions.Tools = toolset.Tools;
+        // Every round offers the same tools in the same order (a cache prefix). The post-cap
+        // round keeps them declared but forbids calls (AnthropicChatOptions.Create).
+        var chatOptions = AnthropicChatOptions.Create(options, toolset.Tools);
 
         // Durable memory (#267): rehydrate the conversation's stored window, then persist
         // the incoming user message — awaited, inside the turn, so a crash mid-turn
         // leaves a consistent prefix. The channel snowflake is the conversation key.
-        var memoryTurn = await memory.BeginTurnAsync(context.ChannelId, context.GuildId, cancellationToken);
-        await memory.PersistUserMessageAsync(memoryTurn, userMessage ?? string.Empty, cancellationToken);
+        // A message with no text (an image or a sticker alone): the adapter drops an empty text
+        // block, so the request would end on the last assistant turn — a 400 with thinking on.
+        if (string.IsNullOrWhiteSpace(userMessage))
+            userMessage = EmptyUserMessage;
 
+        var memoryTurn = await memory.BeginTurnAsync(context.ChannelId, context.GuildId, cancellationToken);
+        await memory.PersistUserMessageAsync(memoryTurn, userMessage, cancellationToken);
+
+        // The system prompt is a System message, not ChatOptions.Instructions: only a message
+        // block can carry the cache breakpoint (AnthropicChatOptions.ShapeMessages).
         List<ChatMessage> messages =
         [
             new(ChatRole.System, BuildSystemPrompt(options)),
             .. memoryTurn.Window,
-            new(ChatRole.User, userMessage ?? string.Empty),
+            new(ChatRole.User, userMessage),
         ];
 
         // Parent span so the per-round generations (MEAI's UseOpenTelemetry) and each tool
@@ -124,15 +139,20 @@ internal sealed class ConversationService(
         // Failed attempts drop out naturally — the sink is cleared per attempt.
         var citations = new List<WebSearchCitations.Citation>();
 
+        // The answer text streamed since the last tool batch: a paused turn (pause_turn)
+        // spreads one answer over several rounds.
+        var answer = new StringBuilder();
+
         // Streams one round into the transcript sink under the §2 retry policy (#268):
         // up to RetryMaxAttempts calls over the same intact `messages` prefix (a failed
         // attempt appended nothing and dispatched no tools), full-jitter backoff between
-        // transient failures, one ledger row per failed attempt. Mid-stream error frames
-        // are normalized to MidStreamErrorException (see ConversationRetryPolicy for the
-        // two SDK surfaces). Reports through `outcome` — an iterator cannot return.
+        // transient failures, one ledger row per failed attempt. Reports through
+        // `outcome` — an iterator cannot return.
         async IAsyncEnumerable<ConversationUpdate> StreamRoundAsync(
             ChatOptions roundOptions, int round, List<ChatResponseUpdate> sink, RoundOutcome outcome)
         {
+            // The last-message breakpoint goes on a copy, re-made for every attempt.
+            var offersToolCalls = roundOptions.ToolMode is not NoneChatToolMode;
             for (var attempt = 1; ; attempt++)
             {
                 sink.Clear();
@@ -144,12 +164,16 @@ internal sealed class ConversationService(
                 BotMetrics.ConversationCallStarted(options.Model, messages.Count);
 
                 ReanchorTurnSpan();
+                // Set right before the stream opens: the HTTP request is sent from this
+                // execution context, and the handler writes the Retry-After into the scope.
+                var attemptScope = AnthropicAttemptScope.Begin(round, attempt);
                 var updates = chatClient
-                    .GetStreamingResponseAsync(messages, roundOptions, cancellationToken)
+                    .GetStreamingResponseAsync(
+                        AnthropicChatOptions.ShapeMessages(messages, offersToolCalls), roundOptions, cancellationToken)
                     .GetAsyncEnumerator(cancellationToken);
                 try
                 {
-                    while (failure is null)
+                    while (true)
                     {
                         ChatResponseUpdate update;
                         try
@@ -166,16 +190,11 @@ internal sealed class ConversationService(
                         }
                         catch (Exception thrown)
                         {
-                            failure = ConversationRetryPolicy.AsRoundFailure(thrown);
+                            failure = thrown;
                             break;
                         }
 
                         sink.Add(update);
-                        if (ConversationRetryPolicy.IsMidStreamErrorFrame(update))
-                        {
-                            failure = new MidStreamErrorException("mid-stream error frame ($.error chunk)");
-                            break;
-                        }
 
                         // .Text excludes reasoning content, so a live "thinking" display stays
                         // out of scope; tool-call fragments carry no text and yield nothing here.
@@ -204,18 +223,24 @@ internal sealed class ConversationService(
                     yield break;
                 }
 
-                // A failed attempt may still bill (partial stream): its own ledger row and
-                // its cost summed into the turn — but no conversation_message rows.
-                turnLog.CostUsd += RecordRoundCost(sink, round, turn, outcome);
-                await memory.RecordUsageAsync(memoryTurn, context.InvokerId,
-                    ExtractRoundUsage(sink, round, attempt, options.Model,
-                        stopwatch.ElapsedMilliseconds, failed: true),
-                    cancellationToken);
+                // A failed attempt may still bill: its own ledger row and its cost summed
+                // into the turn — but no conversation_message rows. A stream that died after
+                // message_start keeps its billed input (RoundTokens); its output is unknown.
+                var failedUsage = ExtractRoundUsage(sink, round, attempt, options,
+                    stopwatch.ElapsedMilliseconds, failed: true);
+                turnLog.CostUsd += RecordRoundCost(failedUsage, round, turn, outcome);
+                await memory.RecordUsageAsync(memoryTurn, context.InvokerId, failedUsage, cancellationToken);
 
                 // Partial deltas already reached the handler's buffer; drop them so the
-                // retried stream (or the failure line) renders exactly once.
+                // retried stream (or the failure line) renders exactly once. The reset clears
+                // the whole buffer, which after a pause_turn also holds the paused rounds'
+                // text: render that again.
                 if (streamedVisibleText)
+                {
                     yield return new ConversationUpdate.RoundReset();
+                    if (answer.Length > 0)
+                        yield return new ConversationUpdate.AssistantTextDelta(answer.ToString());
+                }
 
                 if (!ConversationRetryPolicy.IsTransient(failure) || attempt >= options.RetryMaxAttempts)
                 {
@@ -225,12 +250,38 @@ internal sealed class ConversationService(
                     yield break;
                 }
 
-                var delay = ConversationRetryPolicy.ComputeDelay(attempt, failure, options, Random.Shared);
+                var delay = ConversationRetryPolicy.ComputeDelay(
+                    attempt, options, Random.Shared, attemptScope.RetryAfter);
                 logger.LogWarning(failure,
                     "Round {Round} attempt {Attempt} failed transiently; retrying in {DelayMs}ms",
                     round, attempt, (int)delay.TotalMilliseconds);
                 await Task.Delay(delay, cancellationToken);
             }
+        }
+
+        // Records a successful round: the cost, the citations, the transcript rows and the
+        // ledger row. Returns the round's assistant messages as the next request sends them.
+        async Task<List<ChatMessage>> CompleteRoundAsync(
+            List<ChatResponseUpdate> sink, int round, RoundOutcome outcome, ChatResponse response)
+        {
+            var roundUsage = ExtractRoundUsage(sink, round, outcome.Attempt, options, outcome.LatencyMs, failed: false);
+            turnLog.CostUsd += RecordRoundCost(roundUsage, round, turn, outcome);
+            WebSearchCitations.AccumulateRound(sink, citations);
+            // Search spend itemisation (#271): a searchy round is visible without a DB query.
+            if (roundUsage.WebSearchRequests is > 0)
+                turn?.SetTag($"conversation.round{round}.web_search_requests", roundUsage.WebSearchRequests);
+
+            var replay = ConversationHistory.ForReplay(response.Messages, logger);
+            if (response.FinishReason == ChatFinishReason.ContentFilter)
+                ConversationHistory.StripToolCalls(replay);
+            else if (response.FinishReason == ChatFinishReason.Length)
+                logger.LogWarning(
+                    "Round {Round} hit max_tokens ({MaxTokens}); the answer may be cut off", round, options.MaxOutputTokens);
+
+            await memory.PersistAssistantMessagesAsync(memoryTurn, replay,
+                roundUsage.PromptTokens, roundUsage.CompletionTokens, cancellationToken);
+            await memory.RecordUsageAsync(memoryTurn, context.InvokerId, roundUsage, cancellationToken);
+            return replay;
         }
 
         for (var round = 1; round <= options.MaxToolRounds; round++)
@@ -254,31 +305,49 @@ internal sealed class ConversationService(
             }
 
             // MEAI assembles the streamed tool-calls for us — act on the assembled response,
-            // never reassemble fragments by index. Append the assistant turn (text + any
-            // tool-call content) BEFORE the tool results so the replayed transcript stays
-            // well-formed for the next round.
+            // never reassemble fragments by index. Append the assistant turn (thinking, text,
+            // server-tool blocks, tool calls, in the model's order) BEFORE the tool results so
+            // the replayed transcript stays well-formed for the next round.
             var response = sink.ToChatResponse();
-            messages.AddRange(response.Messages);
-            turnLog.CostUsd += RecordRoundCost(sink, round, turn, outcome);
-            WebSearchCitations.AccumulateRound(sink, citations);
+            var replay = await CompleteRoundAsync(sink, round, outcome, response);
+            messages.AddRange(replay);
+            answer.Append(ConversationHistory.AnswerText(replay));
 
-            var roundUsage = ExtractRoundUsage(
-                sink, round, outcome.Attempt, options.Model, outcome.LatencyMs, failed: false);
-            RecordWebSearches(roundUsage, round, turn);
-            await memory.PersistAssistantMessagesAsync(memoryTurn, response.Messages,
-                roundUsage.PromptTokens, roundUsage.CompletionTokens, cancellationToken);
-            await memory.RecordUsageAsync(memoryTurn, context.InvokerId, roundUsage, cancellationToken);
+            if (response.FinishReason == ChatFinishReason.ContentFilter)
+            {
+                LogRefusal(sink, round, context);
+                turnLog.Finish(TurnLog.Refused, RefusalMessage);
+                yield return new ConversationUpdate.AssistantTextDelta(
+                    string.IsNullOrWhiteSpace(answer.ToString()) ? RefusalMessage : $"\n{RefusalMessage}");
+                turn?.SetTag("conversation.refused", true);
+                turn?.SetTag("conversation.rounds", round);
+                turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
+                if (captureSensitiveData)
+                    turn?.SetTag("langfuse.trace.output", RefusalMessage);
+                yield break;
+            }
 
-            var toolCalls = response.Messages
+            // A paused server-tool turn: the response goes back unchanged and the model goes
+            // on from where it stopped. It counts toward the round cap; a partial answer is
+            // never shipped as the final one.
+            if (response.FinishReason?.Value == PauseTurnReason)
+            {
+                logger.LogDebug("Round {Round} paused (pause_turn); continuing the turn", round);
+                continue;
+            }
+
+            var toolCalls = replay
                 .SelectMany(message => message.Contents)
                 .OfType<FunctionCallContent>()
                 .ToList();
 
             if (toolCalls.Count == 0)
             {
-                var answer = HadText(sink) ? response.Text : EmptyAnswerFallback;
-                turnLog.Finish(TurnLog.Answered, answer);
-                if (!HadText(sink))
+                var answerText = answer.ToString();
+                var hadText = !string.IsNullOrWhiteSpace(answerText);
+                var finalAnswer = hadText ? answerText : EmptyAnswerFallback;
+                turnLog.Finish(TurnLog.Answered, finalAnswer);
+                if (!hadText)
                     yield return new ConversationUpdate.AssistantTextDelta(EmptyAnswerFallback);
                 if (WebSearchCitations.FormatSourceList(citations) is { } sources)
                     yield return new ConversationUpdate.AssistantTextDelta($"\n{sources}");
@@ -287,7 +356,7 @@ internal sealed class ConversationService(
                 turn?.SetTag("conversation.rounds", round);
                 turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
                 if (captureSensitiveData)
-                    turn?.SetTag("langfuse.trace.output", answer);
+                    turn?.SetTag("langfuse.trace.output", finalAnswer);
                 yield break;
             }
 
@@ -296,29 +365,36 @@ internal sealed class ConversationService(
             // tool call), and a silent round still renders its tool-batch summary message.
             logger.LogDebug("Round {Round}: model requested {Count} tool call(s)", round, toolCalls.Count);
             ReanchorTurnSpan();
+            List<AIContent> results = [];
             foreach (var call in toolCalls)
             {
                 turnLog.ToolCalls.Add($"{call.Name}({ConversationToolset.DescribeArguments(call.Arguments)})");
                 var result = await toolset.InvokeAsync(call, cancellationToken);
-                messages.Add(new ChatMessage(ChatRole.Tool, [result]));
+                results.Add(result);
                 await memory.PersistToolResultAsync(memoryTurn, call.Name, result, cancellationToken);
             }
+
+            // All results of a round in ONE message: the API wants every tool_result of a
+            // tool_use message in the single user message right after it.
+            messages.Add(new ChatMessage(ChatRole.Tool, results));
+            answer.Clear();
 
             yield return new ConversationUpdate.ToolBatchSummary(SummarizeToolBatch(toolCalls));
         }
 
-        // Round cap reached: one final tool-less streamed call forces a text answer so the
-        // turn always terminates rather than looping on the model's tool_choice.
+        // Round cap reached: one final streamed call with tool calls forbidden forces a text
+        // answer so the turn always terminates rather than looping on the model's tool use.
         logger.LogWarning("Conversation hit the {Cap}-round tool cap for {Author}; forcing a final answer",
             options.MaxToolRounds, context.InvokerDisplayName);
         turn?.SetTag("conversation.hit_round_cap", true);
 
+        var finalRound = options.MaxToolRounds + 1;
         var finalSink = new List<ChatResponseUpdate>();
         var finalOutcome = new RoundOutcome();
-        turnLog.Rounds = options.MaxToolRounds + 1;
+        turnLog.Rounds = finalRound;
         await foreach (var renderEvent in StreamRoundAsync(
-            OpenRouterChatOptions.Create(options.ReasoningEffort, options.WebSearch),
-            options.MaxToolRounds + 1, finalSink, finalOutcome))
+            AnthropicChatOptions.Create(options, toolset.Tools, allowToolCalls: false),
+            finalRound, finalSink, finalOutcome))
             yield return renderEvent;
 
         if (!finalOutcome.Succeeded)
@@ -332,21 +408,14 @@ internal sealed class ConversationService(
             yield break;
         }
 
-        turnLog.CostUsd += RecordRoundCost(finalSink, options.MaxToolRounds + 1, turn, finalOutcome);
-        WebSearchCitations.AccumulateRound(finalSink, citations);
+        var finalReplay = await CompleteRoundAsync(finalSink, finalRound, finalOutcome, finalSink.ToChatResponse());
+        answer.Append(ConversationHistory.AnswerText(finalReplay));
 
-        var finalResponse = finalSink.ToChatResponse();
-        var finalUsage = ExtractRoundUsage(
-            finalSink, options.MaxToolRounds + 1, finalOutcome.Attempt, options.Model,
-            finalOutcome.LatencyMs, failed: false);
-        RecordWebSearches(finalUsage, options.MaxToolRounds + 1, turn);
-        await memory.PersistAssistantMessagesAsync(memoryTurn, finalResponse.Messages,
-            finalUsage.PromptTokens, finalUsage.CompletionTokens, cancellationToken);
-        await memory.RecordUsageAsync(memoryTurn, context.InvokerId, finalUsage, cancellationToken);
-
-        var cappedAnswer = HadText(finalSink) ? finalResponse.Text : CapReachedFallback;
+        var cappedText = answer.ToString();
+        var cappedHadText = !string.IsNullOrWhiteSpace(cappedText);
+        var cappedAnswer = cappedHadText ? cappedText : CapReachedFallback;
         turnLog.Finish(TurnLog.RoundCap, cappedAnswer);
-        if (!HadText(finalSink))
+        if (!cappedHadText)
             yield return new ConversationUpdate.AssistantTextDelta(CapReachedFallback);
         if (WebSearchCitations.FormatSourceList(citations) is { } finalSources)
             yield return new ConversationUpdate.AssistantTextDelta($"\n{finalSources}");
@@ -354,13 +423,6 @@ internal sealed class ConversationService(
         if (captureSensitiveData)
             turn?.SetTag("langfuse.trace.output", cappedAnswer);
     }
-
-    // Whitespace-only counts as no visible text — stays consistent with the handler's
-    // DiscordTurnRenderer post guard, so an all-whitespace final round still triggers the
-    // empty-answer fallback (which renders) instead of silently yielding a message the
-    // guard would drop.
-    private static bool HadText(IEnumerable<ChatResponseUpdate> updates) =>
-        updates.Any(update => !string.IsNullOrWhiteSpace(update.Text));
 
     // One short, dim status line naming the tools the model ran this round (Discord
     // subtext via the `-#` prefix), e.g. "-# 🔧 meme_search".
@@ -370,57 +432,60 @@ internal sealed class ConversationService(
         return $"-# 🔧 {string.Join(", ", names)}";
     }
 
-    // The real OpenRouter `usage.cost` (USD) isn't in MEAI's typed UsageDetails — recover
-    // it from the raw OpenAI ChatTokenUsage's JSON patch. Logged + traced per round here;
-    // the §5 usage ledger persists it. Returns 0 when the provider didn't report a cost.
-    private double RecordRoundCost(
-        List<ChatResponseUpdate> updates, int round, Activity? turn, RoundOutcome outcome)
+    // The refusal category comes from stop_details on the stream's message_delta event.
+    private void LogRefusal(List<ChatResponseUpdate> sink, int round, ConversationContext context)
     {
-        var cost = ExtractCostUsd(updates);
-        if (cost is null)
+        var category = sink
+            .Select(update => update.RawRepresentation)
+            .OfType<RawMessageStreamEvent>()
+            .Select(raw => raw.TryPickDelta(out var delta) ? delta.Delta.StopDetails?.Category?.Raw() : null)
+            .LastOrDefault(value => value is not null);
+        logger.LogWarning("Round {Round}: the model refused the request of {InvokerId}, category {Category}",
+            round, context.InvokerId, category ?? "none");
+    }
+
+    // The round's computed cost (#426), logged + traced per round; the ledger persists it.
+    // Returns 0 when the round reported no usage or the model has no price.
+    private double RecordRoundCost(ConversationRoundUsage usage, int round, Activity? turn, RoundOutcome outcome)
+    {
+        logger.LogDebug(
+            "Round {Round} attempt {Attempt} usage: {InputTokens} input ({CacheReadTokens} cache read, "
+            + "{CacheWriteTokens} cache write), {OutputTokens} output, {Searches} search(es), cost ${Cost}",
+            round, usage.Attempt, usage.PromptTokens, usage.CacheReadTokens, usage.CacheWriteTokens,
+            usage.CompletionTokens, usage.WebSearchRequests ?? 0, usage.CostUsd);
+
+        if (usage.CostUsd is not { } cost)
             return 0;
 
         // The round span tag carries the round's total over ALL attempts — a retried
         // round's failed attempts may still bill; the ledger itemizes per attempt.
-        outcome.CostUsd += cost.Value;
+        outcome.CostUsd += cost;
         turn?.SetTag($"conversation.round{round}.cost_usd", outcome.CostUsd);
-        logger.LogDebug("Round {Round} model cost ${Cost}", round, cost.Value);
-        return cost.Value;
+        return cost;
     }
 
-    // Search spend itemisation (#271): the ledger row already carries the counts; the
-    // trace tag + log line make a searchy round visible without a DB query.
-    // `cost − upstream_inference_cost` is the round's search spend.
-    private void RecordWebSearches(ConversationRoundUsage usage, int round, Activity? turn)
+    // Everything one ledger row needs from a round's streamed updates (#267, #426): the
+    // native token counts and the cost computed from the price table. The §2 retry policy
+    // (#268) writes one row per attempt.
+    private ConversationRoundUsage ExtractRoundUsage(
+        List<ChatResponseUpdate> updates, int round, int attempt, ConversationOptions options,
+        long latencyMs, bool failed)
     {
-        if (usage.WebSearchRequests is not > 0)
-            return;
-
-        turn?.SetTag($"conversation.round{round}.web_search_requests", usage.WebSearchRequests);
-        logger.LogDebug("Round {Round} ran {Searches} web search(es), upstream model cost ${Upstream}",
-            round, usage.WebSearchRequests, usage.UpstreamInferenceCostUsd);
-    }
-
-    private static double? ExtractCostUsd(IEnumerable<ChatResponseUpdate> updates)
-    {
-        var usage = updates
-            .SelectMany(update => update.Contents)
-            .OfType<UsageContent>()
-            .LastOrDefault();
-        if (usage?.RawRepresentation is not ChatTokenUsage raw)
-            return null;
-
-#pragma warning disable SCME0001 // ChatTokenUsage.Patch (JsonPatch) is experimental.
-        return raw.Patch.TryGetValue("$.cost"u8, out double cost) ? cost : null;
-#pragma warning restore SCME0001
+        var tokens = RoundTokens.From(updates);
+        var cost = ConversationCost.Compute(options, tokens, logger);
+        return new ConversationRoundUsage(
+            round, attempt, options.Model,
+            tokens.Input, tokens.Output, tokens.CacheRead, tokens.CacheWrite,
+            cost?.TotalUsd, cost?.TokensUsd, tokens.WebSearches,
+            latencyMs, failed);
     }
 
     // The turn log (#341): one Information line per turn, the entry a trace in Grafana opens.
     // The loop only wrote Debug lines, so the production log held nothing of a conversation.
     //
     // Written on dispose, so it covers every way out of the iterator: an answer, a failed
-    // round, the round cap, and a turn that ends early (timeout, cancellation, an exception,
-    // a consumer that stops reading). An early end keeps the outcome "aborted".
+    // round, a refusal, the round cap, and a turn that ends early (timeout, cancellation, an
+    // exception, a consumer that stops reading). An early end keeps the outcome "aborted".
     //
     // The trace id is read from the turn span when the log is made, never from
     // Activity.Current when it is written: after a yield the iterator runs on the context of
@@ -434,6 +499,7 @@ internal sealed class ConversationService(
     {
         public const string Answered = "answered";
         public const string Failed = "failed";
+        public const string Refused = "refused";
         public const string RoundCap = "round_cap";
 
         private const string Redacted = "[redacted]";
@@ -482,40 +548,6 @@ internal sealed class ConversationService(
         public long LatencyMs { get; set; }
         public double CostUsd { get; set; }
         public Exception? Failure { get; set; }
-    }
-
-    // Everything one ledger row needs from a round's streamed updates (#267): MEAI's
-    // typed token counts plus the OpenRouter extras recovered from the raw usage patch
-    // (`cost`, and the §5 itemisation fields when the provider reports them). The §2
-    // retry policy (#268) writes one row per attempt — failed rows keep whatever
-    // partial usage the stream reported before dying (mid-stream failures still bill).
-    private static ConversationRoundUsage ExtractRoundUsage(
-        List<ChatResponseUpdate> updates, int round, int attempt, string model, long latencyMs, bool failed)
-    {
-        var usage = updates
-            .SelectMany(update => update.Contents)
-            .OfType<UsageContent>()
-            .LastOrDefault();
-
-        double? upstreamCostUsd = null;
-        int? webSearchRequests = null;
-        if (usage?.RawRepresentation is ChatTokenUsage raw)
-        {
-#pragma warning disable SCME0001 // ChatTokenUsage.Patch (JsonPatch) is experimental.
-            if (raw.Patch.TryGetValue("$.cost_details.upstream_inference_cost"u8, out double upstream))
-                upstreamCostUsd = upstream;
-            // `server_tool_use_details` is the field the #261 live spike observed on this
-            // exact stack (not Anthropic's native `server_tool_use` name).
-            if (raw.Patch.TryGetValue("$.server_tool_use_details.web_search_requests"u8, out int searches))
-                webSearchRequests = searches;
-#pragma warning restore SCME0001
-        }
-
-        return new ConversationRoundUsage(
-            round, attempt, model,
-            (int?)usage?.Details.InputTokenCount, (int?)usage?.Details.OutputTokenCount,
-            ExtractCostUsd(updates), upstreamCostUsd, webSearchRequests,
-            latencyMs, failed);
     }
 
     private static string BuildSystemPrompt(ConversationOptions options) =>

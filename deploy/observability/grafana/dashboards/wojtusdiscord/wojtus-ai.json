@@ -368,7 +368,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Cost of conversation model calls, last 24 hours. The cost is what the provider billed for the call: it holds the web search fee already, so the fee is not added a second time."
+      "description": "Cost of conversation model calls, last 24 hours. The bot computes the cost from the tokens (cache reads and writes included) and the price table in config. The Claude API reports no cost. The cost holds the web search fee already, so the fee is not added a second time."
     },
     {
       "type": "stat",
@@ -436,7 +436,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Cost of conversation model calls, last 7 days. The cost is what the provider billed for the call: it holds the web search fee already, so the fee is not added a second time."
+      "description": "Cost of conversation model calls, last 7 days. The bot computes the cost from the tokens (cache reads and writes included) and the price table in config. The Claude API reports no cost. The cost holds the web search fee already, so the fee is not added a second time."
     },
     {
       "type": "stat",
@@ -504,7 +504,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Cost of conversation model calls, last 30 days. The cost is what the provider billed for the call: it holds the web search fee already, so the fee is not added a second time."
+      "description": "Cost of conversation model calls, last 30 days. The bot computes the cost from the tokens (cache reads and writes included) and the price table in config. The Claude API reports no cost. The cost holds the web search fee already, so the fee is not added a second time."
     },
     {
       "type": "stat",
@@ -572,7 +572,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "The part of 'Cost, 30 d' that is the web search fee: the cost of a call less the cost of the model itself. Zero when the provider did not report both costs."
+      "description": "The part of 'Cost, 30 d' that is the web search fee: the cost of a call less its token cost. Zero when no web search ran."
     },
     {
       "type": "stat",
@@ -640,7 +640,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Web searches the provider ran for conversation model calls in the range."
+      "description": "Web searches the Claude API ran for conversation model calls in the range."
     },
     {
       "type": "stat",
@@ -1213,7 +1213,7 @@
           "hideZeros": false
         }
       },
-      "description": "Tokens billed by conversation model calls per interval. Input is the prompt, output is the completion.",
+      "description": "Tokens of conversation model calls per interval. Input is the whole prompt: uncached input, cache reads and cache writes. Output is the completion. A cache read costs less than plain input and a cache write costs more, so input tokens do not map 1:1 to cost.",
       "interval": "1m"
     },
     {
@@ -1818,7 +1818,7 @@
           "hideZeros": false
         }
       },
-      "description": "Web searches the provider ran for conversation model calls, per interval and model. The fee is on the 'Web search fee' panel: a count and a cost do not share one axis.",
+      "description": "Web searches the Claude API ran for conversation model calls, per interval and model. The fee is on the 'Web search fee' panel: a count and a cost do not share one axis.",
       "interval": "1m"
     },
     {
@@ -1918,7 +1918,7 @@
           "hideZeros": false
         }
       },
-      "description": "Web search fee per interval and model: the cost of a call less the cost of the model itself. It is a part of 'Cost by model', not an addition to it.",
+      "description": "Web search fee per interval and model: the cost of a call less its token cost, at 10 USD per 1,000 searches. It is a part of 'Cost by model', not an addition to it.",
       "interval": "1m"
     },
     {

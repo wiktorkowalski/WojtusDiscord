@@ -1,28 +1,22 @@
-using System.ClientModel;
-using System.ClientModel.Primitives;
 using System.Diagnostics;
-using System.Net;
 using System.Text;
-using System.Text.Json;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Services.Conversation;
-using DiscordEventService.Services.MemeIndexing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using OpenAI;
 using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// The §2 per-round retry policy end-to-end (#268): fault-injecting transport UNDER the
-// real OpenAI SDK + MEAI adapter — the same seam as the byte-fidelity tests — so both
-// empirically probed mid-stream surfaces (B-OQ1) are exercised as the SDK actually
-// produces them: the finish_reason:"error" frame throws an unknown-finish-reason
-// ArgumentOutOfRangeException; a frame without it passes through silently with `$.error`
-// on the raw patch. Ledger rows per attempt land in a real Postgres.
+// The §2 per-round retry policy end-to-end (#268, #426): a fault-injecting transport UNDER
+// the real AnthropicClient + MEAI adapter, so each failure surface is exercised the way the
+// SDK actually produces it — an HTTP status before the stream, an `error` event in the middle
+// of the stream, a 429 with retry-after-ms. The SDK retry is off; the loop owns retries, and
+// ledger rows per attempt land in a real Postgres.
 public sealed class ConversationRetryTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -47,16 +41,17 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
     [Fact]
     public async Task PreStream500_RetriesWithBackoff_AnswersAndLedgersFailedAttempt()
     {
-        var transport = new ScriptedTransport(call => call switch
+        var handler = new ScriptedClaudeHandler(call => call switch
         {
-            0 => ErrorResponse(HttpStatusCode.InternalServerError),
-            _ => SseResponse(SseText("Odpowiedź.")),
+            0 => ScriptedClaudeHandler.Status(500),
+            _ => ScriptedClaudeHandler.Sse(ClaudeSse.TextAnswer("Odpowiedź.")),
         });
+        var log = new RecordingLogger();
 
-        var events = await CollectAsync(BuildService(transport, out _)
+        var events = await CollectAsync(BuildService(handler, out _, log)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
 
-        Assert.Equal(2, transport.CallCount);
+        Assert.Equal(2, handler.CallCount);
         Assert.Equal("Odpowiedź.", RenderedText(events));
 
         var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
@@ -64,28 +59,36 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         Assert.All(rows, row => Assert.Equal(1, row.Round));
         Assert.True(rows[0].Failed);
         Assert.Equal(1, rows[0].Attempt);
+        // A status before the stream reports no usage.
+        Assert.Null(rows[0].PromptTokens);
+        Assert.Null(rows[0].CostUsd);
         Assert.False(rows[1].Failed);
         Assert.Equal(2, rows[1].Attempt);
 
         // The failed attempt persisted NO transcript rows — only the ledger row.
         Assert.Equal(2, await _db.ConversationMessages.CountAsync()); // user + winning answer
+
+        // The handler names the status and the request id; the loop names the retry.
+        Assert.Contains(log.Entries, e => e.Level == LogLevel.Warning
+            && e.Message.Contains("failed with status 500") && e.Message.Contains("req_test"));
+        Assert.Contains(log.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("retrying in"));
+        Assert.DoesNotContain(log.Entries, e => e.Message.Contains("OpenRouter", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
-    public async Task MidStreamErrorFrame_FinishReasonError_RetriesAndRendersAnswerExactlyOnce()
+    public async Task MidStreamErrorEvent_RetriesAndRendersAnswerExactlyOnce()
     {
-        var transport = new ScriptedTransport(call => call switch
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
         {
-            // Partial text, then OpenRouter's documented error frame — the SDK throws an
-            // unknown-finish-reason ArgumentOutOfRangeException on this surface.
-            0 => SseResponse(SsePartialTextThenErrorFrame("Czę", finishReasonError: true)),
-            _ => SseResponse(SseText("Cześć!")),
+            // Partial text, then an `error` event: the SDK throws AnthropicSseException.
+            0 => ClaudeSse.Start().Text("Czę").Error("overloaded_error"),
+            _ => ClaudeSse.TextAnswer("Cześć!"),
         });
 
-        var events = await CollectAsync(BuildService(transport, out _)
+        var events = await CollectAsync(BuildService(handler, out _)
             .GenerateReplyAsync("hej", Context(), CancellationToken.None));
 
-        Assert.Equal(2, transport.CallCount);
+        Assert.Equal(2, handler.CallCount);
         // The partial delta reached the renderer, so a RoundReset must discard it.
         Assert.Contains(events, e => e is ConversationUpdate.RoundReset);
         Assert.Equal("Cześć!", RenderedText(events));
@@ -93,41 +96,24 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
         Assert.Equal(2, rows.Count);
         Assert.True(rows[0].Failed);
+        // The dead stream never sent its final usage, but message_start billed the input:
+        // the failed row keeps it (and its cost); the output count is unknown.
+        Assert.Equal(100, rows[0].PromptTokens);
+        Assert.Null(rows[0].CompletionTokens);
+        Assert.Equal(0.0002, rows[0].CostUsd!.Value, precision: 9);
         Assert.False(rows[1].Failed);
-    }
-
-    [Fact]
-    public async Task MidStreamErrorFrame_Silent_DetectedInsteadOfEmptyAnswerFallback()
-    {
-        var transport = new ScriptedTransport(call => call switch
-        {
-            // The silent surface: top-level `error`, finish_reason null — deserializes as
-            // an empty update; without detection this misfires the empty-answer fallback.
-            0 => SseResponse(SsePartialTextThenErrorFrame("", finishReasonError: false)),
-            _ => SseResponse(SseText("Działa.")),
-        });
-
-        var events = await CollectAsync(BuildService(transport, out _)
-            .GenerateReplyAsync("hej", Context(), CancellationToken.None));
-
-        Assert.Equal(2, transport.CallCount);
-        Assert.Equal("Działa.", RenderedText(events));
-
-        var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
-        Assert.Equal(2, rows.Count);
-        Assert.True(rows[0].Failed);
-        Assert.False(rows[1].Failed);
+        Assert.NotNull(rows[1].CostUsd);
     }
 
     [Fact]
     public async Task RetriesExhausted_PostsVisibleFailureLine_PersistsNoAssistantRows()
     {
-        var transport = new ScriptedTransport(_ => ErrorResponse(HttpStatusCode.BadGateway));
+        var handler = new ScriptedClaudeHandler(_ => ScriptedClaudeHandler.Status(529));
 
-        var events = await CollectAsync(BuildService(transport, out var options)
+        var events = await CollectAsync(BuildService(handler, out var options)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
 
-        Assert.Equal(options.Value.RetryMaxAttempts, transport.CallCount);
+        Assert.Equal(options.Value.RetryMaxAttempts, handler.CallCount);
         Assert.Equal(options.Value.FailureMessage, RenderedText(events));
 
         var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
@@ -143,12 +129,12 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
     [Fact]
     public async Task TerminalStatus401_DoesNotRetry_SurfacesFailureLine()
     {
-        var transport = new ScriptedTransport(_ => ErrorResponse(HttpStatusCode.Unauthorized));
+        var handler = new ScriptedClaudeHandler(_ => ScriptedClaudeHandler.Status(401));
 
-        var events = await CollectAsync(BuildService(transport, out var options)
+        var events = await CollectAsync(BuildService(handler, out var options)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
 
-        Assert.Equal(1, transport.CallCount);
+        Assert.Equal(1, handler.CallCount);
         Assert.Equal(options.Value.FailureMessage, RenderedText(events));
 
         var row = await _db.ConversationUsage.SingleAsync();
@@ -157,25 +143,83 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
     }
 
     [Fact]
-    public async Task RateLimited_RetryAfterHeader_OutweighsJitterBackoff()
+    public async Task RateLimited_RetryAfterMs_OutweighsJitterBackoff()
     {
-        var transport = new ScriptedTransport(call => call switch
+        var handler = new ScriptedClaudeHandler(call => call switch
         {
-            0 => ErrorResponse(HttpStatusCode.TooManyRequests, retryAfterSeconds: 1),
-            _ => SseResponse(SseText("Po przerwie.")),
+            0 => ScriptedClaudeHandler.Status(429, retryAfterMs: 1000),
+            _ => ScriptedClaudeHandler.Sse(ClaudeSse.TextAnswer("Po przerwie.")),
         });
 
         // RetryBaseDelayMs=1 in BuildService: any wait ≥ the header value proves the
         // header won over the (sub-hundred-ms) jitter.
         var stopwatch = Stopwatch.StartNew();
-        var events = await CollectAsync(BuildService(transport, out _)
+        var events = await CollectAsync(BuildService(handler, out _)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
         stopwatch.Stop();
 
-        Assert.Equal(2, transport.CallCount);
+        Assert.Equal(2, handler.CallCount);
         Assert.Equal("Po przerwie.", RenderedText(events));
         Assert.True(stopwatch.ElapsedMilliseconds >= 950,
-            $"expected the 1s Retry-After to be honored, waited only {stopwatch.ElapsedMilliseconds}ms");
+            $"expected the 1s retry-after-ms to be honored, waited only {stopwatch.ElapsedMilliseconds}ms");
+    }
+
+    // The SDK attempt timeout (ClientOptions.Timeout) is a linked CancellationTokenSource over
+    // the send; the SDK rethrows its expiry as TaskCanceledException wrapping TimeoutException.
+    // Pinned here on the real SDK + MEAI adapter, so an SDK change of shape shows up.
+    [Fact]
+    public async Task AttemptTimeout_RealSdk_ThrowsTaskCanceledWrappingTimeout()
+    {
+        var handler = new ScriptedClaudeHandler((_, token) => ScriptedClaudeHandler.Hang(token));
+        var client = handler.CreateChatClient(
+            new ConversationOptions(), attemptTimeout: TimeSpan.FromMilliseconds(200));
+
+        var thrown = await Assert.ThrowsAsync<TaskCanceledException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hej")]))
+            {
+            }
+        });
+
+        Assert.IsType<TimeoutException>(thrown.InnerException);
+    }
+
+    // #426 review: a hung attempt runs out the SDK attempt timeout and is retried.
+    [Fact]
+    public async Task AttemptTimeout_IsRetried_AnswersOnTheNextAttempt()
+    {
+        var handler = new ScriptedClaudeHandler((call, token) => call switch
+        {
+            0 => ScriptedClaudeHandler.Hang(token),
+            _ => Task.FromResult(ScriptedClaudeHandler.Sse(ClaudeSse.TextAnswer("Po timeoucie."))),
+        });
+
+        var events = await CollectAsync(BuildService(handler, out _, attemptTimeout: TimeSpan.FromMilliseconds(200))
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        Assert.Equal(2, handler.CallCount);
+        Assert.Equal("Po timeoucie.", RenderedText(events));
+        var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
+        Assert.Equal([true, false], rows.Select(r => r.Failed));
+    }
+
+    // The caller's own cancellation is never a transient fault: the turn ends, no retry.
+    [Fact]
+    public async Task CallerCancel_WhileAttemptHangs_EndsTheTurnWithoutRetry()
+    {
+        using var caller = new CancellationTokenSource();
+        // The caller cancels once the attempt is on the wire, well inside the 60 s attempt timeout.
+        var handler = new ScriptedClaudeHandler((_, token) =>
+        {
+            caller.CancelAfter(TimeSpan.FromMilliseconds(100));
+            return ScriptedClaudeHandler.Hang(token);
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CollectAsync(
+            BuildService(handler, out _).GenerateReplyAsync("pytanie", Context(), caller.Token)));
+
+        Assert.Equal(1, handler.CallCount);
+        Assert.Empty(await _db.ConversationUsage.ToListAsync());
     }
 
     private static ConversationContext Context() =>
@@ -183,7 +227,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
 
     // What the discrete renderer (#274) would post: deltas buffered, RoundReset drops
     // the current round's buffer, the remainder is the answer.
-    private static string RenderedText(IReadOnlyList<ConversationUpdate> events)
+    internal static string RenderedText(IReadOnlyList<ConversationUpdate> events)
     {
         var text = new StringBuilder();
         foreach (var update in events)
@@ -202,7 +246,8 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
     }
 
     private ConversationService BuildService(
-        ScriptedTransport transport, out IOptions<ConversationOptions> conversationOptions)
+        ScriptedClaudeHandler handler, out IOptions<ConversationOptions> conversationOptions,
+        RecordingLogger? log = null, TimeSpan? attemptTimeout = null)
     {
         conversationOptions = Options.Create(new ConversationOptions
         {
@@ -214,27 +259,14 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
             RetryMaxDelayMs = 2,
         });
 
-        var chatClient = new OpenAIClient(
-                new ApiKeyCredential("test-key"),
-                new OpenAIClientOptions
-                {
-                    Endpoint = new Uri("http://localhost/api/v1"),
-                    Transport = new HttpClientPipelineTransport(new HttpClient(transport)),
-                    // Mirror prod (ConversationRegistration): the app-level §2 policy is
-                    // the single owner of retries.
-                    RetryPolicy = new ClientRetryPolicy(maxRetries: 0),
-                })
-            .GetChatClient(conversationOptions.Value.Model)
-            .AsIChatClient();
-
         return new ConversationService(
-            chatClient,
+            handler.CreateChatClient(conversationOptions.Value, log?.For<AnthropicAttemptLogHandler>(), attemptTimeout),
             BuildRegistry(conversationOptions),
             new ConversationMemoryService(NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance),
             conversationOptions,
-            Options.Create(new OpenRouterOptions { ApiKey = "test-key" }),
+            Options.Create(new AnthropicOptions { ApiKey = "test-key" }),
             new TestHostEnvironment(),
-            NullLogger<ConversationService>.Instance);
+            log?.For<ConversationService>() ?? NullLogger<ConversationService>.Instance);
     }
 
     private ConversationToolRegistry BuildRegistry(IOptions<ConversationOptions> conversationOptions) =>
@@ -254,60 +286,6 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         await foreach (var update in stream)
             events.Add(update);
         return events;
-    }
-
-    private const string UsageJson =
-        "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15,\"cost\":0.01}";
-
-    private static string SseChunk(string choicesJson, string? extraJson = null) =>
-        "data: {\"id\":\"chatcmpl-t\",\"object\":\"chat.completion.chunk\",\"created\":1750000000," +
-        $"\"model\":\"anthropic/claude-sonnet-5\",\"choices\":{choicesJson}{(extraJson is null ? "" : "," + extraJson)}}}\n\n";
-
-    private static string SseText(string text)
-    {
-        var delta = JsonSerializer.Serialize(text);
-        return SseChunk($"[{{\"index\":0,\"delta\":{{\"role\":\"assistant\",\"content\":{delta}}},\"finish_reason\":null}}]")
-            + SseChunk("[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]", UsageJson)
-            + "data: [DONE]\n\n";
-    }
-
-    // OpenRouter's documented mid-stream error delivery: optional partial text, then a
-    // normal data chunk with top-level `error`; the stream ends after it (no [DONE]).
-    // finishReasonError toggles the two SDK surfaces probed for B-OQ1.
-    private static string SsePartialTextThenErrorFrame(string partialText, bool finishReasonError)
-    {
-        var text = partialText.Length == 0
-            ? string.Empty
-            : SseChunk($"[{{\"index\":0,\"delta\":{{\"role\":\"assistant\",\"content\":{JsonSerializer.Serialize(partialText)}}},\"finish_reason\":null}}]");
-        var finishReason = finishReasonError ? "\"error\"" : "null";
-        return text + SseChunk(
-            $"[{{\"index\":0,\"delta\":{{\"content\":\"\"}},\"finish_reason\":{finishReason}}}]",
-            "\"error\":{\"code\":502,\"message\":\"Provider returned error\",\"metadata\":{\"provider_name\":\"Anthropic\"}}");
-    }
-
-    private static HttpResponseMessage SseResponse(string sse) =>
-        new(HttpStatusCode.OK) { Content = new StringContent(sse, Encoding.UTF8, "text/event-stream") };
-
-    private static HttpResponseMessage ErrorResponse(HttpStatusCode status, int? retryAfterSeconds = null)
-    {
-        var response = new HttpResponseMessage(status)
-        {
-            Content = new StringContent(
-                $"{{\"error\":{{\"code\":{(int)status},\"message\":\"scripted failure\"}}}}",
-                Encoding.UTF8, "application/json"),
-        };
-        if (retryAfterSeconds is not null)
-            response.Headers.Add("Retry-After", retryAfterSeconds.Value.ToString());
-        return response;
-    }
-
-    private sealed class ScriptedTransport(Func<int, HttpResponseMessage> responder) : HttpMessageHandler
-    {
-        public int CallCount { get; private set; }
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(responder(CallCount++));
     }
 
     private DiscordDbContext NewContext()

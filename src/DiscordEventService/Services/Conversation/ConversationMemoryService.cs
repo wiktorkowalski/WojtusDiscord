@@ -14,11 +14,14 @@ namespace DiscordEventService.Services.Conversation;
 internal sealed record ConversationTurnState(
     Guid ConversationId, int TurnIndex, IReadOnlyList<ChatMessage> Window);
 
-// One model-call attempt's ledger row content (#267). §1 always writes Attempt=1 and
+// One model-call attempt's ledger row content (#267, #426). §1 always writes Attempt=1 and
 // Failed=false; the §2 retry policy adds attempt>1 and failed rows (which may still bill).
+// PromptTokens is the whole input (uncached + cache read + cache write); CostUsd is computed
+// from the price table and includes the search fee; UpstreamInferenceCostUsd is the same
+// cost without the search fee.
 internal sealed record ConversationRoundUsage(
     int Round, int Attempt, string Model,
-    int? PromptTokens, int? CompletionTokens,
+    int? PromptTokens, int? CompletionTokens, int? CacheReadTokens, int? CacheWriteTokens,
     double? CostUsd, double? UpstreamInferenceCostUsd, int? WebSearchRequests,
     long LatencyMs, bool Failed);
 
@@ -175,6 +178,8 @@ internal sealed class ConversationMemoryService(
             Model = usage.Model,
             PromptTokens = usage.PromptTokens,
             CompletionTokens = usage.CompletionTokens,
+            CacheReadTokens = usage.CacheReadTokens,
+            CacheWriteTokens = usage.CacheWriteTokens,
             CostUsd = usage.CostUsd,
             UpstreamInferenceCostUsd = usage.UpstreamInferenceCostUsd,
             WebSearchRequests = usage.WebSearchRequests,
@@ -189,17 +194,18 @@ internal sealed class ConversationMemoryService(
             usage.Model, usage.Attempt, usage.PromptTokens, usage.CompletionTokens,
             usage.CostUsd, usage.LatencyMs, usage.Failed);
 
-        // The fee of the searches is what the call cost above the model itself. Langfuse does
-        // not show it; this counter and the ledger row do.
+        // The fee of the searches is what the call cost above its tokens. Langfuse does not
+        // show it; this counter and the ledger row do.
         if (usage.WebSearchRequests is > 0 and var searches)
             BotMetrics.ConversationWebSearched(usage.Model, searches, usage.CostUsd - usage.UpstreamInferenceCostUsd);
     }
 
-    // The exact string MEAI's OpenAI adapter puts on the wire for a tool result: the
-    // `Result as string` fast-path, else the same JSON serialization it falls back to.
-    // Persisting THIS (and rehydrating Result as a string, which re-hits the fast-path)
-    // makes the replayed tool message byte-identical whether the live Result was a raw
-    // string or an AIFunctionFactory JsonElement (research A1/A-OQ1).
+    // The exact string the MEAI Anthropic adapter puts in a tool_result block: a string Result
+    // goes as is, anything else (an AIFunctionFactory JsonElement) as its JSON serialization
+    // with AIJsonUtilities.DefaultOptions — the same rule the OpenAI adapter had (#426).
+    // Persisting THIS (and rehydrating Result as a string, which re-hits the string path)
+    // makes the replayed tool_result byte-identical whether the live Result was a raw
+    // string or a JsonElement (research A1/A-OQ1).
     private static string ToWireText(FunctionResultContent result)
     {
         if (result.Result is string text)
@@ -233,8 +239,9 @@ internal sealed class ConversationMemoryService(
         return JsonSerializer.Serialize(stored, ToolCallsSerializerOptions);
     }
 
-    // chars/4 — OpenRouter normalizes token counts to a GPT tokenizer, so this is a fair
-    // zero-dependency proxy for budgeting; the ledger keeps the real provider numbers.
+    // chars/4 — a zero-dependency proxy for budgeting; the ledger keeps the real token
+    // numbers. The Claude tokenizer gives more tokens per character than this, so the window
+    // budget is soft; compare against the ledger's prompt_tokens before changing it (#426).
     private const int CharsPerEstimatedToken = 4;
 
     private static int EstimateTokens(params string?[] parts) =>
@@ -259,15 +266,47 @@ internal sealed class ConversationMemoryService(
             included.Add(groups[i]);
         }
         included.Reverse();
+        DropUnreplayableEdges(included);
 
-        return included
-            .SelectMany(group => group)
-            .Select(Rehydrate)
-            // A reasoning-only assistant row rehydrates to zero contents (reasoning is
-            // stripped) — don't replay an empty message some providers could reject.
-            .Where(message => message.Contents.Count > 0)
-            .ToList();
+        return included.SelectMany(RehydrateGroup).ToList();
     }
+
+    // Two shapes the Claude API rejects with thinking on (#426), trimmed from the window:
+    // - a window that starts with an assistant row (the budget cut off its user row): the
+    //   first message must be a user message;
+    // - a last assistant message that is a tool-call group: a turn that failed after its tool
+    //   results left no answer row. The API reads the next request as a continuation of that
+    //   tool loop, which needs the round's thinking block — replay strips it, so a 400 on
+    //   every later turn until the group leaves the window.
+    private void DropUnreplayableEdges(List<List<ConversationMessageEntity>> groups)
+    {
+        while (groups.Count > 0 && groups[0][0].Role != ConversationMessageRole.User)
+            groups.RemoveAt(0);
+
+        while (groups.FindLastIndex(group => group[0].Role == ConversationMessageRole.Assistant) is var last
+               && last >= 0 && groups[last][0].ToolCallsJson is not null)
+        {
+            logger.LogDebug("Dropping an unanswered tool-call group from the end of the replay window");
+            groups.RemoveAt(last);
+        }
+    }
+
+    // The tool-result rows of a group replay as ONE Tool message, as the live loop sent them:
+    // the Claude API wants every tool_result of a tool_use message in the single user message
+    // right after it, and the adapter turns each ChatMessage into its own message (#426).
+    private IEnumerable<ChatMessage> RehydrateGroup(List<ConversationMessageEntity> group)
+    {
+        var results = group.Where(row => row.Role == ConversationMessageRole.Tool).ToList();
+        foreach (var row in group.Where(row => row.Role != ConversationMessageRole.Tool))
+            yield return Rehydrate(row);
+
+        if (results.Count > 0)
+            yield return new ChatMessage(ChatRole.Tool, [.. results.Select(RehydrateToolResult)]);
+    }
+
+    // Result MUST be a string so the adapter emits the stored wire text verbatim — see ToWireText.
+    private static AIContent RehydrateToolResult(ConversationMessageEntity row) =>
+        new FunctionResultContent(row.ToolCallId!, row.ToolResult ?? string.Empty);
 
     private List<List<ConversationMessageEntity>> GroupRows(List<ConversationMessageEntity> rows)
     {
@@ -290,6 +329,14 @@ internal sealed class ConversationMemoryService(
                 logger.LogDebug("Dropping orphan tool row {RowId} from the replay window", row.Id);
                 continue;
             }
+
+            // A reasoning-only assistant row (a round that ended with thinking alone) replays as
+            // nothing: reasoning is stripped. Skipped HERE, before the edge trimming, so the
+            // edges are checked on the rows the request carries — counted as the answer, it
+            // would hide an unanswered tool group in front of it (#426).
+            if (row.Role == ConversationMessageRole.Assistant
+                && string.IsNullOrEmpty(row.Text) && row.ToolCallsJson is null)
+                continue;
 
             CloseGroup(groups, ref openGroup, ref pendingCallIds);
 
@@ -349,10 +396,7 @@ internal sealed class ConversationMemoryService(
                 return new ChatMessage(ChatRole.User, row.Text ?? string.Empty);
 
             case ConversationMessageRole.Tool:
-                // Result MUST be a string so the adapter's fast-path emits the stored
-                // wire text verbatim — see ToWireText.
-                return new ChatMessage(ChatRole.Tool,
-                    [new FunctionResultContent(row.ToolCallId!, row.ToolResult ?? string.Empty)]);
+                return new ChatMessage(ChatRole.Tool, [RehydrateToolResult(row)]);
 
             default:
                 List<AIContent> contents = [];

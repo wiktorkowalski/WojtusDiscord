@@ -1,19 +1,31 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace DiscordEventService.Configuration;
 
-// Configuration for the conversational assistant (#238, ADR-0006). Shares the
-// OpenRouter ApiKey/BaseUrl from OpenRouterOptions; everything model- and
-// conversation-specific lives here. Boot-safe when unconfigured — the handler
-// short-circuits rather than failing startup.
+// Configuration for the conversational assistant (#238, ADR-0006, ADR-0007). The Claude API
+// key lives in AnthropicOptions; everything model- and conversation-specific lives here.
+// Boot-safe when unconfigured — the handler short-circuits rather than failing startup.
 internal sealed class ConversationOptions
 {
     public const string SectionName = "Conversation";
 
-    // The chat model — deliberately distinct from OpenRouterOptions.Model (the meme
-    // vision model). Routing chat through the vision model would regress indexing.
-    public string Model { get; set; } = "anthropic/claude-sonnet-5";
+    // What the Claude API accepts for `output_config.effort`; anything else is a 400 on every call.
+    public const string KnownReasoningEfforts = "low|medium|high|xhigh|max";
 
-    // OpenRouter `reasoning.effort` for the chat model: low | medium | high.
+    // The Claude API model id. Its price must be in Prices, or the ledger cost stays null.
+    public string Model { get; set; } = "claude-sonnet-5";
+
+    // `output_config.effort` of every call; adaptive thinking decides how much to think within it.
+    // Required: the regex alone lets an empty value through.
+    [Required]
+    [RegularExpression("^(" + KnownReasoningEfforts + ")$",
+        ErrorMessage = "Conversation:ReasoningEffort must be one of " + KnownReasoningEfforts)]
     public string ReasoningEffort { get; set; } = "medium";
+
+    // `max_tokens` of every call. Thinking counts toward it, so it is far above a Discord-sized
+    // answer: a low limit cuts the answer off after a long think (stop_reason max_tokens).
+    [Range(1024, 128000)]
+    public int MaxOutputTokens { get; set; } = 16000;
 
     // Hard ceiling on model->tool->model rounds in a single turn (#240). Guards
     // against a runaway tool loop; on the cap the bot makes one final tool-less call
@@ -61,10 +73,11 @@ internal sealed class ConversationOptions
     public string FailureMessage { get; set; } = "-# 💥 Coś się wysypało — spróbuj jeszcze raz.";
 
     // Conversation memory replay window (#267). The budget is summed over locally
-    // estimated message sizes (chars/4 — OpenRouter normalizes counts to a GPT
-    // tokenizer, so it's a fair proxy; the per-request provider usage can't size a
-    // per-message window). WindowMaxMessages is the row backstop against a few huge
-    // tool dumps blowing the estimate.
+    // estimated message sizes (chars/4, a zero-dependency proxy; the per-request usage of
+    // the API can't size a per-message window). The Claude tokenizer counts more tokens per
+    // character than the old GPT-normalized OpenRouter counts, so the budget is a soft
+    // bound: compare it with the ledger's prompt_tokens (#426). WindowMaxMessages is the
+    // row backstop against a few huge tool dumps blowing the estimate.
     public int WindowTokenBudget { get; set; } = 12000;
     public int WindowMaxMessages { get; set; } = 40;
 
@@ -99,23 +112,65 @@ internal sealed class ConversationOptions
     // the loop never refuses a turn.
     public CostAlertOptions CostAlerts { get; set; } = new();
 
-    // §5 OpenRouter `openrouter:web_search` server tool (#271). Attached to every loop
-    // round when enabled — safe because a search bills only when the model invokes one
-    // ($0.005 Exa per search), never per attached request.
+    // The native Claude web search server tool (#271, #426). Attached to every loop round
+    // when enabled — safe because a search bills only when the model runs one, never per
+    // attached request.
     public WebSearchOptions WebSearch { get; set; } = new();
+
+    // USD prices per model id (#426): the Claude API reports tokens, not money, so the
+    // ledger cost is computed from these. A model with no entry gets a null cost and one
+    // Warning. Source: https://platform.claude.com/docs/en/about-claude/pricing (2026-10-15).
+    // The binder merges config keys into this default; it never removes one.
+    public Dictionary<string, ModelPrice> Prices { get; set; } = new(StringComparer.Ordinal)
+    {
+        ["claude-sonnet-5"] = new ModelPrice
+        {
+            InputPerMTokUsd = 2,
+            OutputPerMTokUsd = 10,
+            CacheReadPerMTokUsd = 0.20,
+            CacheWritePerMTokUsd = 2.50,
+        },
+    };
+
+    // The web search fee: $10 per 1,000 searches on the Claude API, any model.
+    public double WebSearchPerThousandUsd { get; set; } = 10;
 }
 
-// Conversation:WebSearch:* (#271). Engine pinned to Exa for the predictable flat
-// per-search rate (unset would fall through to native provider passthrough pricing);
-// MaxResults bounds results per search, not searches per request — the model controls
-// how many searches it runs, and #269's soft caps cover the tail.
+// One model's token prices in USD per million tokens. CacheWrite is the 5-minute TTL write
+// price (1.25× input), the only TTL the loop uses.
+internal sealed class ModelPrice
+{
+    public double InputPerMTokUsd { get; set; }
+    public double OutputPerMTokUsd { get; set; }
+    public double CacheReadPerMTokUsd { get; set; }
+    public double CacheWritePerMTokUsd { get; set; }
+}
+
+// Conversation:WebSearch:* (#271, #426) → the `web_search_20260209` tool definition.
+// MaxUses caps the searches per model call (more → a `max_uses_exceeded` result block, not
+// an error); #269's soft caps cover the tail. Use AllowedDomains or BlockedDomains, never
+// both (the API answers 400). UserLocation localizes results; empty fields are left out.
 internal sealed class WebSearchOptions
 {
     public bool Enabled { get; set; } = true;
 
-    public string Engine { get; set; } = "exa";
+    public int MaxUses { get; set; } = 5;
 
-    public int MaxResults { get; set; } = 3;
+    public string[] AllowedDomains { get; set; } = [];
+
+    public string[] BlockedDomains { get; set; } = [];
+
+    public WebSearchLocationOptions UserLocation { get; set; } = new();
+}
+
+// The approximate location the searches are localized to. Country is an ISO 3166-1 alpha-2
+// code, Timezone an IANA id. All empty → no user_location on the wire.
+internal sealed class WebSearchLocationOptions
+{
+    public string? City { get; set; }
+    public string? Region { get; set; }
+    public string? Country { get; set; } = "PL";
+    public string? Timezone { get; set; } = "Europe/Warsaw";
 }
 
 // Conversation:CostAlerts:* (#269). Windows are calendar-UTC (month / date); sums

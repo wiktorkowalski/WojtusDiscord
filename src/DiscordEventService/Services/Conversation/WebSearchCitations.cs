@@ -1,54 +1,34 @@
-using System.ClientModel.Primitives;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.AI;
-using OpenAI.Chat;
 
 namespace DiscordEventService.Services.Conversation;
 
-// Recovers `url_citation` annotations from a round's raw streamed chunks and renders the
-// turn's compact source list (#271). OpenRouter spreads the annotations across mid-stream
-// delta chunks (one per citation as the model writes, `start_index`/`end_index` always 0)
-// at `choices[0].delta.annotations`. The OpenAI SDK has no typed annotation surface on
-// streamed deltas, and the chunk root's JsonPatch can't reach them either (they are
-// retained inside the NESTED delta model's patch — the root patch stays empty), so the
-// recovery round-trips each chunk through ModelReaderWriter and reads the JSON.
+// Collects the web-search citations of a round and renders the turn's compact source list
+// (#271, #426). The Claude API puts `web_search_result_location` citations on text blocks;
+// in a stream each arrives as a `citations_delta`, which the MEAI adapter turns into an
+// empty TextContent whose Annotations hold one CitationAnnotation (Url, Title).
 internal static class WebSearchCitations
 {
-    internal sealed record Citation(string Url);
+    internal sealed record Citation(string Url, string? Title);
 
     // Collects the round's citations into `citations`, deduplicating by URL across the
     // whole turn (a later round may re-search what an earlier round already cited).
     public static void AccumulateRound(IEnumerable<ChatResponseUpdate> updates, List<Citation> citations)
     {
-        foreach (var update in updates)
+        var annotations = updates
+            .SelectMany(update => update.Contents)
+            .OfType<TextContent>()
+            .SelectMany(text => text.Annotations ?? [])
+            .OfType<CitationAnnotation>();
+
+        foreach (var annotation in annotations)
         {
-            if (update.RawRepresentation is not StreamingChatCompletionUpdate raw)
+            if (annotation.Url is not { IsAbsoluteUri: true } url)
                 continue;
 
-            using var chunk = JsonDocument.Parse(ModelReaderWriter.Write(raw));
-            if (!chunk.RootElement.TryGetProperty("choices", out var choices)
-                || choices.ValueKind is not JsonValueKind.Array)
-                continue;
-
-            foreach (var choice in choices.EnumerateArray())
-            {
-                if (!choice.TryGetProperty("delta", out var delta)
-                    || !delta.TryGetProperty("annotations", out var annotations)
-                    || annotations.ValueKind is not JsonValueKind.Array)
-                    continue;
-
-                foreach (var annotation in annotations.EnumerateArray())
-                {
-                    if (!annotation.TryGetProperty("url_citation", out var citation)
-                        || !citation.TryGetProperty("url", out var url)
-                        || url.GetString() is not { Length: > 0 } urlValue)
-                        continue;
-
-                    if (!citations.Any(existing => existing.Url.Equals(urlValue, StringComparison.Ordinal)))
-                        citations.Add(new Citation(urlValue));
-                }
-            }
+            var urlValue = url.OriginalString;
+            if (!citations.Any(existing => existing.Url.Equals(urlValue, StringComparison.Ordinal)))
+                citations.Add(new Citation(urlValue, annotation.Title));
         }
     }
 

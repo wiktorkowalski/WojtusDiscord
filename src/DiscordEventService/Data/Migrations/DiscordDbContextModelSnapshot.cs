@@ -143,6 +143,14 @@ namespace DiscordEventService.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("attempt");
 
+                    b.Property<int?>("CacheReadTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("cache_read_tokens");
+
+                    b.Property<int?>("CacheWriteTokens")
+                        .HasColumnType("integer")
+                        .HasColumnName("cache_write_tokens");
+
                     b.Property<int?>("CompletionTokens")
                         .HasColumnType("integer")
                         .HasColumnName("completion_tokens");

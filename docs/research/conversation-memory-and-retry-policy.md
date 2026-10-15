@@ -1,5 +1,11 @@
 # Conversation memory (§5) + model-call retry policy, re-validated against the as-built loop
 
+> **Partly historical (2026-10-15).** ADR-0007 moves the assistant from OpenRouter to the
+> Claude API. The OpenRouter-specific findings below (error frames, `allow_fallbacks`, token
+> normalization, `usage.cost`) no longer describe the live transport. ADR-0007 holds the
+> current retry classes: HTTP 408, 429 and 5xx (529 included), mid-stream SSE `error` events,
+> transport errors and attempt timeouts. The memory findings (§5) still hold.
+
 Research for ticket #258 (part of the wayfinder map #253 "conversational assistant harness
 deepening" epic). Two AFK validations against the merged §1–§6 code:
 

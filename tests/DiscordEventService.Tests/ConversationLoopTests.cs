@@ -20,7 +20,8 @@ namespace DiscordEventService.Tests;
 // stream, a tool-batch summary closing each tool round (with no injected canned cue —
 // the model's own narration is the progress note, #274), the tool result fed back into
 // the next model call, a final answer accumulated from deltas, and the round cap
-// terminating the loop with tools withheld.
+// terminating the loop with tool calls forbidden; plus the Claude API loop shapes (#426):
+// grouped tool results, pause_turn continuation, a refusal.
 public sealed class ConversationLoopTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -162,9 +163,9 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
     {
         const int cap = 3;
         const string cappedAnswer = "Okay, stopping here.";
-        // Always ask for a tool while tools are offered; answer once they're withheld.
+        // Always ask for a tool while calls are allowed; answer once tool_choice is none.
         var client = new ScriptedChatClient((callIndex, _, options) =>
-            options?.Tools is { Count: > 0 }
+            options?.ToolMode is not NoneChatToolMode
                 ? StreamToolCall($"call_{callIndex}", "meme_search",
                     new Dictionary<string, object?> { ["query"] = "x", ["limit"] = 1 })
                 : StreamText(cappedAnswer));
@@ -175,9 +176,155 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         var events = await CollectAsync(service.GenerateReplyAsync("loop forever", context, CancellationToken.None));
 
         Assert.Equal(cappedAnswer, FinalAnswer(events));
-        // cap rounds offering tools, then one finalizing call with tools withheld.
+        // cap rounds allowing tool calls, then one finalizing call that forbids them. The
+        // tools stay declared on it: the Claude API rejects tool_use history with no tools.
         Assert.Equal(cap + 1, client.Calls.Count);
-        Assert.Equal([true, true, true, false], client.CallHadTools);
+        Assert.Equal([true, true, true, true], client.CallHadTools);
+        Assert.Equal([false, false, false, true], client.CallForbadeTools);
+    }
+
+    [Fact]
+    public async Task GenerateReplyAsync_TwoToolCallsInOneRound_ResultsGoBackInOneMessage()
+    {
+        var client = new ScriptedChatClient((callIndex, _, _) => callIndex switch
+        {
+            0 =>
+            [
+                ToolCallUpdate("call_a", "meme_search", new Dictionary<string, object?> { ["query"] = "zolw", ["limit"] = 1 }),
+                ToolCallUpdate("call_b", "server_info", []),
+            ],
+            _ => StreamText("Gotowe."),
+        });
+
+        var events = await CollectAsync(BuildService(client).GenerateReplyAsync(
+            "dwa narzędzia", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: false, ChannelId: 7UL),
+            CancellationToken.None));
+
+        Assert.Equal("Gotowe.", FinalAnswer(events));
+        var toolMessage = Assert.Single(client.Calls[1], m => m.Role == ChatRole.Tool);
+        Assert.Equal(["call_a", "call_b"], toolMessage.Contents.OfType<FunctionResultContent>().Select(r => r.CallId));
+    }
+
+    // No Claude API key: the source says it is not configured and a turn sends nothing.
+    [Fact]
+    public async Task GenerateReplyAsync_NoApiKey_IsNotConfiguredAndCallsNothing()
+    {
+        var client = ScriptToolThenAnswer("unused");
+        var log = new RecordingLogger();
+        var service = BuildService(client, logger: log.For<ConversationService>(), apiKey: null);
+
+        var events = await CollectAsync(service.GenerateReplyAsync(
+            "hej", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: false, ChannelId: 7UL),
+            CancellationToken.None));
+
+        Assert.False(service.IsConfigured);
+        Assert.Empty(events);
+        Assert.Empty(client.Calls);
+        Assert.Contains(log.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("Anthropic:ApiKey"));
+    }
+
+    // pause_turn: the paused response is appended and the model is called again — it is not
+    // the answer, and no tool runs.
+    [Fact]
+    public async Task GenerateReplyAsync_PauseTurn_CallsAgainAndJoinsTheAnswer()
+    {
+        var client = new ScriptedChatClient((callIndex, _, _) => callIndex switch
+        {
+            0 => [new ChatResponseUpdate(ChatRole.Assistant, "Szukam… ")
+            {
+                FinishReason = new ChatFinishReason(ConversationService.PauseTurnReason),
+            }],
+            _ => StreamText("Mam."),
+        });
+
+        var events = await CollectAsync(BuildService(client).GenerateReplyAsync(
+            "szukaj", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: false, ChannelId: 7UL),
+            CancellationToken.None));
+
+        Assert.Equal(2, client.Calls.Count);
+        Assert.Equal("Szukam… Mam.", FinalAnswer(events));
+        Assert.Equal(ChatRole.Assistant, client.Calls[1][^1].Role);
+        Assert.Equal("Szukam… ", client.Calls[1][^1].Text);
+    }
+
+    // A retried round after a pause: the reset clears the renderer's whole buffer, so the
+    // paused text must be rendered again before the retry streams.
+    [Fact]
+    public async Task GenerateReplyAsync_PauseThenRetriedRound_KeepsThePausedText()
+    {
+        var client = new FailingOnceChatClient();
+
+        var events = await CollectAsync(BuildService(client).GenerateReplyAsync(
+            "szukaj", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: false, ChannelId: 7UL),
+            CancellationToken.None));
+
+        Assert.Contains(events, e => e is ConversationUpdate.RoundReset);
+        Assert.Equal("Szukam… Mam.", ConversationRetryTests.RenderedText(events));
+    }
+
+    // Call 1 pauses; call 2 streams text and dies; call 3 answers.
+    private sealed class FailingOnceChatClient : IChatClient
+    {
+        private int _calls;
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            await Task.Yield();
+            switch (_calls++)
+            {
+                case 0:
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, "Szukam… ")
+                    {
+                        FinishReason = new ChatFinishReason(ConversationService.PauseTurnReason),
+                    };
+                    break;
+                case 1:
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, "Ma");
+                    throw new HttpRequestException("connection reset");
+                default:
+                    yield return new ChatResponseUpdate(ChatRole.Assistant, "Mam.");
+                    break;
+            }
+        }
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+
+        public void Dispose()
+        {
+        }
+    }
+
+    // A refusal can carry a tool call written before the classifier stopped the model: it
+    // must not run, the turn ends with a clear line, and one Warning names the round.
+    [Fact]
+    public async Task GenerateReplyAsync_Refusal_RunsNoToolAndSaysSo()
+    {
+        var client = new ScriptedChatClient((_, _, _) =>
+        [
+            new ChatResponseUpdate(ChatRole.Assistant,
+                [new FunctionCallContent("call_x", "ban_member", new Dictionary<string, object?> { ["userId"] = "1" })])
+            {
+                FinishReason = ChatFinishReason.ContentFilter,
+            },
+        ]);
+        var log = new RecordingLogger();
+
+        var events = await CollectAsync(BuildService(client, logger: log.For<ConversationService>()).GenerateReplyAsync(
+            "zbanuj", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: true, ChannelId: 7UL),
+            CancellationToken.None));
+
+        Assert.Single(client.Calls);
+        Assert.DoesNotContain(events, e => e is ConversationUpdate.ToolBatchSummary);
+        Assert.Equal(ConversationService.RefusalMessage, FinalAnswer(events));
+        Assert.Single(log.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("refused"));
+        Assert.StartsWith("Conversation turn refused: ",
+            Assert.Single(log.Entries, e => e.Level == LogLevel.Information).Message);
     }
 
     // #341: one Information line per turn. With the sensitive-data gate off (the default) it
@@ -289,7 +436,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
 
     private ConversationService BuildService(
         IChatClient client, int maxToolRounds = 8, bool enableSensitiveData = false,
-        ILogger<ConversationService>? logger = null)
+        ILogger<ConversationService>? logger = null, string? apiKey = "test-key")
     {
         var conversationOptions = Options.Create(new ConversationOptions
         {
@@ -297,7 +444,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             ReasoningEffort = "low",
             EnableSensitiveData = enableSensitiveData,
         });
-        var openRouterOptions = Options.Create(new OpenRouterOptions { ApiKey = "test-key" });
+        var anthropicOptions = Options.Create(new AnthropicOptions { ApiKey = apiKey });
 
         _searchLog = MemeSearchTestServices.NewLogWriter(fixture.ConnectionString);
         var registry = new ConversationToolRegistry(
@@ -316,7 +463,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             registry,
             new ConversationMemoryService(NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance),
             conversationOptions,
-            openRouterOptions,
+            anthropicOptions,
             new TestHostEnvironment(),
             logger ?? NullLogger<ConversationService>.Instance);
     }
@@ -442,6 +589,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
 
         public List<IReadOnlyList<ChatMessage>> Calls { get; } = [];
         public List<bool> CallHadTools { get; } = [];
+        public List<bool> CallForbadeTools { get; } = [];
 
         public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null,
@@ -450,6 +598,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             var snapshot = messages.ToList();
             Calls.Add(snapshot);
             CallHadTools.Add(options?.Tools is { Count: > 0 });
+            CallForbadeTools.Add(options?.ToolMode is NoneChatToolMode);
 
             foreach (var update in responder(_callIndex++, snapshot, options))
             {

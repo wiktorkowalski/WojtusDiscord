@@ -4,23 +4,22 @@ using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services.Conversation;
 using DiscordEventService.Services.MemeIndexing;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using OpenAI;
-using System.ClientModel;
-using System.Diagnostics;
 using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// MANUAL live-gate test (#241): drives the real streaming agentic loop against OpenRouter
-// -> Anthropic with reasoning ON and a forced multi-round tool call (meme_search hits the
-// seeded row, so the model must do model -> tool -> model). It closes the carried-forward
-// risk that the OpenAI/MEAI adapter doesn't replay reasoning_details (Anthropic 400 on
-// round 2) AND that the real usage.cost is recovered from the experimental ChatTokenUsage
-// patch. Both verified live 2026-06-20 (no 400; cost ≈ $0.009). Skipped in CI (hits a paid
-// API); run by hand with OPENROUTER_API_KEY exported.
+// Calls the real Claude API (#426) and costs a few cents per run, so it is skipped unless a
+// key is set: ANTHROPIC_API_KEY in the process environment, or ANTHROPIC_API_KEY /
+// Anthropic__ApiKey in the repo .env file (found by walking up from the test output
+// directory; read without setting environment variables, so the other secrets stay out):
+//   ANTHROPIC_API_KEY=sk-ant-... dotnet test --filter "FullyQualifiedName~ConversationLiveApiTests"
+// In CI it runs only in the manual workflow .github/workflows/live-tests.yml.
+// It checks what a scripted transport cannot: that the API accepts what this bot sends —
+// thinking blocks and server-tool blocks sent back, strict tools, tool_choice none with tool
+// history, the prompt cache — on the production pipeline (ConversationRegistration).
 public sealed class ConversationLiveApiTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -28,55 +27,137 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
     private const ulong ChannelDiscordId = 78UL;
     private const ulong MemeMessageId = 7901UL;
 
+    private static readonly string[] KeyNames = [AnthropicOptions.ApiKeyEnvironmentVariable, "Anthropic__ApiKey"];
+
+    private static readonly Lazy<string?> LazyApiKey = new(() =>
+        KeyNames.Select(Environment.GetEnvironmentVariable).FirstOrDefault(key => !string.IsNullOrEmpty(key))
+        ?? DotNetEnv.Env.NoEnvVars().TraversePath().Load()
+            .Where(pair => KeyNames.Contains(pair.Key) && pair.Value.Length > 0)
+            .Select(pair => pair.Value)
+            .FirstOrDefault());
+
+    private static string? ApiKey => LazyApiKey.Value;
+
     private DiscordDbContext _db = null!;
+    // The test database outlives a run: a random base keeps every run's conversations apart.
+    private ulong _channelId = (ulong)Random.Shared.NextInt64(1_000_000, 1_000_000_000_000);
 
     public async Task InitializeAsync()
     {
         _db = NewContext();
         await _db.Database.MigrateAsync();
-        await SeedCatMemeAsync();
+        if (!await _db.Guilds.AnyAsync(g => g.DiscordId == GuildDiscordId))
+            await SeedCatMemeAsync();
     }
 
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
-    [Fact(Skip = "Live: hits real OpenRouter (paid). Run manually to verify the reasoning+multi-round tool gate and usage.cost recovery.")]
-    public async Task GenerateReplyAsync_RealOpenRouter_MultiRoundToolCall_DoesNotThrow()
+    // Model → meme_search → model, with thinking on: round 2 sends round 1's thinking block
+    // back, and reads the cache round 1 wrote.
+    [LiveFact]
+    public async Task ToolLoop_IsAccepted_AndRoundTwoReadsTheCache()
     {
-        var apiKey = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
-        Assert.False(string.IsNullOrWhiteSpace(apiKey), "export OPENROUTER_API_KEY to run this live test");
+        var (service, log, channel) = BuildService();
 
-        // Listen to the turn span so we can assert the real usage.cost was recovered from
-        // the experimental ChatTokenUsage patch and recorded — otherwise StartActivity
-        // returns null (no listener) and the cost path is silently untested.
-        double? capturedCost = null;
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = src => src.Name == ConversationTelemetry.SourceName,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
-            ActivityStopped = activity =>
-            {
-                if (activity.GetTagItem("conversation.cost_usd") is double cost)
-                    capturedCost = cost;
-            },
-        };
-        ActivitySource.AddActivityListener(listener);
+        var events = await CollectAsync(service, "znajdź mema o kocie i powiedz krótko co to za mem", channel);
 
+        Assert.Contains(events, e => e is ConversationUpdate.ToolBatchSummary);
+        var answer = Answer(events);
+        Assert.False(string.IsNullOrWhiteSpace(answer), "expected a non-empty streamed answer");
+        Assert.DoesNotContain(new ConversationOptions().FailureMessage, answer);
+
+        var rows = await UsageRowsAsync(channel);
+        Assert.True(rows.Count >= 2, Dump(log));
+        Assert.All(rows, row => Assert.False(row.Failed));
+        Assert.True(rows[1].CacheReadTokens > 0, $"no cache read in round 2: {Dump(log)}");
+        Assert.All(rows, row => Assert.True(row.CostUsd > 0));
+        Assert.DoesNotContain(log.Entries, e => e.Level >= LogLevel.Warning);
+    }
+
+    [LiveFact]
+    public async Task WebSearch_AnswersWithASourceList()
+    {
+        var (service, log, channel) = BuildService();
+
+        var events = await CollectAsync(service,
+            "Search the web: what is the latest stable version of the .NET SDK? Answer in one sentence and cite the source.",
+            channel);
+
+        var answer = Answer(events);
+        Assert.Contains("🔗", answer);
+        var rows = await UsageRowsAsync(channel);
+        Assert.True(rows.Sum(row => row.WebSearchRequests ?? 0) > 0, Dump(log));
+        // The search fee is on top of the token cost.
+        Assert.Contains(rows, row => row.CostUsd > row.UpstreamInferenceCostUsd);
+    }
+
+    // A web search and a local tool in one turn: the server-tool blocks of a round go back with
+    // its tool_use and the tool result in the next request.
+    [LiveFact]
+    public async Task SearchThenLocalTool_RoundTripsTheServerToolBlocks()
+    {
+        var (service, log, channel) = BuildService();
+
+        var events = await CollectAsync(service,
+            "First search the web for what a 'grumpy cat' meme is, then call meme_search for a cat meme on this server. "
+            + "Answer in two short sentences.",
+            channel);
+
+        Assert.Contains(events, e => e is ConversationUpdate.ToolBatchSummary);
+        Assert.DoesNotContain(new ConversationOptions().FailureMessage, Answer(events));
+        var rows = await UsageRowsAsync(channel);
+        Assert.True(rows.Sum(row => row.WebSearchRequests ?? 0) > 0, Dump(log));
+        Assert.All(rows, row => Assert.False(row.Failed, Dump(log)));
+    }
+
+    // The dev-bot prompt that failed with a 400 (#426): the model calls web_search and
+    // meme_search in one group, so the API defers the search and its result opens the next
+    // response. That result must go back on round 3.
+    [LiveFact]
+    public async Task SearchNextToLocalTool_DeferredSearchResult_IsSentBack()
+    {
+        var (service, log, channel) = BuildService();
+
+        var events = await CollectAsync(service,
+            "wyszukaj w necie jaka jest najnowsza wersja .NET, a potem znajdź mema o programowaniu", channel);
+
+        Assert.DoesNotContain(new ConversationOptions().FailureMessage, Answer(events));
+        var rows = await UsageRowsAsync(channel);
+        Assert.All(rows, row => Assert.False(row.Failed, Dump(log)));
+        Assert.True(rows.Sum(row => row.WebSearchRequests ?? 0) > 0, Dump(log));
+    }
+
+    // MaxToolRounds 1: the second call is the post-cap round — tool history, the same tools
+    // declared, tool_choice none, round 1's thinking still in the transcript.
+    [LiveFact]
+    public async Task RoundCap_ToolChoiceNone_WithToolHistory_IsAccepted()
+    {
+        var (service, log, channel) = BuildService(maxToolRounds: 1);
+
+        var events = await CollectAsync(service, "Call meme_search for 'kot', then tell me what you found.", channel);
+
+        var answer = Answer(events);
+        Assert.False(string.IsNullOrWhiteSpace(answer));
+        Assert.DoesNotContain(new ConversationOptions().FailureMessage, answer);
+        var rows = await UsageRowsAsync(channel);
+        Assert.True(rows.Count(row => !row.Failed) == 2,
+            $"rows {string.Join(",", rows.Select(r => $"{r.Round}/{r.Attempt}/{r.Failed}"))}; {Dump(log)}");
+        Assert.DoesNotContain(log.Entries, e => e.Level >= LogLevel.Error);
+    }
+
+    private (ConversationService Service, RecordingLogger Log, ulong Channel) BuildService(int maxToolRounds = 8)
+    {
+        var log = new RecordingLogger();
         var conversationOptions = Options.Create(new ConversationOptions
         {
-            Model = "anthropic/claude-sonnet-4.6",
-            ReasoningEffort = "medium", // reasoning ON — the gate condition
-            MaxToolRounds = 8,
+            ReasoningEffort = "low",
+            MaxToolRounds = maxToolRounds,
             PrimaryGuildId = GuildDiscordId,
         });
-        var openRouterOptions = Options.Create(new OpenRouterOptions { ApiKey = apiKey });
 
-        var chatClient = new OpenAIClient(
-                new ApiKeyCredential(apiKey!),
-                new OpenAIClientOptions { Endpoint = new Uri(openRouterOptions.Value.BaseUrl) })
-            .GetChatClient(conversationOptions.Value.Model)
-            .AsIChatClient()
-            .AsBuilder()
-            .Build();
+        var chatClient = ConversationRegistration.BuildChatClient(
+            ConversationRegistration.CreateApiClient(ApiKey!, log.For<AnthropicAttemptLogHandler>()),
+            conversationOptions.Value, enableSensitiveData: false);
 
         var registry = new ConversationToolRegistry(
             MemeSearchTestServices.NewSearch(NewContext(), fixture.ConnectionString),
@@ -91,28 +172,38 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
         var memory = new ConversationMemoryService(
             NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance);
         var service = new ConversationService(
-            chatClient, registry, memory, conversationOptions, openRouterOptions,
-            new TestHostEnvironment(), NullLogger<ConversationService>.Instance);
+            chatClient, registry, memory, conversationOptions,
+            Options.Create(new AnthropicOptions { ApiKey = ApiKey }),
+            new TestHostEnvironment(), log.For<ConversationService>());
 
-        var context = new ConversationContext(GuildDiscordId, InvokerId: 1UL, "tester", IsAdmin: false, ChannelId: 9UL);
-
-        List<ConversationUpdate> events = [];
-        await foreach (var update in service.GenerateReplyAsync(
-            "znajdź mema o kocie i powiedz krótko co to za mem", context, CancellationToken.None))
-        {
-            events.Add(update);
-        }
-
-        // The model survived the second round (no Anthropic 400 on replayed reasoning) and
-        // produced both a tool batch and a non-empty answer.
-        Assert.Contains(events, e => e is ConversationUpdate.ToolBatchSummary);
-        var answer = string.Concat(events.OfType<ConversationUpdate.AssistantTextDelta>().Select(d => d.Text));
-        Assert.False(string.IsNullOrWhiteSpace(answer), "expected a non-empty streamed answer");
-
-        // The real OpenRouter usage.cost flowed through the experimental ChatTokenUsage
-        // patch and was recorded on the turn span (verified live 2026-06-20 ≈ $0.009).
-        Assert.True(capturedCost is > 0, $"expected a non-zero usage.cost; got {capturedCost?.ToString() ?? "NULL"}");
+        // A channel of its own per test: each one is a fresh conversation.
+        return (service, log, Interlocked.Increment(ref _channelId));
     }
+
+    private static async Task<List<ConversationUpdate>> CollectAsync(
+        ConversationService service, string question, ulong channel)
+    {
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 1UL, "tester", IsAdmin: false, ChannelId: channel);
+        List<ConversationUpdate> events = [];
+        await foreach (var update in service.GenerateReplyAsync(question, context, CancellationToken.None))
+            events.Add(update);
+        return events;
+    }
+
+    private static string Answer(IEnumerable<ConversationUpdate> events) =>
+        string.Concat(events.OfType<ConversationUpdate.AssistantTextDelta>().Select(d => d.Text));
+
+    private async Task<List<Data.Entities.Conversations.ConversationUsageEntity>> UsageRowsAsync(ulong channel)
+    {
+        await using var db = NewContext();
+        return await db.ConversationUsage
+            .Where(u => u.Conversation.ChannelDiscordId == channel)
+            .OrderBy(u => u.Round).ThenBy(u => u.Attempt)
+            .ToListAsync();
+    }
+
+    private static string Dump(RecordingLogger log) =>
+        string.Join(" | ", log.Entries.Select(e => $"{e.Level}: {e.Message}"));
 
     private async Task SeedCatMemeAsync()
     {
@@ -182,5 +273,14 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
             .UseSnakeCaseNamingConvention()
             .Options;
         return new DiscordDbContext(options);
+    }
+
+    private sealed class LiveFactAttribute : FactAttribute
+    {
+        public LiveFactAttribute()
+        {
+            if (string.IsNullOrEmpty(ApiKey))
+                Skip = "Set ANTHROPIC_API_KEY to run the tests against the real Claude API.";
+        }
     }
 }
