@@ -214,8 +214,8 @@ def overview():
                f' + sum({xi("wojtus_meme_vision_cost_usd_total", "", "24h", "5m")} or vector(0))',
                unit="currencyUSD", decimals=2, no_value="$0.00",
                thresholds=steps((GOOD, None), (WARN, 1), (CRIT, 2)),
-               desc="Cost of conversation and meme vision model calls in the last 24 hours. The conversation"
-                    " cost is what the provider billed for the call, so it holds the web search fee already."
+               desc="Cost of conversation and meme vision model calls in the last 24 hours. The bot computes the"
+                    " conversation cost from the tokens and the price table in config; it holds the web search fee."
                     " The conversation alert fires above 2 USD."), 3, 3)
     d.add(stat("Restarts, 24 h", f"sum(changes(wojtus_process_start_time_seconds{{{J}}}[24h]))", decimals=0,
                no_value="0", thresholds=steps((GOOD, None), (WARN, 4), (CRIT, 10)),
@@ -559,8 +559,9 @@ def ai():
 
     d.add(text("**What do the assistant and the meme search do, how long do they take, what do they cost?** Volume is low: widen the time range for history."), 24, 2)
     d.row("Conversation")
-    fee = (" The cost is what the provider billed for the call: it holds the web search fee already,"
-           " so the fee is not added a second time.")
+    fee = (" The bot computes the cost from the tokens (cache reads and writes included) and the price table"
+           " in config. The Claude API reports no cost. The cost holds the web search fee already, so the"
+           " fee is not added a second time.")
     d.add(stat("Turns", f"sum({xi(C + 'turns_total', '', R)})", decimals=0, no_value="0",
                desc="Conversation turns in the range." + BIRTH), 3, 4)
     d.add(stat("Failed turns", f"sum({xi(C + 'turns_total', NOT_OK, R)})", decimals=0,
@@ -575,10 +576,10 @@ def ai():
                no_value="$0.00", desc="Cost of conversation model calls, last 30 days." + fee), 3, 4)
     d.add(stat("Web fee, 30 d", f"sum({xi(C + 'web_search_cost_usd_total', '', '30d', '5m')})",
                unit="currencyUSD", decimals=2, no_value="$0.00",
-               desc="The part of 'Cost, 30 d' that is the web search fee: the cost of a call less the cost of"
-                    " the model itself. Zero when the provider did not report both costs."), 3, 4)
+               desc="The part of 'Cost, 30 d' that is the web search fee: the cost of a call less its token"
+                    " cost. Zero when no web search ran."), 3, 4)
     d.add(stat("Web search", f"sum({xi(C + 'web_search_requests_total', '', R)})", decimals=0, no_value="0",
-               desc="Web searches the provider ran for conversation model calls in the range."), 3, 4)
+               desc="Web searches the Claude API ran for conversation model calls in the range."), 3, 4)
     d.add(stat("Retries", f"sum({xi(C + 'retries_total', '', R)})", decimals=0, no_value="0",
                thresholds=steps((GOOD, None), (WARN, 1)),
                desc="Model calls in the range that were a second or later attempt of a round."), 3, 4)
@@ -594,8 +595,9 @@ def ai():
                "Cost of conversation model calls per interval, by model.", unit="currencyUSD", decimals=3), 8, 8)
     d.add(bars("Tokens by model and direction",
                [q(f"sum by (model, direction)({xi(C + 'tokens_total')})", "{{model}} {{direction}}")],
-               "Tokens billed by conversation model calls per interval. Input is the prompt, output is"
-               " the completion."), 8, 8)
+               "Tokens of conversation model calls per interval. Input is the whole prompt: uncached input,"
+               " cache reads and cache writes. Output is the completion. A cache read costs less than"
+               " plain input and a cache write costs more, so input tokens do not map 1:1 to cost."), 8, 8)
     d.add(bars("Rounds and retries", [
         q(f"sum by (model, outcome)({xi(C + 'rounds_total')})", "{{model}} {{outcome}}"),
         q(f"sum by (model)({xi(C + 'retries_total')})", "{{model}} retry")],
@@ -622,11 +624,11 @@ def ai():
                   " reads 100. A larger context costs more input tokens."), 8, 8)
     d.add(bars("Web searches", [
         q(f"sum by (model)({xi(C + 'web_search_requests_total')})", "{{model}} searches")],
-        "Web searches the provider ran for conversation model calls, per interval and model. The fee is on the"
+        "Web searches the Claude API ran for conversation model calls, per interval and model. The fee is on the"
          " 'Web search fee' panel: a count and a cost do not share one axis."), 4, 8)
     d.add(bars("Web search fee", [q(f"sum by (model)({xi(C + 'web_search_cost_usd_total')})", "{{model}}")],
-               "Web search fee per interval and model: the cost of a call less the cost of the model itself. It is a"
-               " part of 'Cost by model', not an addition to it.", unit="currencyUSD", decimals=3), 4, 8)
+               "Web search fee per interval and model: the cost of a call less its token cost, at 10 USD per"
+               " 1,000 searches. It is a part of 'Cost by model', not an addition to it.", unit="currencyUSD", decimals=3), 4, 8)
     d.add(bargauge("Tool calls by tool", f"sort_desc(sum by (tool)({xi(C + 'tool_calls_total', '', R)}))",
                    legend="{{tool}}", decimals=0, desc="Conversation tool calls in the range, by tool."), 5, 8)
     d.add(bars("Tool calls by outcome", [q(f"sum by (outcome)({xi(C + 'tool_calls_total')})", "{{outcome}}")],
@@ -883,49 +885,67 @@ def runtime():
     d.row("Outbound dependencies (HttpClient)")
     HCC = HC + "_count"
     DISCORD, OPENROUTER = 'server_address="discord.com"', 'server_address=~".*openrouter.*"'
-    OTHER = 'server_address!~"discord.com|.*openrouter.*"'
+    CLAUDE = 'server_address="api.anthropic.com"'
+    OTHER = 'server_address!~"discord.com|.*openrouter.*|api.anthropic.com"'
     bad_t = steps((GOOD, None), (WARN, 1))
     d.add(stat("Discord requests", f"sum({xi(HCC, DISCORD, R)})", decimals=0, no_value="0",
-               desc="Requests to the Discord REST API (discord.com) in the range: boot sync, backfill, replies." + BIRTH), 4, 4)
+               desc="Requests to the Discord REST API (discord.com) in the range: boot sync, backfill, replies." + BIRTH), 3, 4)
     d.add(stat("Discord non-2xx", f'sum({xi(HCC, sel(DISCORD, NON_2XX), R)})', decimals=0,
                no_value="0", thresholds=bad_t,
-               desc="Discord REST answers outside 2xx in the range, 429 included, and requests with no answer."), 4, 4)
+               desc="Discord REST answers outside 2xx in the range, 429 included, and requests with no answer."), 3, 4)
     d.add(stat("Discord rate limits", f'sum({xi(HCC, sel(DISCORD, HTTP_429), R)})', decimals=0,
                no_value="0", thresholds=bad_t,
                desc="HTTP 429 from Discord in the range. DSharpPlus waits and retries; many of them mean a backfill"
-                    " runs too fast."), 4, 4)
+                    " runs too fast."), 3, 4)
+    d.add(stat("Claude API requests", f"sum({xi(HCC, CLAUDE, R)})", decimals=0, no_value="0",
+               desc="Requests to the Claude API (api.anthropic.com) in the range: conversation model calls,"
+                    " retries included."), 3, 4)
+    d.add(stat("Claude API non-2xx", f'sum({xi(HCC, sel(CLAUDE, NON_2XX), R)})',
+               decimals=0, no_value="0", thresholds=bad_t,
+               desc="Claude API answers outside 2xx in the range, 429 and 529 included, and requests with no answer."), 3, 4)
     d.add(stat("OpenRouter requests", f"sum({xi(HCC, OPENROUTER, R)})", decimals=0, no_value="0",
-               desc="Requests to OpenRouter in the range: conversation model calls and meme vision calls."), 4, 4)
+               desc="Requests to OpenRouter in the range: meme vision calls."), 3, 4)
     d.add(stat("OpenRouter non-2xx", f'sum({xi(HCC, sel(OPENROUTER, NON_2XX), R)})',
                decimals=0, no_value="0", thresholds=bad_t,
-               desc="OpenRouter answers outside 2xx in the range, and requests with no answer."), 4, 4)
+               desc="OpenRouter answers outside 2xx in the range, and requests with no answer."), 3, 4)
     d.add(stat("Other hosts, failed", f'sum({xi(HCC, sel(OTHER, HAS_ERROR), R)})', decimals=0, no_value="0",
-               thresholds=bad_t, desc="Failed requests to every other host (Tempo, Langfuse, webhooks) in the range."), 4, 4)
+               thresholds=bad_t, desc="Failed requests to every other host (Tempo, Langfuse, webhooks) in the range."), 3, 4)
     d.add(bars("Discord REST requests by status",
                [q(f"sum by (http_response_status_code)({xi(HCC, DISCORD)}){PER_MIN}", "{{http_response_status_code}}")],
                "Requests per minute to discord.com by HTTP status." + BIRTH, decimals=1,
                colors={"200": GOOD, "201": GOOD, "204": GOOD, "429": WARN, "400": ORANGE, "403": ORANGE, "404": ORANGE,
-                       "500": CRIT, "502": CRIT, "503": CRIT}), 8, 8)
+                       "500": CRIT, "502": CRIT, "503": CRIT}), 6, 8)
     d.add(ts("Discord REST latency", [q(hq(0.5, HC, DISCORD), "p50"), q(hq(0.95, HC, DISCORD), "p95", exemplar=True)],
              unit="s", colors={"p50": BLUE, "p95": ORANGE}, points="auto",
-             desc="Duration of requests to discord.com. No point when no request is sent." + EX), 8, 8)
+             desc="Duration of requests to discord.com. No point when no request is sent." + EX), 6, 8)
+    d.add(bars("Claude API requests by status",
+               [q(f"sum by (http_response_status_code)({xi(HCC, CLAUDE)}){PER_MIN}", "{{http_response_status_code}}")],
+               "Requests per minute to api.anthropic.com by HTTP status. 529 means the API is overloaded;"
+               " the conversation retry policy retries it.", decimals=1,
+               colors={"200": GOOD, "400": ORANGE, "401": CRIT, "429": WARN, "500": CRIT, "502": CRIT, "503": CRIT,
+                       "529": WARN}), 6, 8)
+    d.add(ts("Claude API latency", [q(hqx(0.5, HC, CLAUDE, rng=IV), "p50"),
+                                    q(hqx(0.95, HC, CLAUDE, rng=IV), "p95", exemplar=True)],
+             unit="s", colors={"p50": BLUE, "p95": ORANGE}, points="always", min_interval="1m",
+             desc="Duration of requests to api.anthropic.com, for the requests in each interval. A streamed"
+                  " conversation model call runs for seconds to minutes." + EX), 6, 8)
     d.add(bars("OpenRouter requests by status",
                [q(f"sum by (http_response_status_code)({xi(HCC, OPENROUTER)}){PER_MIN}", "{{http_response_status_code}}")],
-               "Requests per minute to OpenRouter by HTTP status.", decimals=1,
-               colors={"200": GOOD, "429": WARN, "500": CRIT, "502": CRIT, "503": CRIT}), 8, 8)
+               "Requests per minute to OpenRouter by HTTP status. Only meme vision calls go to OpenRouter.", decimals=1,
+               colors={"200": GOOD, "429": WARN, "500": CRIT, "502": CRIT, "503": CRIT}), 6, 8)
     d.add(ts("OpenRouter latency", [q(hqx(0.5, HC, OPENROUTER, rng=IV), "p50"),
                                     q(hqx(0.95, HC, OPENROUTER, rng=IV), "p95", exemplar=True)],
              unit="s", colors={"p50": BLUE, "p95": ORANGE}, points="always", min_interval="1m",
-             desc="Duration of requests to OpenRouter, for the requests in each interval. A model call runs for"
-                  " seconds to minutes." + EX), 8, 8)
+             desc="Duration of requests to OpenRouter, for the requests in each interval. A meme vision call runs"
+                  " for seconds to minutes." + EX), 6, 8)
     d.add(bars("Other hosts, requests by host",
                [q(f"sum by (server_address)({xi(HCC, OTHER)}){PER_MIN}", "{{server_address}}")],
                "Requests per minute to every other host: the Discord gateway upgrade, Tempo, Langfuse, webhooks.",
-               decimals=1), 8, 8)
+               decimals=1), 6, 8)
     d.add(bars("Outbound errors",
                [q(f'sum by (server_address, http_response_status_code, error_type)({xi(HCC, HAS_ERROR)})',
                   "{{server_address}} {{http_response_status_code}} {{error_type}}")],
-               "Outbound requests that failed, per interval: a 4xx or 5xx status, a timeout or a connection error."), 8, 8)
+               "Outbound requests that failed, per interval: a 4xx or 5xx status, a timeout or a connection error."), 6, 8)
 
     d.row("Npgsql client")
     d.add(ts("Pool connections by state",

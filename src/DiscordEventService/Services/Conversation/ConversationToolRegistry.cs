@@ -43,8 +43,9 @@ internal sealed class ConversationToolRegistry(
     private const int MaxTimeoutMinutes = 28 * 24 * 60;
 
     // All-required + no-additional-properties => a clean schema the model can't drift
-    // past with junk keys. (Anthropic via OpenRouter ignores the OpenAI `strict` wire
-    // flag, but the tightened schema still helps the model and our binding.)
+    // past with junk keys. Every tool has this schema, so every tool also sets `strict: true`
+    // (StrictTool, #426): the Claude API then guarantees the call input matches the schema,
+    // which the binding of the tool arguments relies on.
     private static readonly AIJsonSchemaCreateOptions StrictSchema = new AIJsonSchemaCreateOptions
     {
         TransformOptions = new AIJsonSchemaTransformOptions
@@ -53,6 +54,10 @@ internal sealed class ConversationToolRegistry(
             RequireAllProperties = true,
         },
     };
+
+    // The MEAI Anthropic adapter copies AdditionalProperties["Strict"] into the tool definition.
+    private static readonly IReadOnlyDictionary<string, object?> StrictTool =
+        new Dictionary<string, object?> { [nameof(Anthropic.Models.Messages.Tool.Strict)] = true };
 
     public ConversationToolset BuildToolset(ConversationContext context) =>
         new ConversationToolset(
@@ -91,6 +96,7 @@ internal sealed class ConversationToolRegistry(
                     + "first. Optionally limit to the last N days and/or a channel by a fragment of its name. "
                     + "Prefer this over query_database for a simple 'who posts the most' ranking.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> TopPostersAsync(
@@ -132,6 +138,7 @@ internal sealed class ConversationToolRegistry(
                 Name = "query_database",
                 Description = BuildQueryDatabaseDescription(context),
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> QueryDatabaseAsync(string sql, CancellationToken cancellationToken)
@@ -187,6 +194,7 @@ internal sealed class ConversationToolRegistry(
                     + "its content. `query` is free-text keywords in any language; `limit` is how many results to "
                     + "return (1-10, use 5 unless the user asks for more).",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> SearchMemesAsync(
@@ -264,6 +272,7 @@ internal sealed class ConversationToolRegistry(
                     + "a jump link. Prefer this over query_database for right-now voice questions; the "
                     + "database copy lags behind live state.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private string VoiceOccupants(ConversationContext context)
@@ -293,6 +302,7 @@ internal sealed class ConversationToolRegistry(
                     + "query_database for right-now questions about a person. Accepts a user id or a "
                     + "name fragment; an ambiguous fragment returns the matching candidates.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> MemberInfoAsync(
@@ -326,6 +336,7 @@ internal sealed class ConversationToolRegistry(
                     + "count, created date, and channel/role/emoji counts. Prefer this over "
                     + "query_database for right-now questions about the server itself.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private string ServerInfo(ConversationContext context)
@@ -355,6 +366,7 @@ internal sealed class ConversationToolRegistry(
                     "ADMIN ONLY. React to a message with an emoji. Runs immediately (it's easily undone). "
                     + "If the user isn't an admin this is refused.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> AddReactionAsync(
@@ -386,6 +398,7 @@ internal sealed class ConversationToolRegistry(
                     "ADMIN ONLY. Pin a message in its channel. Runs immediately (unpinning undoes it). "
                     + "If the user isn't an admin this is refused.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> PinMessageAsync(
@@ -417,6 +430,7 @@ internal sealed class ConversationToolRegistry(
                     "ADMIN ONLY. Give a member a role. This does NOT happen immediately — it posts a "
                     + "confirmation an admin must click. If the user isn't an admin this is refused.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> GrantRoleAsync(
@@ -449,6 +463,7 @@ internal sealed class ConversationToolRegistry(
                     "ADMIN ONLY. Remove a role from a member. This does NOT happen immediately — it posts a "
                     + "confirmation an admin must click. If the user isn't an admin this is refused.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> RemoveRoleAsync(
@@ -482,6 +497,7 @@ internal sealed class ConversationToolRegistry(
                     "ADMIN ONLY. Time a member out (mute) for some minutes. This does NOT happen immediately — "
                     + "it posts a confirmation an admin must click. If the user isn't an admin this is refused.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> TimeoutMemberAsync(
@@ -514,6 +530,7 @@ internal sealed class ConversationToolRegistry(
                     "ADMIN ONLY. Kick a member from the server. This does NOT happen immediately — it posts a "
                     + "confirmation an admin must click. If the user isn't an admin this is refused.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> KickMemberAsync(
@@ -543,6 +560,7 @@ internal sealed class ConversationToolRegistry(
                     "ADMIN ONLY. Ban a user from the server. This does NOT happen immediately — it posts a "
                     + "confirmation an admin must click. If the user isn't an admin this is refused.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> BanMemberAsync(
@@ -572,6 +590,7 @@ internal sealed class ConversationToolRegistry(
                     "ADMIN ONLY. Delete a message. This does NOT happen immediately — it posts a confirmation "
                     + "an admin must click. If the user isn't an admin this is refused.",
                 JsonSchemaCreateOptions = StrictSchema,
+                AdditionalProperties = StrictTool,
             });
 
     private async Task<string> DeleteMessageAsync(

@@ -26,7 +26,7 @@ internal sealed class ConversationFlow(
         if (message.AuthorId == botId || message.AuthorIsBot)
             return;
 
-        // Stay inert (no thread, no reply) when the bot has no usable OpenRouter key.
+        // Stay inert (no thread, no reply) when the bot has no usable Claude API key.
         if (!conversation.IsConfigured)
             return;
 

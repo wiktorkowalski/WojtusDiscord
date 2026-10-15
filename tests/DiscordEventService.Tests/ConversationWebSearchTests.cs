@@ -1,28 +1,20 @@
-using System.ClientModel;
-using System.Globalization;
-using System.ClientModel.Primitives;
-using System.Net;
 using System.Text;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Services.Conversation;
-using DiscordEventService.Services.MemeIndexing;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using OpenAI;
 using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// The §5 web-search server tool end-to-end (#271): a recording transport UNDER the real
-// OpenAI SDK + MEAI adapter proves the wire body (the `openrouter:web_search` entry must
-// merge AFTER the adapter-serialized app tools — `Set` would clobber them, and a
-// disabled config must leave the body clean), and scripted SSE streams prove citation
-// recovery — annotations arrive spread across mid-stream delta chunks at
-// `$.choices[0].delta.annotations` — plus the ledger itemisation of search spend.
+// The native web search server tool end-to-end (#271, #426): a scripted SSE transport UNDER
+// the real AnthropicClient + MEAI adapter proves the wire body (the turn's strict function
+// tools, then `web_search_20260209`), the round trip of the server-tool blocks into the next
+// round (the adapter alone drops them), pause_turn continuation, citation recovery from
+// citations_delta, and the ledger itemisation of the search fee.
 public sealed class ConversationWebSearchTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -45,100 +37,141 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
     [Fact]
-    public async Task RequestBody_WebSearchEnabled_ServerToolAppendedAfterAppTools()
+    public async Task RequestBody_StrictSortedAppTools_ThenWebSearchLast()
     {
-        var transport = new RecordingTransport(_ => SseResponse(SseText("Cześć.")));
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.TextAnswer("Cześć."));
 
-        await CollectAsync(BuildService(transport, webSearchEnabled: true)
+        await CollectAsync(BuildService(handler, webSearchEnabled: true)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
 
-        var tools = Assert.Single(transport.RequestBodies).GetProperty("tools");
-        var entries = tools.EnumerateArray().ToList();
-        // The app's function tools survive the patch, and the appended server tool
-        // lands after them.
-        Assert.Contains(entries, tool => tool.GetProperty("type").GetString() == "function");
-        var serverTool = Assert.Single(entries,
-            tool => tool.GetProperty("type").GetString() == "openrouter:web_search");
-        Assert.Equal("exa", serverTool.GetProperty("parameters").GetProperty("engine").GetString());
-        Assert.Equal(3, serverTool.GetProperty("parameters").GetProperty("max_results").GetInt32());
-        Assert.Equal("openrouter:web_search", entries[^1].GetProperty("type").GetString());
+        var tools = Assert.Single(handler.Requests)["tools"]!.AsArray();
+        var functions = tools.Take(tools.Count - 1).ToList();
+        Assert.NotEmpty(functions);
+        // Every app tool has the strict schema, so every one is sent with strict: true.
+        Assert.All(functions, tool => Assert.True(tool!["strict"]!.GetValue<bool>()));
+        var names = functions.Select(tool => tool!["name"]!.GetValue<string>()).ToList();
+        Assert.Equal(names.Order(StringComparer.Ordinal), names);
+        Assert.Equal("web_search_20260209", tools[^1]!["type"]!.GetValue<string>());
     }
 
     [Fact]
     public async Task RequestBody_WebSearchDisabled_NoServerToolOnTheWire()
     {
-        var transport = new RecordingTransport(_ => SseResponse(SseText("Cześć.")));
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.TextAnswer("Cześć."));
 
-        await CollectAsync(BuildService(transport, webSearchEnabled: false)
+        await CollectAsync(BuildService(handler, webSearchEnabled: false)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
 
-        var tools = Assert.Single(transport.RequestBodies).GetProperty("tools");
-        Assert.Contains(tools.EnumerateArray(),
-            tool => tool.GetProperty("type").GetString() == "function");
-        Assert.DoesNotContain(tools.EnumerateArray(),
-            tool => tool.GetProperty("type").GetString() == "openrouter:web_search");
+        var tools = Assert.Single(handler.Requests)["tools"]!.AsArray();
+        Assert.DoesNotContain(tools, tool => tool!["name"]!.GetValue<string>() == "web_search");
     }
 
     [Fact]
-    public async Task AnnotatedMixedTurn_AccumulatesCitationsAcrossRounds_RendersSourceListOnce()
+    public async Task MixedTurn_SearchBlocksAndThinkingRoundTrip_CitationsDeduped_FeeLedgered()
     {
-        // Round 0 is the mixed shape the #261 spike observed: narration text, a citation,
-        // AND an app tool call in one round. Round 1 answers with a second citation plus
-        // a duplicate of the first URL (a later round may re-search) — the source list
-        // must dedupe it.
-        var transport = new RecordingTransport(call => call switch
+        // Round 1 is the mixed shape: thinking, narration with a citation, a web search, AND an
+        // app tool call. Round 2 answers in two text blocks with a second citation plus a
+        // duplicate of the first URL (a later round may re-search) — the source list dedupes it.
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
         {
-            0 => SseResponse(
-                AnnotatedTextChunk("Sprawdzam w sieci. ",
-                    Annotation("https://example.com/article", "Article"))
-                + ToolCallChunk("call_1", "meme_search", """{"query":"zolw","limit":5}""")
-                + FinishChunk("tool_calls", UsageJson(cost: 0.02, upstreamCost: 0.012, webSearches: 1))
-                + "data: [DONE]\n\n"),
-            _ => SseResponse(
-                AnnotatedTextChunk("Oto co znalazłem.",
-                    Annotation("https://news.example.org/story", "Story"),
-                    Annotation("https://example.com/article", "Article"))
-                + FinishChunk("stop", UsageJson(cost: 0.015, upstreamCost: 0.01, webSearches: 1))
-                + "data: [DONE]\n\n"),
+            0 => ClaudeSse.Start(input: 1000, cacheWrite: 4000)
+                .Thinking("muszę poszukać")
+                .Text("Sprawdzam w sieci. ", ("https://example.com/article", "Article"))
+                .WebSearch("srvtoolu_1", "żółw news", ("https://example.com/article", "Article"))
+                .ToolUse("toolu_1", "meme_search", """{"query":"zolw","limit":5}""")
+                .End("tool_use", output: 200, webSearches: 1),
+            _ => ClaudeSse.Start(input: 300, cacheRead: 5000)
+                .Text("Oto co ", ("https://news.example.org/story", "Story"))
+                .Text("znalazłem.", ("https://example.com/article", "Article"))
+                .End(output: 100),
         });
 
         using var metrics = new MetricsCapture();
-        var events = await CollectAsync(BuildService(transport, webSearchEnabled: true)
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
             .GenerateReplyAsync("co się dzieje w świecie?", Context(), CancellationToken.None));
-
-        // The search fee is the cost above the upstream model cost, per round. Other test
-        // classes use the same model label, so the assertion is on this turn's own values.
-        var fees = metrics.Of("wojtus.conversation.web_search.cost.usd").Select(m => Math.Round(m.Value, 6)).ToList();
-        Assert.Contains(0.008, fees);
-        Assert.Contains(0.005, fees);
-        Assert.True(metrics.Of("wojtus.conversation.web_search.requests").Count >= 2);
-
-        // Each call reports what it sent and how long its first visible text took.
-        Assert.True(metrics.Of("wojtus.conversation.context.messages").Count >= 2);
-        Assert.True(metrics.Of("wojtus.conversation.first_token").Count >= 2);
-        Assert.All(metrics.Of("wojtus.conversation.first_token"), m => Assert.True(m.Tags.ContainsKey("model")));
 
         var answer = FinalAnswer(events);
         Assert.StartsWith("Oto co znalazłem.", answer);
         Assert.EndsWith("-# 🔗 [example.com](https://example.com/article) · " +
             "[news.example.org](https://news.example.org/story)", answer);
 
-        // Search spend itemised per round in the ledger: upstream model cost and the
-        // search counter recovered from `cost_details` / `server_tool_use_details`.
+        // Round 2 carries round 1's assistant message as the model wrote it: one thinking block
+        // with its signature, the text, the search call (query rebuilt) and its result (raw,
+        // encrypted_content intact), then the tool call — and all tool results in one message.
+        var round2 = handler.Requests[1];
+        var messages = ClaudeRequest.Messages(round2);
+        var assistant = messages[^2]!;
+        Assert.Equal("assistant", assistant["role"]!.GetValue<string>());
+        Assert.Equal(["thinking", "text", "server_tool_use", "web_search_tool_result", "tool_use"],
+            ClaudeRequest.BlockTypes(assistant));
+        var blocks = assistant["content"]!.AsArray();
+        Assert.Equal("muszę poszukać", blocks[0]!["thinking"]!.GetValue<string>());
+        Assert.Equal(ClaudeSse.Signature, blocks[0]!["signature"]!.GetValue<string>());
+        Assert.Equal("srvtoolu_1", blocks[2]!["id"]!.GetValue<string>());
+        Assert.Equal("web_search", blocks[2]!["name"]!.GetValue<string>());
+        Assert.Equal("żółw news", blocks[2]!["input"]!["query"]!.GetValue<string>());
+        Assert.Equal("srvtoolu_1", blocks[3]!["tool_use_id"]!.GetValue<string>());
+        Assert.Equal("ENC_Article", blocks[3]!["content"]![0]!["encrypted_content"]!.GetValue<string>());
+        Assert.Equal(["tool_result"], ClaudeRequest.BlockTypes(messages[^1]!));
+        Assert.InRange(ClaudeRequest.CountCacheBreakpoints(round2), 0, AnthropicChatOptions.MaxCacheBreakpoints);
+
+        // The ledger: tokens with the cache split, the computed cost, and the token-only cost
+        // in upstream_inference_cost_usd (cost − upstream = the search fee).
         var rows = await _db.ConversationUsage.OrderBy(u => u.Round).ToListAsync();
         Assert.Equal(2, rows.Count);
-        Assert.Equal(0.012, rows[0].UpstreamInferenceCostUsd!.Value, precision: 6);
-        Assert.Equal(1, rows[0].WebSearchRequests);
-        Assert.Equal(0.01, rows[1].UpstreamInferenceCostUsd!.Value, precision: 6);
-        Assert.Equal(1, rows[1].WebSearchRequests);
+        Assert.Equal((5000, 0, 4000, 200, 1), (rows[0].PromptTokens!.Value, rows[0].CacheReadTokens!.Value,
+            rows[0].CacheWriteTokens!.Value, rows[0].CompletionTokens!.Value, rows[0].WebSearchRequests!.Value));
+        // 1000 × $2 + 4000 × $2.50 + 200 × $10 per MTok, plus one search at $0.01.
+        Assert.Equal(0.014, rows[0].UpstreamInferenceCostUsd!.Value, precision: 9);
+        Assert.Equal(0.024, rows[0].CostUsd!.Value, precision: 9);
+        Assert.Equal((5300, 5000, 0, 100), (rows[1].PromptTokens!.Value, rows[1].CacheReadTokens!.Value,
+            rows[1].CacheWriteTokens!.Value, rows[1].CompletionTokens!.Value));
+        Assert.Null(rows[1].WebSearchRequests);
+        // 300 × $2 + 5000 × $0.20 + 100 × $10 per MTok.
+        Assert.Equal(0.0026, rows[1].CostUsd!.Value, precision: 9);
+
+        // The search fee metric: cost less the token cost. Other test classes use the same
+        // model label, so the assertion is on this turn's own value.
+        var fees = metrics.Of("wojtus.conversation.web_search.cost.usd").Select(m => Math.Round(m.Value, 6)).ToList();
+        Assert.Contains(0.01, fees);
+        Assert.True(metrics.Of("wojtus.conversation.context.messages").Count >= 2);
+        Assert.All(metrics.Of("wojtus.conversation.first_token"), m => Assert.True(m.Tags.ContainsKey("model")));
+    }
+
+    // A long search turn the API paused: the response goes back unchanged (with its search
+    // blocks), the model goes on, and the two halves form one answer.
+    [Fact]
+    public async Task PauseTurn_SendsThePausedTurnBack_AndContinues()
+    {
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start()
+                .Text("Szukam… ")
+                .WebSearch("srvtoolu_9", "pogoda kraków", ("https://weather.example/krk", "Weather"))
+                .End("pause_turn", webSearches: 1),
+            _ => ClaudeSse.Start().Text("Słonecznie.", ("https://weather.example/krk", "Weather")).End(),
+        });
+
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
+            .GenerateReplyAsync("jaka pogoda?", Context(), CancellationToken.None));
+
+        Assert.Equal(2, handler.CallCount);
+        Assert.DoesNotContain(events, e => e is ConversationUpdate.ToolBatchSummary);
+        Assert.Equal("Szukam… Słonecznie.\n-# 🔗 [weather.example](https://weather.example/krk)", FinalAnswer(events));
+
+        // The second request ends with the paused assistant message, search blocks included.
+        var last = ClaudeRequest.Messages(handler.Requests[1])[^1]!;
+        Assert.Equal("assistant", last["role"]!.GetValue<string>());
+        Assert.Equal(["text", "server_tool_use", "web_search_tool_result"], ClaudeRequest.BlockTypes(last));
+        Assert.Equal(2, await _db.ConversationUsage.CountAsync());
     }
 
     [Fact]
-    public async Task NoAnnotations_NoSourceLineAndNoCrash()
+    public async Task NoCitations_NoSourceLineAndNoCrash()
     {
-        var transport = new RecordingTransport(_ => SseResponse(SseText("Zwykła odpowiedź.")));
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.TextAnswer("Zwykła odpowiedź."));
 
-        var events = await CollectAsync(BuildService(transport, webSearchEnabled: true)
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
 
         Assert.Equal("Zwykła odpowiedź.", FinalAnswer(events));
@@ -168,7 +201,7 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         return text.ToString();
     }
 
-    private ConversationService BuildService(RecordingTransport transport, bool webSearchEnabled)
+    private ConversationService BuildService(ScriptedClaudeHandler handler, bool webSearchEnabled)
     {
         var conversationOptions = Options.Create(new ConversationOptions
         {
@@ -176,17 +209,6 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             PrimaryGuildId = GuildDiscordId,
             WebSearch = new WebSearchOptions { Enabled = webSearchEnabled },
         });
-
-        var chatClient = new OpenAIClient(
-                new ApiKeyCredential("test-key"),
-                new OpenAIClientOptions
-                {
-                    Endpoint = new Uri("http://localhost/api/v1"),
-                    Transport = new HttpClientPipelineTransport(new HttpClient(transport)),
-                    RetryPolicy = new ClientRetryPolicy(maxRetries: 0),
-                })
-            .GetChatClient(conversationOptions.Value.Model)
-            .AsIChatClient();
 
         var registry = new ConversationToolRegistry(
             MemeSearchTestServices.NewSearch(NewContext(), fixture.ConnectionString),
@@ -200,11 +222,11 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             NullLogger<ConversationToolRegistry>.Instance);
 
         return new ConversationService(
-            chatClient,
+            handler.CreateChatClient(conversationOptions.Value),
             registry,
             new ConversationMemoryService(NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance),
             conversationOptions,
-            Options.Create(new OpenRouterOptions { ApiKey = "test-key" }),
+            Options.Create(new AnthropicOptions { ApiKey = "test-key" }),
             new TestHostEnvironment(),
             NullLogger<ConversationService>.Instance);
     }
@@ -215,61 +237,6 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         await foreach (var update in stream)
             events.Add(update);
         return events;
-    }
-
-    private static string SseChunk(string choicesJson, string? extraJson = null) =>
-        "data: {\"id\":\"chatcmpl-t\",\"object\":\"chat.completion.chunk\",\"created\":1750000000," +
-        $"\"model\":\"anthropic/claude-sonnet-5\",\"choices\":{choicesJson}{(extraJson is null ? "" : "," + extraJson)}}}\n\n";
-
-    private static string SseText(string text) =>
-        SseChunk($"[{{\"index\":0,\"delta\":{{\"role\":\"assistant\",\"content\":{JsonSerializer.Serialize(text)}}},\"finish_reason\":null}}]")
-        + FinishChunk("stop", UsageJson(cost: 0.01, upstreamCost: null, webSearches: null))
-        + "data: [DONE]\n\n";
-
-    // The annotation shape OpenRouter streams: one `url_citation` per mid-stream delta
-    // chunk, offsets always 0.
-    private static string Annotation(string url, string title) =>
-        $$$"""{"type":"url_citation","url_citation":{"url":"{{{url}}}","title":"{{{title}}}","content":"excerpt","start_index":0,"end_index":0}}""";
-
-    private static string AnnotatedTextChunk(string text, params string[] annotations) =>
-        SseChunk($"[{{\"index\":0,\"delta\":{{\"role\":\"assistant\",\"content\":{JsonSerializer.Serialize(text)}," +
-            $"\"annotations\":[{string.Join(",", annotations)}]}},\"finish_reason\":null}}]");
-
-    private static string ToolCallChunk(string callId, string name, string argumentsJson) =>
-        SseChunk($"[{{\"index\":0,\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"{callId}\",\"type\":\"function\"," +
-            $"\"function\":{{\"name\":\"{name}\",\"arguments\":{JsonSerializer.Serialize(argumentsJson)}}}}}]}},\"finish_reason\":null}}]");
-
-    private static string FinishChunk(string finishReason, string usageJson) =>
-        SseChunk($"[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"{finishReason}\"}}]", usageJson);
-
-    private static string UsageJson(double cost, double? upstreamCost, int? webSearches)
-    {
-        var extras = new StringBuilder();
-        if (upstreamCost is not null)
-            extras.Append($",\"cost_details\":{{\"upstream_inference_cost\":{upstreamCost.Value.ToString(CultureInfo.InvariantCulture)}}}");
-        if (webSearches is not null)
-            extras.Append($",\"server_tool_use_details\":{{\"web_search_requests\":{webSearches},\"tool_calls_requested\":{webSearches},\"tool_calls_executed\":{webSearches}}}");
-        return "\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":20,\"total_tokens\":120," +
-            $"\"cost\":{cost.ToString(CultureInfo.InvariantCulture)}{extras}}}";
-    }
-
-    private static HttpResponseMessage SseResponse(string sse) =>
-        new(HttpStatusCode.OK) { Content = new StringContent(sse, Encoding.UTF8, "text/event-stream") };
-
-    // Records every request body (for wire assertions) and returns scripted SSE responses.
-    private sealed class RecordingTransport(Func<int, HttpResponseMessage> responder) : HttpMessageHandler
-    {
-        private int _callCount;
-
-        public List<JsonElement> RequestBodies { get; } = [];
-
-        protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            var body = await request.Content!.ReadAsStringAsync(cancellationToken);
-            RequestBodies.Add(JsonDocument.Parse(body).RootElement.Clone());
-            return responder(_callCount++);
-        }
     }
 
     private DiscordDbContext NewContext()

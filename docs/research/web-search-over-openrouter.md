@@ -1,5 +1,10 @@
 # Web search for the conversational assistant, over OpenRouter
 
+> **Historical (2026-10-15).** ADR-0007 supersedes this research. The assistant now calls the
+> Claude API directly and uses the native Claude web search tool (`web_search_20260209`).
+> The OpenRouter plugin, the `openrouter:web_search` server tool and the exa engine are no
+> longer in use. Keep this file as the record of the earlier decision.
+
 Research for ticket #254. Question: how should the §-238 conversational assistant get web
 search, comparing (1) OpenRouter's **web plugin** (`plugins: [{"id":"web"}]` / `:online`
 suffix) against (2) exposing search as a **normal app-driven tool** in the hand-driven

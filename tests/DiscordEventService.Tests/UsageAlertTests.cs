@@ -3,6 +3,7 @@ using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Conversations;
 using DiscordEventService.Services.Conversation;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -238,6 +239,56 @@ public sealed class UsageAlertTests(PostgresFixture fixture)
         await service.CheckAndAlertAsync(InvokerId); // must not throw
 
         Assert.Single(await _db.UsageAlerts.ToListAsync());
+    }
+
+    // #426: the Claude API reports tokens, not money. The cost the bot computes from a round's
+    // usage must flow through the ledger write into the sums the caps read, and fire an alert.
+    [Fact]
+    public async Task ComputedCost_FromTokens_ReachesTheLedgerAndFiresTheDailyCap()
+    {
+        var options = new ConversationOptions();
+        options.CostAlerts.GlobalMonthlyUsd = null;
+        options.CostAlerts.PerUserMonthlyUsd = null;
+        options.CostAlerts.GlobalDailyUsd = 0.05;
+
+        // What the MEAI adapter emits at the end of a stream: 100k input (60k of them cache
+        // read), 2k output, 3 searches → 40k × $2 + 60k × $0.20 + 2k × $10 per MTok + $0.03.
+        var usage = new UsageDetails
+        {
+            InputTokenCount = 100_000,
+            CachedInputTokenCount = 60_000,
+            OutputTokenCount = 2_000,
+            AdditionalCounts = new() { ["WebSearchRequests"] = 3 },
+        };
+        var tokens = RoundTokens.From([new ChatResponseUpdate(ChatRole.Assistant, [new UsageContent(usage)])]);
+        var cost = ConversationCost.Compute(options, "claude-sonnet-5", tokens, NullLogger.Instance);
+        Assert.NotNull(cost);
+        Assert.Equal(0.142, cost.TotalUsd, precision: 9);
+        Assert.Equal(0.112, cost.TokensUsd, precision: 9);
+
+        var memory = new ConversationMemoryService(
+            NewContext(), Options.Create(options), NullLogger<ConversationMemoryService>.Instance);
+        await memory.RecordUsageAsync(new ConversationTurnState(_conversationId, 0, []), InvokerId,
+            new ConversationRoundUsage(1, 1, "claude-sonnet-5", tokens.Input, tokens.Output, tokens.CacheRead,
+                tokens.CacheWrite, cost.TotalUsd, cost.TokensUsd, tokens.WebSearches, 10, Failed: false),
+            CancellationToken.None);
+
+        var notifier = new RecordingNotifier();
+        await BuildService(notifier, Options.Create(options)).CheckAndAlertAsync(InvokerId);
+
+        Assert.Single(notifier.Messages);
+        var row = await _db.ConversationUsage.SingleAsync();
+        Assert.Equal((100_000, 60_000, 0), (row.PromptTokens, row.CacheReadTokens, row.CacheWriteTokens));
+    }
+
+    [Fact]
+    public void ComputedCost_UnknownModelOrNoUsage_IsNull()
+    {
+        var options = new ConversationOptions();
+        var tokens = new RoundTokens(1000, 10, 0, 0, null);
+
+        Assert.Null(ConversationCost.Compute(options, "claude-unknown-9", tokens, NullLogger.Instance));
+        Assert.Null(ConversationCost.Compute(options, "claude-sonnet-5", RoundTokens.None, NullLogger.Instance));
     }
 
     private static void MonthlyCapsOff(ConversationOptions options)

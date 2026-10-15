@@ -1,9 +1,5 @@
-using System.ClientModel;
-using System.ClientModel.Primitives;
-using System.Net;
 using System.Runtime.CompilerServices;
-using System.Text;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
@@ -13,7 +9,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
-using OpenAI;
 using Xunit;
 
 namespace DiscordEventService.Tests;
@@ -21,8 +16,9 @@ namespace DiscordEventService.Tests;
 // #267 conversation memory + usage ledger, against a real Postgres (Testcontainers, no
 // DB mocking). The headline test is the byte-fidelity replay (research A-OQ1): a stored
 // tool round must rehydrate into the exact wire bytes the model saw live — through the
-// REAL MEAI OpenAI adapter with the HTTP transport faked, so the `object?` Result trap
-// (a JsonElement replays quote-wrapped) would be caught here, not in production.
+// REAL AnthropicClient + MEAI adapter with the HTTP transport faked (#426), so the `object?`
+// Result trap (a JsonElement replays quote-wrapped) and a split of parallel tool results
+// into separate user messages would be caught here, not in production.
 public sealed class ConversationMemoryTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -60,40 +56,48 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
     [Fact]
     public async Task FollowUpAfterRestart_ReplaysToolRound_ByteIdenticalOnTheWire()
     {
-        var transport = new CaptureTransport(callIndex => callIndex switch
+        var handler = ScriptedClaudeHandler.Streams(callIndex => callIndex switch
         {
-            // Turn 1, round 1: the model calls meme_search (unicode args stress the bytes).
-            0 => SseToolCall("call_1", "meme_search", "{\"query\":\"żółw\",\"limit\":5}"),
-            // Turn 1, round 2: final answer + usage frame (exercises the ledger extraction).
-            1 => SseText("Znalazłem mema o żółwiu."),
+            // Turn 1, round 1: the model calls two tools at once (unicode args stress the
+            // bytes; a JsonElement result and a plain string result).
+            0 => ClaudeSse.Start()
+                .Thinking()
+                .ToolUse("toolu_1", "meme_search", "{\"query\":\"żółw\",\"limit\":5}")
+                .ToolUse("toolu_2", "server_info", "{}")
+                .End("tool_use"),
+            // Turn 1, round 2: final answer.
+            1 => ClaudeSse.TextAnswer("Znalazłem mema o żółwiu."),
             // Turn 2 (after "restart"): plain answer.
-            _ => SseText("Tak, to ten sam żółw."),
+            _ => ClaudeSse.TextAnswer("Tak, to ten sam żółw."),
         });
 
         // Turn 1 — live: real adapter, real tool dispatch against the seeded meme.
-        await CollectAsync(BuildRealAdapterService(transport, out _)
+        await CollectAsync(BuildRealAdapterService(handler, out _)
             .GenerateReplyAsync("znajdź mema o żółwiu", Context(), CancellationToken.None));
 
         // Turn 2 — fresh service + fresh DbContexts = a process restart; same channel.
-        await CollectAsync(BuildRealAdapterService(transport, out _)
+        await CollectAsync(BuildRealAdapterService(handler, out _)
             .GenerateReplyAsync("a to na pewno żółw?", Context(), CancellationToken.None));
 
-        Assert.Equal(3, transport.RequestBodies.Count);
+        Assert.Equal(3, handler.CallCount);
+        var live = handler.Requests[1];
+        var replayed = handler.Requests[2];
 
-        // Live wire: turn 1's second call carried the tool round back to the model.
-        var liveToolMessage = FindMessage(transport.RequestBodies[1], "tool");
-        var liveToolCalls = FindToolCallsArray(transport.RequestBodies[1]);
-        // Replayed wire: turn 2's only call rehydrated that round from the store.
-        var replayedToolMessage = FindMessage(transport.RequestBodies[2], "tool");
-        var replayedToolCalls = FindToolCallsArray(transport.RequestBodies[2]);
-
-        // THE assertion: byte-identical wire replay (a JsonElement-typed Result would
-        // come back quote-wrapped/escaped here and fail).
-        Assert.Equal(liveToolMessage, replayedToolMessage);
-        Assert.Equal(liveToolCalls, replayedToolCalls);
+        // THE assertion: byte-identical wire replay of the tool round (a JsonElement-typed
+        // Result would come back quote-wrapped/escaped here and fail). Both results ride ONE
+        // user message, live and replayed. Only the cache breakpoint may differ: live, the
+        // results are the last message.
+        Assert.Equal(
+            ClaudeRequest.WithoutCacheControl(ToolResultMessage(live)),
+            ClaudeRequest.WithoutCacheControl(ToolResultMessage(replayed)));
+        Assert.Equal(["tool_result", "tool_result"], ClaudeRequest.BlockTypes(ToolResultMessage(replayed)));
+        Assert.Equal(ToolUseBlocks(live), ToolUseBlocks(replayed));
 
         // And the replayed transcript actually carried turn 1 (user + final answer).
-        var turn2Messages = MessagesOf(transport.RequestBodies[2]);
+        var turn2Messages = ClaudeRequest.Messages(replayed)
+            .SelectMany(m => m!["content"]!.AsArray())
+            .Select(block => block!["text"]?.GetValue<string>() ?? "")
+            .ToList();
         Assert.Contains(turn2Messages, m => m.Contains("znajdź mema o żółwiu"));
         Assert.Contains(turn2Messages, m => m.Contains("Znalazłem mema o żółwiu."));
     }
@@ -101,13 +105,15 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
     [Fact]
     public async Task ToolRound_LedgerRowsPerRound_WithCostTokensAndInvoker()
     {
-        var transport = new CaptureTransport(callIndex => callIndex switch
+        var handler = ScriptedClaudeHandler.Streams(callIndex => callIndex switch
         {
-            0 => SseToolCall("call_1", "meme_search", "{\"query\":\"żółw\",\"limit\":5}"),
-            _ => SseText("Gotowe."),
+            0 => ClaudeSse.Start(input: 100, cacheWrite: 2000)
+                .ToolUse("toolu_1", "meme_search", "{\"query\":\"żółw\",\"limit\":5}")
+                .End("tool_use", output: 50),
+            _ => ClaudeSse.Start(input: 100, cacheRead: 2000).Text("Gotowe.").End(output: 50),
         });
 
-        await CollectAsync(BuildRealAdapterService(transport, out var conversationOptions)
+        await CollectAsync(BuildRealAdapterService(handler, out var conversationOptions)
             .GenerateReplyAsync("znajdź mema o żółwiu", Context(), CancellationToken.None));
 
         var rows = await _db.ConversationUsage.OrderBy(u => u.Round).ToListAsync();
@@ -120,22 +126,26 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
             Assert.False(row.Failed);
             Assert.Equal(0, row.TurnIndex);
             Assert.True(row.LatencyMs >= 0);
+            Assert.Equal(2100, row.PromptTokens);
+            Assert.Equal(50, row.CompletionTokens);
+            // No search: the whole cost is token cost.
+            Assert.Equal(row.CostUsd, row.UpstreamInferenceCostUsd);
         });
         Assert.Equal([1, 2], rows.Select(r => r.Round));
-        // The canned usage frame flows through the raw ChatTokenUsage patch into the row.
-        Assert.All(rows, row =>
-        {
-            Assert.Equal(10, row.PromptTokens);
-            Assert.Equal(5, row.CompletionTokens);
-            Assert.Equal(0.01, row.CostUsd);
-            Assert.Equal(0.008, row.UpstreamInferenceCostUsd);
-        });
+        Assert.Equal((0, 2000), (rows[0].CacheReadTokens, rows[0].CacheWriteTokens));
+        Assert.Equal((2000, 0), (rows[1].CacheReadTokens, rows[1].CacheWriteTokens));
+        // 100 × $2 + 2000 × $2.50 + 50 × $10 per MTok; then 100 × $2 + 2000 × $0.20 + 50 × $10.
+        Assert.Equal(0.0057, rows[0].CostUsd!.Value, precision: 9);
+        Assert.Equal(0.0011, rows[1].CostUsd!.Value, precision: 9);
+
+        // The prompt tokens also land on the round's first assistant transcript row.
+        Assert.Contains(await _db.ConversationMessages.ToListAsync(), m => m.PromptTokens == 2100);
 
         // "Cost per user this month" is a single WHERE (#256).
         var monthlyCost = await _db.ConversationUsage
             .Where(u => u.InvokerId == InvokerId && u.CreatedAtUtc >= DateTime.UtcNow.AddDays(-30))
             .SumAsync(u => u.CostUsd ?? 0);
-        Assert.Equal(0.02, monthlyCost, precision: 10);
+        Assert.Equal(0.0068, monthlyCost, precision: 9);
     }
 
     [Fact]
@@ -269,37 +279,36 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         return new ConversationMemoryService(NewContext(), options, NullLogger<ConversationMemoryService>.Instance);
     }
 
-    // The full production stack minus the network: real MEAI OpenAI adapter over a
+    // The full production stack minus the network: real AnthropicClient + MEAI adapter over a
     // scripted SSE transport, real tool registry, real store.
     private ConversationService BuildRealAdapterService(
-        CaptureTransport transport, out IOptions<ConversationOptions> conversationOptions)
+        ScriptedClaudeHandler handler, out IOptions<ConversationOptions> conversationOptions)
     {
         conversationOptions = Options.Create(new ConversationOptions
         {
             ReasoningEffort = "low",
             PrimaryGuildId = GuildDiscordId,
         });
-        var openRouterOptions = Options.Create(new OpenRouterOptions { ApiKey = "test-key" });
-
-        var chatClient = new OpenAIClient(
-                new ApiKeyCredential("test-key"),
-                new OpenAIClientOptions
-                {
-                    Endpoint = new Uri("http://localhost/api/v1"),
-                    Transport = new HttpClientPipelineTransport(new HttpClient(transport)),
-                })
-            .GetChatClient(conversationOptions.Value.Model)
-            .AsIChatClient();
 
         return new ConversationService(
-            chatClient,
+            handler.CreateChatClient(conversationOptions.Value),
             BuildRegistry(conversationOptions),
             new ConversationMemoryService(NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance),
             conversationOptions,
-            openRouterOptions,
+            Options.Create(new AnthropicOptions { ApiKey = "test-key" }),
             new TestHostEnvironment(),
             NullLogger<ConversationService>.Instance);
     }
+
+    // The user message holding the tool_result blocks.
+    private static JsonNode ToolResultMessage(JsonObject request) =>
+        ClaudeRequest.Messages(request).Single(m => ClaudeRequest.BlockTypes(m!).Contains("tool_result"))!;
+
+    private static string ToolUseBlocks(JsonObject request) =>
+        new JsonArray([.. ClaudeRequest.Messages(request)
+            .SelectMany(m => m!["content"]!.AsArray())
+            .Where(b => b!["type"]!.GetValue<string>() == "tool_use")
+            .Select(b => b!.DeepClone())]).ToJsonString();
 
     private ConversationService BuildScriptedService(IChatClient client)
     {
@@ -313,7 +322,7 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
             BuildRegistry(conversationOptions),
             new ConversationMemoryService(NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance),
             conversationOptions,
-            Options.Create(new OpenRouterOptions { ApiKey = "test-key" }),
+            Options.Create(new AnthropicOptions { ApiKey = "test-key" }),
             new TestHostEnvironment(),
             NullLogger<ConversationService>.Instance);
     }
@@ -335,81 +344,6 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         await foreach (var update in stream)
             events.Add(update);
         return events;
-    }
-
-    private static List<string> MessagesOf(string requestBody)
-    {
-        using var doc = JsonDocument.Parse(requestBody);
-        return doc.RootElement.GetProperty("messages")
-            .EnumerateArray()
-            .Select(m => m.GetRawText())
-            .ToList();
-    }
-
-    private static string FindMessage(string requestBody, string role)
-    {
-        using var doc = JsonDocument.Parse(requestBody);
-        var match = doc.RootElement.GetProperty("messages")
-            .EnumerateArray()
-            .Single(m => m.GetProperty("role").GetString() == role);
-        return match.GetRawText();
-    }
-
-    private static string FindToolCallsArray(string requestBody)
-    {
-        using var doc = JsonDocument.Parse(requestBody);
-        var match = doc.RootElement.GetProperty("messages")
-            .EnumerateArray()
-            .Single(m => m.TryGetProperty("tool_calls", out _));
-        return match.GetProperty("tool_calls").GetRawText();
-    }
-
-    private const string UsageJson =
-        "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15," +
-        "\"cost\":0.01,\"cost_details\":{\"upstream_inference_cost\":0.008}}";
-
-    private static string SseChunk(string choicesJson, string? extraJson = null) =>
-        "data: {\"id\":\"chatcmpl-t\",\"object\":\"chat.completion.chunk\",\"created\":1750000000," +
-        $"\"model\":\"anthropic/claude-sonnet-4.6\",\"choices\":{choicesJson}{(extraJson is null ? "" : "," + extraJson)}}}\n\n";
-
-    private static string SseText(string text)
-    {
-        var delta = JsonSerializer.Serialize(text);
-        return SseChunk($"[{{\"index\":0,\"delta\":{{\"role\":\"assistant\",\"content\":{delta}}},\"finish_reason\":null}}]")
-            + SseChunk("[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]", UsageJson)
-            + "data: [DONE]\n\n";
-    }
-
-    private static string SseToolCall(string callId, string toolName, string argumentsJson)
-    {
-        var escapedArgs = JsonSerializer.Serialize(argumentsJson);
-        return SseChunk(
-                $"[{{\"index\":0,\"delta\":{{\"role\":\"assistant\",\"tool_calls\":[{{\"index\":0,\"id\":\"{callId}\"," +
-                $"\"type\":\"function\",\"function\":{{\"name\":\"{toolName}\",\"arguments\":{escapedArgs}}}}}]}},\"finish_reason\":null}}]")
-            + SseChunk("[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]", UsageJson)
-            + "data: [DONE]\n\n";
-    }
-
-    // Captures every request body and answers with the scripted SSE stream — the fake
-    // seam sits UNDER the real OpenAI SDK + MEAI adapter, which is the point: the wire
-    // bytes asserted on are the ones the adapter actually produces.
-    private sealed class CaptureTransport(Func<int, string> sseResponder) : HttpMessageHandler
-    {
-        private int _callIndex;
-
-        public List<string> RequestBodies { get; } = [];
-
-        protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            RequestBodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
-
-            var response = new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(sseResponder(_callIndex++), Encoding.UTF8, "text/event-stream"),
-            };
-            return response;
-        }
     }
 
     // A fake IChatClient recording each call's transcript (cheap-path recall tests).

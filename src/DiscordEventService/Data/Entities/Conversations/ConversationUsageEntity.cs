@@ -21,14 +21,23 @@ public class ConversationUsageEntity
 
     public string Model { get; set; } = "";
 
+    // The whole input of the call: uncached + cache read + cache write (#426). Rows from the
+    // OpenRouter era (before #426) hold OpenRouter's count, with no cache split.
     public int? PromptTokens { get; set; }
     public int? CompletionTokens { get; set; }
 
-    // OpenRouter usage.cost (USD) recovered from the raw ChatTokenUsage patch.
+    // Prompt-cache split of PromptTokens (#426); null on OpenRouter-era rows and on a
+    // failed attempt whose stream died before its usage event.
+    public int? CacheReadTokens { get; set; }
+    public int? CacheWriteTokens { get; set; }
+
+    // USD. Since #426 computed by the bot from the tokens and Conversation:Prices, search
+    // fee included; before #426 OpenRouter's billed usage.cost.
     public double? CostUsd { get; set; }
 
-    // Itemised §5 server-tool spend (cost_details / server-tool usage details);
-    // null until the provider reports them.
+    // USD. Since #426 the token-only cost (CostUsd less the web search fee), so
+    // CostUsd − UpstreamInferenceCostUsd stays the search spend (§5); before #426
+    // OpenRouter's cost_details.upstream_inference_cost.
     public double? UpstreamInferenceCostUsd { get; set; }
     public int? WebSearchRequests { get; set; }
 

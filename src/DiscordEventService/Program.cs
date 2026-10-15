@@ -71,6 +71,16 @@ builder.Services.AddOptions<OpenRouterOptions>()
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
+// Conversational assistant (#426): the Claude API key, boot-safe when unset (the assistant
+// stays inert). ANTHROPIC_API_KEY is accepted as a fallback for Anthropic__ApiKey.
+builder.Services.AddOptions<AnthropicOptions>()
+    .Bind(builder.Configuration.GetSection(AnthropicOptions.SectionName))
+    .PostConfigure(options =>
+    {
+        if (string.IsNullOrWhiteSpace(options.ApiKey))
+            options.ApiKey = builder.Configuration[AnthropicOptions.ApiKeyEnvironmentVariable];
+    });
+
 builder.Services.AddOptions<MemeIndexOptions>()
     .Bind(builder.Configuration.GetSection(MemeIndexOptions.SectionName));
 
@@ -191,7 +201,7 @@ builder.Services.AddScoped<MemeBenchmarkJob>();
 builder.Services.AddScoped<MemeIndexingJob>();
 builder.Services.AddScoped<MemeIndexSweepJob>();
 
-// Conversational assistant (#238, ADR-0006): the MEAI IChatClient over OpenRouter.
+// Conversational assistant (#238, ADR-0006, ADR-0007): the MEAI IChatClient over the Claude API.
 // Registers the singleton chat client in the root container; the
 // DSharpPlus child container forwards to it (ConversationRegistration). ConversationService
 // is a shared scoped service (CoreServiceTypes); the handler lives in DiscordClientRegistration.

@@ -45,7 +45,7 @@ public sealed class ConversationFlowTests
     }
 
     [Fact]
-    public async Task WithoutAnOpenRouterKey_TheBotStaysInert_AndSpawnsNoThread()
+    public async Task WithoutAClaudeApiKey_TheBotStaysInert_AndSpawnsNoThread()
     {
         _turns.IsConfigured = false;
 

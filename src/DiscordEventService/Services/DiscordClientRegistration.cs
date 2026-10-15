@@ -74,7 +74,7 @@ internal static class DiscordClientRegistration
             // through it: without its own copy of the provider their log lines are not counted.
             services.AddSingleton<ILoggerProvider, LogEventCounterProvider>();
 
-            // #238: forward the singleton IChatClient + bind the conversation/OpenRouter
+            // #238: forward the singleton IChatClient + bind the conversation/Anthropic
             // options the ConversationEventHandler and ConversationService read.
             ConversationRegistration.AddConversationChildServices(services, rootSp, configuration);
         });
