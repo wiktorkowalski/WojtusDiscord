@@ -1,4 +1,3 @@
-using System.Text.Json;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Data.Entities.Events;
@@ -191,12 +190,8 @@ internal sealed class MessagesBackfillJob(
             return false;
         }
 
-        var attachmentsJson = message.Attachments.Count > 0
-            ? JsonSerializer.Serialize(message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
-            : null;
-        var embedsJson = message.Embeds.Count > 0
-            ? JsonSerializer.Serialize(message.Embeds)
-            : null;
+        var attachmentsJson = MessageJson.Attachments(message.Attachments);
+        var embedsJson = MessageJson.Embeds(message.Embeds);
 
         db.Messages.Add(BuildBackfilledMessage(message, channelEntity, guildEntity, authorEntity, attachmentsJson, embedsJson));
 
