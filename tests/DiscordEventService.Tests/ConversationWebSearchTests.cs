@@ -1,5 +1,5 @@
+using System.Diagnostics;
 using System.Text;
-using System.Text.Json.Nodes;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Services.Conversation;
@@ -87,8 +87,32 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         });
 
         using var metrics = new MetricsCapture();
+        var spans = new List<Activity>();
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == ConversationTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                lock (spans)
+                    spans.Add(activity);
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
         var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
             .GenerateReplyAsync("co się dzieje w świecie?", Context(), CancellationToken.None));
+
+        // The cache write lands on the generation span of round 1, not on the turn span.
+        List<Activity> stopped;
+        lock (spans)
+            stopped = [.. spans];
+        var turnSpan = stopped.Single(s => s.OperationName == "conversation.turn"
+            && s.GetTagItem("conversation.invoker_id") is ulong id && id == InvokerId);
+        var tagged = Assert.Single(stopped, s => s.TraceId == turnSpan.TraceId
+            && s.GetTagItem(CacheUsageTagChatClient.CacheCreationTag) is not null);
+        Assert.StartsWith("chat", tagged.OperationName);
+        Assert.Equal(4000L, tagged.GetTagItem(CacheUsageTagChatClient.CacheCreationTag));
 
         var answer = FinalAnswer(events);
         Assert.StartsWith("Oto co znalazłem.", answer);
