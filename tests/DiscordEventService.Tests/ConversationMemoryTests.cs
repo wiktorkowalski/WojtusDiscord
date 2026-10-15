@@ -287,6 +287,36 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         Assert.Equal(["pierwsze", "odpowiedź", "drugie"], next.Window.Select(m => m.Text));
     }
 
+    // #426 review: a tool round, then a final round with thinking only (the EmptyAnswerFallback
+    // case). The reasoning-only row replays as nothing, so it is no answer: the tool group in
+    // front of it is still unanswered and must not end the window.
+    [Fact]
+    public async Task Window_ToolGroupFollowedByReasoningOnlyRow_IsNotReplayed()
+    {
+        var memory = BuildMemory();
+        var turn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        await memory.PersistUserMessageAsync(turn, "pierwsze", CancellationToken.None);
+        await memory.PersistAssistantMessagesAsync(turn,
+            [new ChatMessage(ChatRole.Assistant, "odpowiedź")], null, null, CancellationToken.None);
+        var second = turn with { TurnIndex = 1 };
+        await memory.PersistUserMessageAsync(second, "drugie", CancellationToken.None);
+        await memory.PersistAssistantMessagesAsync(second,
+            [new ChatMessage(ChatRole.Assistant,
+                [new FunctionCallContent("call_1", "meme_search", new Dictionary<string, object?> { ["query"] = "x" })])],
+            null, null, CancellationToken.None);
+        await memory.PersistToolResultAsync(second, "meme_search",
+            new FunctionResultContent("call_1", "wynik"), CancellationToken.None);
+        await memory.PersistAssistantMessagesAsync(second,
+            [new ChatMessage(ChatRole.Assistant, [new TextReasoningContent("tylko rozumowanie")])],
+            null, null, CancellationToken.None);
+
+        var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        Assert.Equal(["pierwsze", "odpowiedź", "drugie"], next.Window.Select(m => m.Text));
+        Assert.DoesNotContain(next.Window, m => m.Role == ChatRole.Tool);
+        Assert.DoesNotContain(next.Window, m => m.Contents.OfType<FunctionCallContent>().Any());
+    }
+
     [Fact]
     public async Task ReasoningOnlyAssistantRow_IsNotReplayedAsAnEmptyMessage()
     {

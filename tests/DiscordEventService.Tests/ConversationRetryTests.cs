@@ -4,6 +4,7 @@ using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Services.Conversation;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -163,6 +164,64 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
             $"expected the 1s retry-after-ms to be honored, waited only {stopwatch.ElapsedMilliseconds}ms");
     }
 
+    // The SDK attempt timeout (ClientOptions.Timeout) is a linked CancellationTokenSource over
+    // the send; the SDK rethrows its expiry as TaskCanceledException wrapping TimeoutException.
+    // Pinned here on the real SDK + MEAI adapter, so an SDK change of shape shows up.
+    [Fact]
+    public async Task AttemptTimeout_RealSdk_ThrowsTaskCanceledWrappingTimeout()
+    {
+        var handler = new ScriptedClaudeHandler((_, token) => ScriptedClaudeHandler.Hang(token));
+        var client = handler.CreateChatClient(
+            new ConversationOptions(), attemptTimeout: TimeSpan.FromMilliseconds(200));
+
+        var thrown = await Assert.ThrowsAsync<TaskCanceledException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "hej")]))
+            {
+            }
+        });
+
+        Assert.IsType<TimeoutException>(thrown.InnerException);
+    }
+
+    // #426 review: a hung attempt runs out the SDK attempt timeout and is retried.
+    [Fact]
+    public async Task AttemptTimeout_IsRetried_AnswersOnTheNextAttempt()
+    {
+        var handler = new ScriptedClaudeHandler((call, token) => call switch
+        {
+            0 => ScriptedClaudeHandler.Hang(token),
+            _ => Task.FromResult(ScriptedClaudeHandler.Sse(ClaudeSse.TextAnswer("Po timeoucie."))),
+        });
+
+        var events = await CollectAsync(BuildService(handler, out _, attemptTimeout: TimeSpan.FromMilliseconds(200))
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        Assert.Equal(2, handler.CallCount);
+        Assert.Equal("Po timeoucie.", RenderedText(events));
+        var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
+        Assert.Equal([true, false], rows.Select(r => r.Failed));
+    }
+
+    // The caller's own cancellation is never a transient fault: the turn ends, no retry.
+    [Fact]
+    public async Task CallerCancel_WhileAttemptHangs_EndsTheTurnWithoutRetry()
+    {
+        using var caller = new CancellationTokenSource();
+        // The caller cancels once the attempt is on the wire, well inside the 60 s attempt timeout.
+        var handler = new ScriptedClaudeHandler((_, token) =>
+        {
+            caller.CancelAfter(TimeSpan.FromMilliseconds(100));
+            return ScriptedClaudeHandler.Hang(token);
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CollectAsync(
+            BuildService(handler, out _).GenerateReplyAsync("pytanie", Context(), caller.Token)));
+
+        Assert.Equal(1, handler.CallCount);
+        Assert.Empty(await _db.ConversationUsage.ToListAsync());
+    }
+
     private static ConversationContext Context() =>
         new(GuildDiscordId, InvokerId, "tester", IsAdmin: false, ChannelId: ThreadChannelId);
 
@@ -188,7 +247,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
 
     private ConversationService BuildService(
         ScriptedClaudeHandler handler, out IOptions<ConversationOptions> conversationOptions,
-        RecordingLogger? log = null)
+        RecordingLogger? log = null, TimeSpan? attemptTimeout = null)
     {
         conversationOptions = Options.Create(new ConversationOptions
         {
@@ -201,7 +260,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         });
 
         return new ConversationService(
-            handler.CreateChatClient(conversationOptions.Value, log?.For<AnthropicAttemptLogHandler>()),
+            handler.CreateChatClient(conversationOptions.Value, log?.For<AnthropicAttemptLogHandler>(), attemptTimeout),
             BuildRegistry(conversationOptions),
             new ConversationMemoryService(NewContext(), conversationOptions, NullLogger<ConversationMemoryService>.Instance),
             conversationOptions,

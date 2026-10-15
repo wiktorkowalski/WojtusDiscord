@@ -226,9 +226,23 @@ internal sealed class ClaudeSse
 // AnthropicClient + MEAI adapter, so the asserted bytes are the ones production sends.
 internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 {
-    private readonly Func<int, HttpResponseMessage> _responder;
+    private readonly Func<int, CancellationToken, Task<HttpResponseMessage>> _responder;
 
-    public ScriptedClaudeHandler(Func<int, HttpResponseMessage> responder) => _responder = responder;
+    public ScriptedClaudeHandler(Func<int, HttpResponseMessage> responder)
+        : this((call, _) => Task.FromResult(responder(call)))
+    {
+    }
+
+    // For a response that waits (a hung server): the token is the SDK's attempt token.
+    public ScriptedClaudeHandler(Func<int, CancellationToken, Task<HttpResponseMessage>> responder) =>
+        _responder = responder;
+
+    // Never answers: the request ends only when its token is cancelled.
+    public static async Task<HttpResponseMessage> Hang(CancellationToken cancellationToken)
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        throw new InvalidOperationException("unreachable");
+    }
 
     // Every call streams the scripted SSE body of its index.
     public static ScriptedClaudeHandler Streams(Func<int, string> sse) => new(call => Sse(sse(call)));
@@ -256,20 +270,26 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
         return response;
     }
 
-    // The production chat client (ConversationRegistration) over this transport.
-    public IChatClient CreateChatClient(ConversationOptions options, ILogger? logger = null) =>
-        ConversationRegistration.BuildChatClient(
-            ConversationRegistration.CreateApiClient(
-                "test-key", logger ?? NullLogger.Instance,
-                new HttpClient(this) { Timeout = Timeout.InfiniteTimeSpan }),
-            options, enableSensitiveData: false);
+    // The production chat client (ConversationRegistration) over this transport. An
+    // attemptTimeout replaces the SDK's 60 s AttemptTimeout, so a test can run one out.
+    public IChatClient CreateChatClient(
+        ConversationOptions options, ILogger? logger = null, TimeSpan? attemptTimeout = null)
+    {
+        var client = ConversationRegistration.CreateApiClient(
+            "test-key", logger ?? NullLogger.Instance,
+            new HttpClient(this) { Timeout = Timeout.InfiniteTimeSpan });
+        if (attemptTimeout is { } timeout)
+            client = client.WithOptions(clientOptions => clientOptions with { Timeout = timeout });
+
+        return ConversationRegistration.BuildChatClient(client, options, enableSensitiveData: false);
+    }
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var index = RequestBodies.Count;
         RequestBodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
-        return _responder(index);
+        return await _responder(index, cancellationToken);
     }
 }
 

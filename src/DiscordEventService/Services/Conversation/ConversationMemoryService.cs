@@ -268,12 +268,7 @@ internal sealed class ConversationMemoryService(
         included.Reverse();
         DropUnreplayableEdges(included);
 
-        return included
-            .SelectMany(RehydrateGroup)
-            // A reasoning-only assistant row rehydrates to zero contents (reasoning is
-            // stripped) — don't replay an empty message some providers could reject.
-            .Where(message => message.Contents.Count > 0)
-            .ToList();
+        return included.SelectMany(RehydrateGroup).ToList();
     }
 
     // Two shapes the Claude API rejects with thinking on (#426), trimmed from the window:
@@ -334,6 +329,14 @@ internal sealed class ConversationMemoryService(
                 logger.LogDebug("Dropping orphan tool row {RowId} from the replay window", row.Id);
                 continue;
             }
+
+            // A reasoning-only assistant row (a round that ended with thinking alone) replays as
+            // nothing: reasoning is stripped. Skipped HERE, before the edge trimming, so the
+            // edges are checked on the rows the request carries — counted as the answer, it
+            // would hide an unanswered tool group in front of it (#426).
+            if (row.Role == ConversationMessageRole.Assistant
+                && string.IsNullOrEmpty(row.Text) && row.ToolCallsJson is null)
+                continue;
 
             CloseGroup(groups, ref openGroup, ref pendingCallIds);
 

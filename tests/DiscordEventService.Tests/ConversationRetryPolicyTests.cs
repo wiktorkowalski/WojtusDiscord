@@ -36,16 +36,18 @@ public sealed class ConversationRetryPolicyTests
         Assert.True(ConversationRetryPolicy.IsTransient(new AnthropicIOException("I/O exception", new HttpRequestException("reset"))));
         Assert.True(ConversationRetryPolicy.IsTransient(new HttpRequestException("reset")));
         Assert.True(ConversationRetryPolicy.IsTransient(new IOException("broken pipe")));
-        // The SDK's attempt timeout; the round loop rethrows the turn's own cancellation first.
+        // The SDK's attempt timeout, and any other cancellation: the round loop rethrows the
+        // turn's own cancellation first, so what reaches the policy is never the caller's.
         Assert.True(ConversationRetryPolicy.IsTransient(
             new TaskCanceledException("client timeout", new TimeoutException("elapsed"))));
+        Assert.True(ConversationRetryPolicy.IsTransient(new TaskCanceledException("linked cancel")));
+        Assert.True(ConversationRetryPolicy.IsTransient(new OperationCanceledException()));
     }
 
     [Fact]
     public void IsTransient_UnexpectedExceptions_AreTerminal()
     {
         Assert.False(ConversationRetryPolicy.IsTransient(new InvalidOperationException("bug")));
-        Assert.False(ConversationRetryPolicy.IsTransient(new TaskCanceledException("not a timeout")));
         Assert.False(ConversationRetryPolicy.IsTransient(new AnthropicInvalidDataException("bad json")));
     }
 

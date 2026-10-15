@@ -13,9 +13,10 @@ internal static class ConversationRetryPolicy
     // - an `error` event in the middle of the stream (AnthropicSseException, e.g. overloaded_error);
     // - a transport fault: the SDK wraps a pre-response one in AnthropicIOException; a fault
     //   while the body streams surfaces raw as HttpRequestException or IOException;
-    // - an attempt timeout: the SDK throws TaskCanceledException wrapping TimeoutException.
-    //   The round loop rethrows the turn's own cancellation before classifying, so a
-    //   cancellation that reaches this is never the caller's.
+    // - any cancellation: the SDK attempt timeout (ClientOptions.Timeout, response headers
+    //   only) throws TaskCanceledException wrapping TimeoutException, but the shape is not
+    //   relied on. The round loop rethrows the turn's own cancellation before classifying,
+    //   so a cancellation that reaches this is never the caller's.
     // Everything else (400/401/403/404, unexpected bugs) is terminal: retrying cannot help —
     // surface the visible failure line instead.
     public static bool IsTransient(Exception failure) => failure switch
@@ -23,7 +24,7 @@ internal static class ConversationRetryPolicy
         AnthropicApiException api => IsTransientStatus((int)api.StatusCode),
         AnthropicSseException or AnthropicIOException => true,
         HttpRequestException or IOException => true,
-        TaskCanceledException { InnerException: TimeoutException } => true,
+        OperationCanceledException => true,
         _ => false,
     };
 
