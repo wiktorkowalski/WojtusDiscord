@@ -26,9 +26,6 @@ internal sealed class MemeSampleService(
     IOptions<MemeIndexOptions> options,
     ILogger<MemeSampleService> logger)
 {
-    // Matches the 4-field shape MessageEventHandler/MessagesBackfillJob serialize.
-    private sealed record StoredAttachment(ulong Id, string? Url, string? FileName, int FileSize);
-
     public async Task<List<MemeSampleItem>> SampleAsync(int sampleSize, CancellationToken cancellationToken)
     {
         var candidates = await GetCandidatesAsync(cancellationToken);

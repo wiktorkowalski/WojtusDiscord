@@ -1,5 +1,3 @@
-using System.Text.Json;
-using System.Text.Json.Nodes;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
@@ -40,12 +38,8 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
         await pipeline.ExecuteAsync(e, "MessageCreated", nameof(MessageEventHandler),
             e.Guild.Id, e.Channel.Id, e.Author.Id, async ctx =>
             {
-                var attachmentsJson = e.Message.Attachments.Count > 0
-                    ? JsonSerializer.Serialize(e.Message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
-                    : null;
-                var embedsJson = e.Message.Embeds.Count > 0
-                    ? JsonSerializer.Serialize(e.Message.Embeds)
-                    : null;
+                var attachmentsJson = MessageJson.Attachments(e.Message.Attachments);
+                var embedsJson = MessageJson.Embeds(e.Message.Embeds);
 
                 // Resolve FKs via upsert-if-missing: a FirstOrDefault path would silently write a NULL
                 // FK when the channel (e.g. an uncached thread) isn't in our DB yet. Resolver does an
@@ -79,7 +73,7 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
                     ctx.Db.MessageEvents.Add(BuildMessageCreatedEvent(e, ctx, attachmentsJson, embedsJson));
                     await ctx.Db.SaveChangesAsync();
 
-                    await ExtractAndSaveMentionsAsync(ctx.Db, messageId, e.Message);
+                    await SaveMentionsAsync(ctx.Db, messageId, CollectMentions(messageId, e.Message));
                     await tx.CommitAsync();
                 });
 
@@ -92,58 +86,71 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
         if (e.Guild is null) return;
 
         await pipeline.ExecuteAsync(e, "MessageUpdated", nameof(MessageEventHandler),
-            e.Guild.Id, e.Channel.Id, e.Author?.Id, async ctx =>
-            {
-                var attachmentsJson = e.Message.Attachments.Count > 0
-                    ? JsonSerializer.Serialize(e.Message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
-                    : null;
-                var embedsJson = e.Message.Embeds.Count > 0
-                    ? JsonSerializer.Serialize(e.Message.Embeds)
-                    : null;
-                var editedAt = e.Message.EditedTimestamp?.UtcDateTime ?? ctx.ReceivedAtUtc;
-                var flagsAfter = (int)(e.Message.Flags ?? 0);
+            e.Guild.Id, e.Channel.Id, e.Author?.Id, ctx => ApplyUpdateAsync(
+                ctx,
+                new MessageUpdate(
+                    e.Message.Id, e.Channel.Id, e.Guild.Id, e.Author?.Id, e.Message.ReferencedMessage?.Id,
+                    StateOf(e.Message), e.Message.EditedTimestamp?.UtcDateTime),
+                e.MessageBefore is { } cached ? StateOf(cached) : null,
+                messageId => CollectMentions(messageId, e.Message)));
+    }
 
-                // Get the message entity for FK reference + before-state fallback when DSharpPlus
-                // didn't deliver e.MessageBefore (uncached message edit).
-                var message = await ctx.Db.Messages.FirstOrDefaultAsync(m => m.DiscordId == e.Message.Id);
-                var messageGuid = message?.Id;
+    // The write path of MESSAGE_UPDATE, free of DSharpPlus types so a test can drive it.
+    // cachedBefore is the DSharpPlus-cached message; without it the stored row is the before-state.
+    // mentionsOf is a callback because a mention row needs the message Guid, known only after the lookup.
+    internal static async Task ApplyUpdateAsync(
+        EventContext ctx, MessageUpdate update, MessageState? cachedBefore,
+        Func<Guid, List<MessageMentionEntity>> mentionsOf)
+    {
+        // A MESSAGE_UPDATE without flags is stored as 0, as before #413.
+        var flagsAfter = update.After.Flags ?? 0;
+        var after = update.After with { Flags = flagsAfter };
+        var editedAt = update.EditedTimestampUtc ?? ctx.ReceivedAtUtc;
 
-                var before = ResolveBeforeState(e, message);
+        var message = await ctx.Db.Messages.FirstOrDefaultAsync(m => m.DiscordId == update.MessageDiscordId);
+        var stored = new MessageState(message?.Content, message?.AttachmentsJson, message?.EmbedsJson, message?.Flags);
+        // The DSharpPlus cache can hold a message without its flags; 0 there would be a false flag change.
+        var before = cachedBefore is null ? stored : cachedBefore with { Flags = cachedBefore.Flags ?? stored.Flags };
 
-                // Wrap the ExecuteUpdate (auto-commits without a tx) and the event-log inserts
-                // in one transaction so a failure between them rolls back atomically.
-                var strategy = ctx.Db.Database.CreateExecutionStrategy();
-                await strategy.ExecuteAsync(async () =>
-                {
-                    ctx.Db.ChangeTracker.Clear();
-                    await using var tx = await ctx.Db.Database.BeginTransactionAsync();
+        // A Discord-side refresh (#413) still stores the new signed URLs and the full embed shape,
+        // but it is no edit: no edit-history row.
+        var isRealChange = MessageJson.IsRealChange(before, after);
+        if (!isRealChange)
+            ctx.Logger.LogDebug(
+                "MessageUpdated for {MessageId} is a Discord-side refresh, not an edit", update.MessageDiscordId);
 
-                    var normalizedContent = NormalizeContent(e.Message.Content);
-                    await ctx.Db.Messages
-                        .Where(m => m.DiscordId == e.Message.Id)
-                        .ExecuteUpdateAsync(s => s
-                            .SetProperty(m => m.Content, normalizedContent)
-                            .SetProperty(m => m.HasAttachments, e.Message.Attachments.Count > 0)
-                            .SetProperty(m => m.HasEmbeds, e.Message.Embeds.Count > 0)
-                            .SetProperty(m => m.AttachmentsJson, attachmentsJson)
-                            .SetProperty(m => m.EmbedsJson, embedsJson)
-                            .SetProperty(m => m.Flags, flagsAfter)
-                            .SetProperty(m => m.EditedAtUtc, editedAt));
+        // Wrap the ExecuteUpdate (auto-commits without a tx) and the event-log inserts
+        // in one transaction so a failure between them rolls back atomically.
+        var strategy = ctx.Db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            ctx.Db.ChangeTracker.Clear();
+            await using var tx = await ctx.Db.Database.BeginTransactionAsync();
 
-                    ctx.Db.MessageEvents.Add(BuildMessageUpdatedEvent(
-                        e, ctx, normalizedContent, before.ContentBefore, attachmentsJson, embedsJson, editedAt));
+            await ctx.Db.Messages
+                .Where(m => m.DiscordId == update.MessageDiscordId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(m => m.Content, after.Content)
+                    .SetProperty(m => m.HasAttachments, after.AttachmentsJson != null)
+                    .SetProperty(m => m.HasEmbeds, after.EmbedsJson != null)
+                    .SetProperty(m => m.AttachmentsJson, after.AttachmentsJson)
+                    .SetProperty(m => m.EmbedsJson, after.EmbedsJson)
+                    .SetProperty(m => m.Flags, flagsAfter)
+                    // Discord's edited_timestamp only, as backfill writes it: an unfurl or a refresh is no edit.
+                    .SetProperty(m => m.EditedAtUtc, m => update.EditedTimestampUtc ?? m.EditedAtUtc));
 
-                    AddEditHistoryIfChanged(
-                        ctx, e, messageGuid, before, normalizedContent, attachmentsJson, embedsJson, flagsAfter, editedAt);
+            ctx.Db.MessageEvents.Add(BuildMessageUpdatedEvent(update, after, ctx, before.Content, editedAt));
 
-                    await ctx.Db.SaveChangesAsync();
+            if (message is not null && isRealChange)
+                ctx.Db.MessageEditHistory.Add(BuildEditHistory(update, after, ctx, message.Id, before, editedAt));
 
-                    if (messageGuid is Guid mentionMid)
-                        await ExtractAndSaveMentionsAsync(ctx.Db, mentionMid, e.Message);
+            await ctx.Db.SaveChangesAsync();
 
-                    await tx.CommitAsync();
-                });
-            });
+            if (message is not null)
+                await SaveMentionsAsync(ctx.Db, message.Id, mentionsOf(message.Id));
+
+            await tx.CommitAsync();
+        });
     }
 
     public async Task HandleEventAsync(DiscordClient sender, MessageDeletedEventArgs e)
@@ -235,13 +242,11 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
         }
     }
 
-    private static async Task ExtractAndSaveMentionsAsync(DiscordDbContext db, Guid messageId, DiscordMessage message)
+    private static async Task SaveMentionsAsync(DiscordDbContext db, Guid messageId, List<MessageMentionEntity> mentions)
     {
         await db.MessageMentions
             .Where(m => m.MessageId == messageId)
             .ExecuteDeleteAsync();
-
-        var mentions = CollectMentions(messageId, message);
 
         if (mentions.Count > 0)
         {
@@ -308,39 +313,11 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
     private static string? NormalizeContent(string? content) =>
         string.IsNullOrEmpty(content) ? null : content;
 
-    private static bool JsonEquals(string? a, string? b)
-    {
-        if (a == b) return true;
-        if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
-        return JsonNode.DeepEquals(JsonNode.Parse(a), JsonNode.Parse(b));
-    }
-
-    // Before-state for an edit: prefer the cached e.MessageBefore; fall back to the stored row
-    // when DSharpPlus didn't deliver it (uncached message edit).
-    private sealed record MessageBeforeState(
-        string? ContentBefore, string? AttachmentsBeforeJson, string? EmbedsBeforeJson, int? FlagsBefore);
-
-    private static MessageBeforeState ResolveBeforeState(MessageUpdatedEventArgs e, MessageEntity? message)
-    {
-        var contentBefore = NormalizeContent(e.MessageBefore is { } beforeForContent
-            ? beforeForContent.Content
-            : message?.Content);
-        var attachmentsBeforeJson = e.MessageBefore is { } beforeForAttachments
-            ? (beforeForAttachments.Attachments.Count > 0
-                ? JsonSerializer.Serialize(beforeForAttachments.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
-                : null)
-            : message?.AttachmentsJson;
-        var embedsBeforeJson = e.MessageBefore is { } beforeForEmbeds
-            ? (beforeForEmbeds.Embeds.Count > 0
-                ? JsonSerializer.Serialize(beforeForEmbeds.Embeds)
-                : null)
-            : message?.EmbedsJson;
-        var flagsBefore = e.MessageBefore is { } before
-            ? (int)(before.Flags ?? 0)
-            : message?.Flags;
-
-        return new MessageBeforeState(contentBefore, attachmentsBeforeJson, embedsBeforeJson, flagsBefore);
-    }
+    private static MessageState StateOf(DiscordMessage message) => new(
+        NormalizeContent(message.Content),
+        MessageJson.Attachments(message.Attachments),
+        MessageJson.Embeds(message.Embeds),
+        (int?)message.Flags);
 
     // The kind label of wojtus_messages_total: what the message mainly carries, the first that
     // holds. An embed of a link arrives later, in MessageUpdated, so "embed" here is a message
@@ -390,63 +367,50 @@ internal sealed class MessageEventHandler(EventPipeline pipeline) :
         };
 
     private static MessageEventEntity BuildMessageUpdatedEvent(
-        MessageUpdatedEventArgs e, EventContext ctx, string? normalizedContent, string? contentBefore,
-        string? attachmentsJson, string? embedsJson, DateTime editedAt) => new MessageEventEntity
+        MessageUpdate update, MessageState after, EventContext ctx, string? contentBefore, DateTime editedAt) => new MessageEventEntity
         {
-            MessageDiscordId = e.Message.Id,
-            ChannelDiscordId = e.Channel.Id,
-            AuthorDiscordId = e.Author?.Id,
-            GuildDiscordId = e.Guild.Id,
+            MessageDiscordId = update.MessageDiscordId,
+            ChannelDiscordId = update.ChannelDiscordId,
+            AuthorDiscordId = update.AuthorDiscordId,
+            GuildDiscordId = update.GuildDiscordId,
             EventType = MessageEventType.Updated,
-            Content = normalizedContent,
+            Content = after.Content,
             ContentBefore = contentBefore,
-            HasAttachments = e.Message.Attachments.Count > 0,
-            HasEmbeds = e.Message.Embeds.Count > 0,
-            ReplyToMessageDiscordId = e.Message.ReferencedMessage?.Id,
-            AttachmentsJson = attachmentsJson,
-            EmbedsJson = embedsJson,
+            HasAttachments = after.AttachmentsJson != null,
+            HasEmbeds = after.EmbedsJson != null,
+            ReplyToMessageDiscordId = update.ReplyToMessageDiscordId,
+            AttachmentsJson = after.AttachmentsJson,
+            EmbedsJson = after.EmbedsJson,
             EventTimestampUtc = editedAt,
             ReceivedAtUtc = ctx.ReceivedAtUtc,
             RawEventJson = ctx.RawJson,
         };
 
-    private static void AddEditHistoryIfChanged(
-        EventContext ctx,
-        MessageUpdatedEventArgs e,
-        Guid? messageGuid,
-        MessageBeforeState before,
-        string? normalizedContent,
-        string? attachmentsJson,
-        string? embedsJson,
-        int flagsAfter,
-        DateTime editedAt)
-    {
-        var contentChanged = before.ContentBefore != normalizedContent;
-        // jsonb columns get PG-normalized on storage; freshly-serialized strings
-        // (from e.Message or e.MessageBefore) won't byte-match the DB-loaded value
-        // even when the underlying data is identical. Structural compare.
-        var attachmentsChanged = !JsonEquals(before.AttachmentsBeforeJson, attachmentsJson);
-        var embedsChanged = !JsonEquals(before.EmbedsBeforeJson, embedsJson);
-        var flagsChanged = before.FlagsBefore != flagsAfter;
-
-        if (messageGuid is Guid mid &&
-            (contentChanged || attachmentsChanged || embedsChanged || flagsChanged))
+    private static MessageEditHistoryEntity BuildEditHistory(
+        MessageUpdate update, MessageState after, EventContext ctx, Guid messageId, MessageState before, DateTime editedAt) => new MessageEditHistoryEntity
         {
-            ctx.Db.MessageEditHistory.Add(new MessageEditHistoryEntity
-            {
-                MessageId = mid,
-                MessageDiscordId = e.Message.Id,
-                ContentBefore = before.ContentBefore,
-                ContentAfter = normalizedContent,
-                AttachmentsBeforeJson = before.AttachmentsBeforeJson,
-                AttachmentsAfterJson = attachmentsJson,
-                EmbedsBeforeJson = before.EmbedsBeforeJson,
-                EmbedsAfterJson = embedsJson,
-                FlagsBefore = before.FlagsBefore,
-                FlagsAfter = flagsAfter,
-                EditedAtUtc = editedAt,
-                RecordedAtUtc = ctx.ReceivedAtUtc,
-            });
-        }
-    }
+            MessageId = messageId,
+            MessageDiscordId = update.MessageDiscordId,
+            ContentBefore = before.Content,
+            ContentAfter = after.Content,
+            AttachmentsBeforeJson = before.AttachmentsJson,
+            AttachmentsAfterJson = after.AttachmentsJson,
+            EmbedsBeforeJson = before.EmbedsJson,
+            EmbedsAfterJson = after.EmbedsJson,
+            FlagsBefore = before.Flags,
+            FlagsAfter = after.Flags,
+            EditedAtUtc = editedAt,
+            RecordedAtUtc = ctx.ReceivedAtUtc,
+        };
 }
+
+// A MESSAGE_UPDATE as ApplyUpdateAsync needs it. EditedTimestampUtc is Discord's edited_timestamp:
+// null for an embed unfurl, a flag change or a Discord-side refresh.
+internal sealed record MessageUpdate(
+    ulong MessageDiscordId,
+    ulong ChannelDiscordId,
+    ulong GuildDiscordId,
+    ulong? AuthorDiscordId,
+    ulong? ReplyToMessageDiscordId,
+    MessageState After,
+    DateTime? EditedTimestampUtc);

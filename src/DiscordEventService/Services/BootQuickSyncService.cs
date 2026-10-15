@@ -144,12 +144,8 @@ internal sealed class BootQuickSyncService(
         Guid channelId,
         Guid authorId)
     {
-        var attachmentsJson = message.Attachments.Count > 0
-            ? JsonSerializer.Serialize(message.Attachments.Select(a => new { a.Id, a.Url, a.FileName, a.FileSize }))
-            : null;
-        var embedsJson = message.Embeds.Count > 0
-            ? JsonSerializer.Serialize(message.Embeds)
-            : null;
+        var attachmentsJson = MessageJson.Attachments(message.Attachments);
+        var embedsJson = MessageJson.Embeds(message.Embeds);
 
         var (_, inserted) = await db.Messages.GetOrInsertAsync(
             m => m.DiscordId == message.Id,
