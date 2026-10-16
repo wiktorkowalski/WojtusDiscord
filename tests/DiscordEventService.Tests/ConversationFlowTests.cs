@@ -175,11 +175,12 @@ public sealed class ConversationFlowTests
     public async Task RenderEvents_MapToDiscreteMessages_PerRound()
     {
         _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Szukam w sieci."));
-        _turns.Updates.Add(new ConversationUpdate.ServerToolCall("-# 🔎 web_search: żółw"));
+        _turns.Updates.Add(new ConversationUpdate.ToolCall("-# 🔎 web_search: żółw"));
         _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Sprawdzam memy."));
-        _turns.Updates.Add(new ConversationUpdate.ToolCalls(["-# 🔧 meme_search", "-# 🔧 meme_search"]));
+        _turns.Updates.Add(new ConversationUpdate.ToolCall("-# 🔧 meme_search"));
+        _turns.Updates.Add(new ConversationUpdate.ToolCall("-# 🔧 meme_search"));
         _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Zna"));
-        _turns.Updates.Add(new ConversationUpdate.RoundReset());
+        _turns.Updates.Add(new ConversationUpdate.RoundReset("Zna".Length));
         _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Znalazłem trzy."));
 
         await BuildFlow().HandleAsync(Message(guildId: null), BotId, _gateway);

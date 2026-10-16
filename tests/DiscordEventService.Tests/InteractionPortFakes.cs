@@ -8,6 +8,24 @@ namespace DiscordEventService.Tests;
 // port is that these are the only thing standing between a unit test and the real flows —
 // no Discord client, no chat client, no DbContext, no mocking framework.
 
+// The events of a turn through the real TurnRenderer, as the messages Discord receives.
+internal static class TurnRendering
+{
+    public static async Task<List<string>> RenderAsync(IEnumerable<ConversationUpdate> events)
+    {
+        var surface = new FakeTurnSurface();
+        var renderer = new TurnRenderer(surface);
+        foreach (var update in events)
+            await renderer.ApplyAsync(update);
+        await renderer.CompleteTurnAsync();
+        return surface.Sent;
+    }
+
+    // The last message of the turn: the answer.
+    public static async Task<string> FinalAnswerAsync(IEnumerable<ConversationUpdate> events) =>
+        (await RenderAsync(events)).LastOrDefault() ?? string.Empty;
+}
+
 internal sealed class FakeTurnSurface(ulong channelId = 100UL) : ITurnSurface
 {
     public ulong ChannelId { get; } = channelId;

@@ -26,13 +26,14 @@ public sealed class TurnRendererTests
     }
 
     [Fact]
-    public async Task CompleteRound_PostsNarrationThenEachCall_AndRetriggersTypingAfterEach()
+    public async Task ToolCalls_PostNarrationThenEachCall_AndRetriggersTypingAfterEach()
     {
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface);
         await renderer.AppendDeltaAsync("Zaraz sprawdzę.");
 
-        await renderer.CompleteRoundAsync(["-# 🔧 meme_search", "-# 🔧 meme_search"]);
+        await renderer.PostToolCallAsync("-# 🔧 meme_search");
+        await renderer.PostToolCallAsync("-# 🔧 meme_search");
 
         // Two calls of one tool are two messages: no Distinct by name.
         Assert.Equal(["Zaraz sprawdzę.", "-# 🔧 meme_search", "-# 🔧 meme_search"], surface.Sent);
@@ -44,13 +45,13 @@ public sealed class TurnRendererTests
     [Theory]
     [InlineData("")]
     [InlineData("   \n ")]
-    public async Task CompleteRound_NoVisibleNarration_PostsOnlyTheCalls(string narration)
+    public async Task ToolCall_NoVisibleNarration_PostsOnlyTheCalls(string narration)
     {
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface);
         await renderer.AppendDeltaAsync(narration);
 
-        await renderer.CompleteRoundAsync(["-# 🔧 guild_stats"]);
+        await renderer.PostToolCallAsync("-# 🔧 guild_stats");
 
         Assert.Equal(["-# 🔧 guild_stats"], surface.Sent);
     }
@@ -62,7 +63,7 @@ public sealed class TurnRendererTests
         var renderer = new TurnRenderer(surface);
 
         await renderer.AppendDeltaAsync("Sprawdzam.");
-        await renderer.CompleteRoundAsync(["-# 🔧 meme_search"]);
+        await renderer.PostToolCallAsync("-# 🔧 meme_search");
         await renderer.AppendDeltaAsync("Znalazłem trzy.");
         await renderer.CompleteTurnAsync();
 
@@ -71,13 +72,13 @@ public sealed class TurnRendererTests
     }
 
     [Fact]
-    public async Task ServerToolCall_SplitsTheTextBeforeAndAfterTheSearch()
+    public async Task SearchCall_SplitsTheTextBeforeAndAfterTheSearch()
     {
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface);
 
         await renderer.AppendDeltaAsync("Okej, szukam kursu…");
-        await renderer.PostServerToolCallAsync("-# 🔎 web_search: kurs EUR/PLN");
+        await renderer.PostToolCallAsync("-# 🔎 web_search: kurs EUR/PLN");
         await renderer.AppendDeltaAsync("Dziś 4,25 zł.");
         await renderer.CompleteTurnAsync();
 
@@ -91,12 +92,14 @@ public sealed class TurnRendererTests
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface);
 
+        await renderer.AppendDeltaAsync("Szukam… ");
         await renderer.AppendDeltaAsync("Zna");
-        renderer.ResetRound();
+        renderer.ResetRound("Zna".Length);
         await renderer.AppendDeltaAsync("Znalazłem trzy.");
         await renderer.CompleteTurnAsync();
 
-        Assert.Equal(["Znalazłem trzy."], surface.Sent);
+        // Only the failed attempt's text goes; the paused text before it stays.
+        Assert.Equal(["Szukam… Znalazłem trzy."], surface.Sent);
     }
 
     [Theory]

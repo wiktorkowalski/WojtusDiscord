@@ -143,10 +143,6 @@ internal sealed class ConversationService(
         // spreads one answer over several rounds.
         var answer = new StringBuilder();
 
-        // The text the handler holds unposted (#438): the deltas since the last tool call.
-        // A search line posts the text before it, so after a reset only this goes again.
-        var unposted = new StringBuilder();
-
         // Streams one round into the transcript sink under the §2 retry policy (#268):
         // up to RetryMaxAttempts calls over the same intact `messages` prefix (a failed
         // attempt appended nothing and dispatched no tools), full-jitter backoff between
@@ -161,7 +157,8 @@ internal sealed class ConversationService(
             {
                 sink.Clear();
                 var streamedVisibleText = false;
-                var unpostedAtStart = unposted.ToString();
+                // The text this attempt has in the handler's buffer: a search line posts it.
+                var bufferedLength = 0;
                 Exception? failure = null;
                 var stopwatch = Stopwatch.StartNew();
 
@@ -210,19 +207,18 @@ internal sealed class ConversationService(
                             if (!streamedVisibleText)
                                 BotMetrics.ConversationFirstTokenReceived(options.Model, stopwatch.Elapsed);
                             streamedVisibleText = true;
-                            unposted.Append(update.Text);
+                            bufferedLength += update.Text.Length;
                             yield return new ConversationUpdate.AssistantTextDelta(update.Text);
                         }
 
-                        // The adapter yields a search call once, with its query assembled. A
-                        // call with no query is dropped from the history, so it renders nothing.
-                        foreach (var call in update.Contents.OfType<WebSearchToolCallContent>())
+                        // The adapter yields a search call once, with its query assembled (#438).
+                        foreach (var content in update.Contents)
                         {
-                            if (call.Queries is not [var query, ..])
+                            if (content is not WebSearchToolCallContent call
+                                || ConversationHistory.SearchQuery(call) is not { } query)
                                 continue;
-                            unposted.Clear();
-                            unpostedAtStart = string.Empty;
-                            yield return new ConversationUpdate.ServerToolCall($"-# 🔎 web_search: {query}");
+                            bufferedLength = 0;
+                            yield return new ConversationUpdate.ToolCall($"-# 🔎 web_search: {query}");
                         }
                     }
                 }
@@ -249,16 +245,11 @@ internal sealed class ConversationService(
                 await memory.RecordUsageAsync(memoryTurn, context.InvokerId, failedUsage, cancellationToken);
 
                 // Partial deltas already reached the handler's buffer; drop them so the
-                // retried stream (or the failure line) renders exactly once. The reset clears
-                // the whole buffer, which after a pause_turn also holds the paused rounds'
-                // text: render that again — unless a search line of this attempt posted it.
-                if (streamedVisibleText)
-                {
-                    yield return new ConversationUpdate.RoundReset();
-                    unposted.Clear().Append(unpostedAtStart);
-                    if (unpostedAtStart.Length > 0)
-                        yield return new ConversationUpdate.AssistantTextDelta(unpostedAtStart);
-                }
+                // retried stream (or the failure line) renders exactly once. Only this
+                // attempt's text goes: after a pause_turn the buffer also holds the paused
+                // rounds' text, and a search line has posted what came before it.
+                if (bufferedLength > 0)
+                    yield return new ConversationUpdate.RoundReset(bufferedLength);
 
                 if (!ConversationRetryPolicy.IsTransient(failure) || attempt >= options.RetryMaxAttempts)
                 {
@@ -396,9 +387,9 @@ internal sealed class ConversationService(
             // tool_use message in the single user message right after it.
             messages.Add(new ChatMessage(ChatRole.Tool, results));
             answer.Clear();
-            unposted.Clear();
 
-            yield return new ConversationUpdate.ToolCalls([.. toolCalls.Select(call => $"-# 🔧 {call.Name}")]);
+            foreach (var call in toolCalls)
+                yield return new ConversationUpdate.ToolCall($"-# 🔧 {call.Name}");
         }
 
         // Round cap reached: one final streamed call with tool calls forbidden forces a text

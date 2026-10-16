@@ -1,10 +1,8 @@
 using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Services.Conversation;
-using DiscordEventService.Services.Conversation.Interaction;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -117,7 +115,7 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         Assert.StartsWith("chat", tagged.OperationName);
         Assert.Equal(4000L, tagged.GetTagItem(CacheUsageTagChatClient.CacheCreationTag));
 
-        var answer = FinalAnswer(events);
+        var answer = await TurnRendering.FinalAnswerAsync(events);
         Assert.StartsWith("Oto co znalazłem.", answer);
         Assert.EndsWith("-# 🔗 [example.com](https://example.com/article) · " +
             "[news.example.org](https://news.example.org/story)", answer);
@@ -289,7 +287,7 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
                 Context(), CancellationToken.None));
 
         Assert.Equal(3, handler.CallCount);
-        Assert.StartsWith("Najnowsza to .NET 10.", FinalAnswer(events));
+        Assert.StartsWith("Najnowsza to .NET 10.", await TurnRendering.FinalAnswerAsync(events));
 
         var messages = ClaudeRequest.Messages(handler.Requests[2]);
         var assistantTurns = messages.Where(m => m!["role"]!.GetValue<string>() == "assistant").ToList();
@@ -322,10 +320,11 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             .GenerateReplyAsync("jaka pogoda?", Context(), CancellationToken.None));
 
         Assert.Equal(2, handler.CallCount);
-        Assert.DoesNotContain(events, e => e is ConversationUpdate.ToolCalls);
+        // The search is the only call: no local tool ran.
+        Assert.Equal(["-# 🔎 web_search: pogoda kraków"], events.OfType<ConversationUpdate.ToolCall>().Select(c => c.Line));
         // The search line posts the text before it (#438), so the answer is what came after.
         Assert.Equal(["Szukam… ", "-# 🔎 web_search: pogoda kraków",
-            "Słonecznie.\n-# 🔗 [weather.example](https://weather.example/krk)"], await RenderAsync(events));
+            "Słonecznie.\n-# 🔗 [weather.example](https://weather.example/krk)"], await TurnRendering.RenderAsync(events));
 
         // The second request ends with the paused assistant message, search blocks included.
         var last = ClaudeRequest.Messages(handler.Requests[1])[^1]!;
@@ -342,8 +341,8 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
 
-        Assert.Equal("Zwykła odpowiedź.", FinalAnswer(events));
-        Assert.DoesNotContain("🔗", FinalAnswer(events));
+        Assert.Equal("Zwykła odpowiedź.", await TurnRendering.FinalAnswerAsync(events));
+        Assert.DoesNotContain("🔗", await TurnRendering.FinalAnswerAsync(events));
     }
 
     // #438: the text before a search, the search line and the text after it are three
@@ -365,7 +364,7 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             "Okej, szukam aktualnego kursu EUR/PLN…",
             "-# 🔎 web_search: kurs EUR PLN",
             "Dziś (16.10.2026) euro kosztuje 4,25 zł.\n-# 🔗 [kursy.example](https://kursy.example/eur)",
-        ], await RenderAsync(events));
+        ], await TurnRendering.RenderAsync(events));
     }
 
     // A search and a local tool in one turn: every call is its own message, in the model's order.
@@ -395,7 +394,7 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             "-# 🔧 meme_search",
             "-# 🔧 meme_search",
             "Nie mam takiego mema.",
-        ], await RenderAsync(events));
+        ], await TurnRendering.RenderAsync(events));
     }
 
     // A retried attempt after a posted search line: that post cannot be taken back, so the
@@ -429,7 +428,7 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             "Szukam… ",
             "-# 🔎 web_search: pogoda",
             "Słonecznie.\n-# 🔗 [weather.example](https://weather.example/krk)",
-        ], await RenderAsync(events));
+        ], await TurnRendering.RenderAsync(events));
     }
 
     // A failed attempt after a paused round: the reset re-sends only the paused text the search
@@ -452,42 +451,11 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             .GenerateReplyAsync("jaka pogoda?", Context(), CancellationToken.None));
 
         Assert.Equal(3, handler.CallCount);
-        Assert.Equal(["Szukam… ", "-# 🔎 web_search: pogoda", "Jest słonecznie."], await RenderAsync(events));
-    }
-
-    // The events through the real renderer, as the messages Discord receives.
-    private static async Task<List<string>> RenderAsync(IEnumerable<ConversationUpdate> events)
-    {
-        var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface);
-        foreach (var update in events)
-            await renderer.ApplyAsync(update);
-        await renderer.CompleteTurnAsync();
-        return surface.Sent;
+        Assert.Equal(["Szukam… ", "-# 🔎 web_search: pogoda", "Jest słonecznie."], await TurnRendering.RenderAsync(events));
     }
 
     private static ConversationContext Context() =>
         new(GuildDiscordId, InvokerId, "tester", IsAdmin: false, ChannelId: ThreadChannelId);
-
-    // What the discrete renderer (#274) posts after the last tool call: buffered deltas,
-    // dropped on RoundReset, reset at each tool round and web search.
-    private static string FinalAnswer(IReadOnlyList<ConversationUpdate> events)
-    {
-        var text = new StringBuilder();
-        foreach (var update in events)
-        {
-            switch (update)
-            {
-                case ConversationUpdate.AssistantTextDelta delta:
-                    text.Append(delta.Text);
-                    break;
-                case ConversationUpdate.ToolCalls or ConversationUpdate.ServerToolCall or ConversationUpdate.RoundReset:
-                    text.Clear();
-                    break;
-            }
-        }
-        return text.ToString();
-    }
 
     private ConversationService BuildService(
         ScriptedClaudeHandler handler, bool webSearchEnabled, string? model = null, ILogger<ConversationService>? logger = null)

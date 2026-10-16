@@ -33,12 +33,10 @@ internal sealed class TurnRenderer(ITurnSurface surface)
         {
             case ConversationUpdate.AssistantTextDelta delta:
                 return AppendDeltaAsync(delta.Text);
-            case ConversationUpdate.ToolCalls toolCalls:
-                return CompleteRoundAsync(toolCalls.Lines);
-            case ConversationUpdate.ServerToolCall serverToolCall:
-                return PostServerToolCallAsync(serverToolCall.Line);
-            case ConversationUpdate.RoundReset:
-                ResetRound();
+            case ConversationUpdate.ToolCall toolCall:
+                return PostToolCallAsync(toolCall.Line);
+            case ConversationUpdate.RoundReset reset:
+                ResetRound(reset.Length);
                 return Task.CompletedTask;
             default:
                 throw new ArgumentOutOfRangeException(nameof(update), update, "Unknown conversation update");
@@ -53,18 +51,9 @@ internal sealed class TurnRenderer(ITurnSurface surface)
         return TriggerTypingAsync(force: false);
     }
 
-    // A tool round finished: post its narration cue, then one message per tool call, and
-    // re-trigger typing after each — the next round's model call is already in flight.
-    public async Task CompleteRoundAsync(IReadOnlyList<string> callLines)
-    {
-        await PostAndTypeAsync(TakeBuffer());
-        foreach (var line in callLines)
-            await PostAndTypeAsync(line);
-    }
-
-    // A web search started mid-stream: post the text before it, then the search line; the
-    // deltas after it start the next message.
-    public async Task PostServerToolCallAsync(string line)
+    // A tool call: post the narration before it, then the call's line, re-triggering typing
+    // after each post — the model or the next call is already working.
+    public async Task PostToolCallAsync(string line)
     {
         await PostAndTypeAsync(TakeBuffer());
         await PostAndTypeAsync(line);
@@ -74,11 +63,10 @@ internal sealed class TurnRenderer(ITurnSurface surface)
     // posted complete (chunked past the message cap).
     public Task CompleteTurnAsync() => PostAsync(TakeBuffer());
 
-    // A round attempt failed after streaming partial deltas (#268): drop them so the
-    // retried stream (or the failure line) renders exactly once. Every tool round boundary
-    // flushes the buffer; a pause_turn does not, so the loop re-sends the paused text after
-    // the reset (#426).
-    public void ResetRound() => _text.Clear();
+    // A round attempt failed after streaming partial deltas (#268): drop its `length` buffered
+    // characters so the retried stream (or the failure line) renders exactly once. The text
+    // before them stays: a pause_turn does not flush the buffer (#426).
+    public void ResetRound(int length) => _text.Length -= Math.Min(length, _text.Length);
 
     public Task TriggerTypingAsync() => TriggerTypingAsync(force: true);
 

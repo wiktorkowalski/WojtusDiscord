@@ -61,7 +61,7 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
 
         var events = await CollectAsync(service, "znajdź mema o kocie i powiedz krótko co to za mem", channel);
 
-        Assert.Contains(events, e => e is ConversationUpdate.ToolCalls);
+        Assert.Contains(events, e => e is ConversationUpdate.ToolCall);
         var answer = Answer(events);
         Assert.False(string.IsNullOrWhiteSpace(answer), "expected a non-empty streamed answer");
         Assert.DoesNotContain(new ConversationOptions().FailureMessage, answer);
@@ -85,7 +85,7 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
 
         var answer = Answer(events);
         Assert.Contains("🔗", answer);
-        Assert.Contains(events, e => e is ConversationUpdate.ServerToolCall);
+        Assert.Contains(events, e => e is ConversationUpdate.ToolCall { Line: var line } && line.StartsWith("-# 🔎"));
         var rows = await UsageRowsAsync(channel);
         Assert.True(rows.Sum(row => row.WebSearchRequests ?? 0) > 0, Dump(log));
         // The search fee is on top of the token cost.
@@ -104,8 +104,8 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
             + "Answer in two short sentences.",
             channel);
 
-        Assert.Contains(events, e => e is ConversationUpdate.ToolCalls);
-        Assert.Contains(events, e => e is ConversationUpdate.ServerToolCall);
+        Assert.Contains(events, e => e is ConversationUpdate.ToolCall);
+        Assert.Contains(events, e => e is ConversationUpdate.ToolCall { Line: var line } && line.StartsWith("-# 🔎"));
         Assert.DoesNotContain(new ConversationOptions().FailureMessage, Answer(events));
         var rows = await UsageRowsAsync(channel);
         Assert.True(rows.Sum(row => row.WebSearchRequests ?? 0) > 0, Dump(log));

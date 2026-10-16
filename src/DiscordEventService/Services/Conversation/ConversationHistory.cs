@@ -108,7 +108,7 @@ internal static class ConversationHistory
     // block is rebuilt from the call id and the query the adapter assembled.
     private static AIContent? ToServerToolUse(WebSearchToolCallContent call)
     {
-        if (call.Queries is not [var query, ..])
+        if (SearchQuery(call) is not { } query)
             return null;
 
         return new AIContent
@@ -121,6 +121,9 @@ internal static class ConversationHistory
             },
         };
     }
+
+    // The query of a search call; a call without one is dropped from the history and from the render.
+    public static string? SearchQuery(WebSearchToolCallContent call) => call.Queries is [var query, ..] ? query : null;
 
     // Text of a response without the empty citation carriers: Claude splits an answer into
     // many text blocks (one per citation span), and ChatMessage.Text joins them all.

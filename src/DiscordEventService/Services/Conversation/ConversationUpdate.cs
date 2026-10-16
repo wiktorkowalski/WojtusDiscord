@@ -13,23 +13,19 @@ internal abstract record ConversationUpdate
     {
     }
 
-    // A chunk of streamed assistant text — the handler buffers it until the next call
-    // (a tool round, a web search) or the end of the turn.
+    // A chunk of streamed assistant text — the handler buffers it until the next tool call
+    // or the end of the turn.
     public sealed record AssistantTextDelta(string Text) : ConversationUpdate;
 
-    // The tool calls of the current round ran; one line per call ("-# 🔧 meme_search"),
-    // in the model's order. The handler posts the buffered narration, then each line as
-    // its own message, and the next AssistantTextDelta starts the next round's buffer.
-    public sealed record ToolCalls(IReadOnlyList<string> Lines) : ConversationUpdate;
+    // One tool call, in the model's order: a line like "-# 🔧 meme_search" once the round's
+    // tools ran, or "-# 🔎 web_search: …" the moment a search block is complete. The handler
+    // posts the buffered text, then this line, and the next delta starts a new message. A
+    // search line posts mid-attempt: when that attempt fails and retries, its narration and
+    // search line can show twice.
+    public sealed record ToolCall(string Line) : ConversationUpdate;
 
-    // The model called a server tool (web search) mid-stream; one line with its query
-    // ("-# 🔎 web_search: …"). The handler posts the buffered text, then this line, and
-    // the deltas after it fill the next message. The post is live: when the attempt then
-    // fails and retries, its narration and search line can show twice.
-    public sealed record ServerToolCall(string Line) : ConversationUpdate;
-
-    // A round attempt failed after streaming partial text (#268): the handler drops the
-    // buffered deltas so the retried stream (or the failure line) renders exactly once —
-    // never appended after the discarded partial.
-    public sealed record RoundReset : ConversationUpdate;
+    // A round attempt failed after streaming partial text (#268): the handler drops the last
+    // Length buffered characters (this attempt's deltas) so the retried stream (or the
+    // failure line) renders exactly once — never appended after the discarded partial.
+    public sealed record RoundReset(int Length) : ConversationUpdate;
 }
