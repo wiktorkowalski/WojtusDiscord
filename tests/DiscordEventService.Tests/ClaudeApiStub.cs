@@ -60,11 +60,15 @@ internal sealed class ClaudeSse
     }
 
     // A text block, optionally followed by web-search citations (one citations_delta each).
-    public ClaudeSse Text(string text, params (string Url, string Title)[] citations)
+    public ClaudeSse Text(string text, params (string Url, string Title)[] citations) =>
+        TextCiting(text, [.. citations.Select(c => (c.Url, c.Title, "cited"))]);
+
+    // A text block whose citations carry their own cited_text.
+    public ClaudeSse TextCiting(string text, params (string Url, string Title, string CitedText)[] citations)
     {
         var index = BlockStart(new JsonObject { ["type"] = "text", ["text"] = "" });
         Delta(index, new JsonObject { ["type"] = "text_delta", ["text"] = text });
-        foreach (var (url, title) in citations)
+        foreach (var (url, title, citedText) in citations)
         {
             Delta(index, new JsonObject
             {
@@ -75,7 +79,7 @@ internal sealed class ClaudeSse
                     ["url"] = url,
                     ["title"] = title,
                     ["encrypted_index"] = "EIDX",
-                    ["cited_text"] = "cited",
+                    ["cited_text"] = citedText,
                 },
             });
         }
