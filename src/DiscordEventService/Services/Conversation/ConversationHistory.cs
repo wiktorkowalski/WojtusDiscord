@@ -247,13 +247,17 @@ internal static class ConversationHistory
     // `[web_search cited: https://… — "…"]` line per cited excerpt. A search's call and result
     // often sit on different rows (the call next to a client tool, the result in the next
     // round): the pair renders once, on the result's row, which the window keeps longest. The
-    // system prompt tells the model what these lines are and never to write one itself.
+    // system prompt tells the model what these lines are and never to write one itself. A
+    // source the turn cited is listed first: cut by the source cap, it would look unsearched.
     public static List<string> FormatTurnMarkers(IReadOnlyList<IReadOnlyList<WebSearchRecord>> rows)
     {
         var queries = new Dictionary<string, string>(StringComparer.Ordinal);
         var answered = new HashSet<string>(StringComparer.Ordinal);
+        var citedUrls = new HashSet<string>(StringComparer.Ordinal);
         foreach (var record in rows.SelectMany(row => row))
         {
+            foreach (var excerpt in record.Cited ?? [])
+                citedUrls.Add(excerpt.Url);
             if (record.Id is not { } id)
                 continue;
             if (record.Query is { } query)
@@ -262,11 +266,11 @@ internal static class ConversationHistory
                 answered.Add(id);
         }
 
-        return [.. rows.Select(row => string.Join('\n', row.SelectMany(record => FormatRecord(record, queries, answered))))];
+        return [.. rows.Select(row => string.Join('\n', row.SelectMany(record => FormatRecord(record, queries, answered, citedUrls))))];
     }
 
     private static IEnumerable<string> FormatRecord(
-        WebSearchRecord record, Dictionary<string, string> queries, HashSet<string> answered)
+        WebSearchRecord record, Dictionary<string, string> queries, HashSet<string> answered, HashSet<string> citedUrls)
     {
         if (record.Cited is { } cited)
             return cited.Where(excerpt => IsHttpUrl(excerpt.Url)).Select(excerpt =>
@@ -278,7 +282,8 @@ internal static class ConversationHistory
         var head = record.Id is { } id && queries.TryGetValue(id, out var pairedQuery)
             ? $"[web_search \"{Sanitize(pairedQuery)}\""
             : "[web_search";
-        if (record.Sources?.Where(source => IsHttpUrl(source.Url)).Take(MaxMarkerSources).ToList() is { Count: > 0 } sources)
+        if (record.Sources?.Where(source => IsHttpUrl(source.Url)).OrderBy(source => !citedUrls.Contains(source.Url))
+                .Take(MaxMarkerSources).ToList() is { Count: > 0 } sources)
             return [$"{head} → {string.Join("; ", sources.Select(FormatSource))}]"];
         return [$"{head} failed: {Sanitize(record.Error ?? "no results")}]"];
     }

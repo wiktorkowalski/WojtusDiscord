@@ -584,6 +584,27 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             messages[1]!["content"]![0]!["text"]!.GetValue<string>());
     }
 
+    // A cited source past the source cap is still listed: the excerpt line names it, and a
+    // missing source reads as unsearched.
+    [Fact]
+    public void CitedSourcePastTheCap_IsListedFirst()
+    {
+        var rendered = ConversationHistory.FormatMarkers(
+        [
+            new ConversationHistory.WebSearchRecord
+            {
+                Id = "srvtoolu_A",
+                Sources = [.. Enumerable.Range(1, 7).Select(i => new WebSearchCitations.Citation($"https://k.example/{i}", null))],
+            },
+            new ConversationHistory.WebSearchRecord { Cited = [new ConversationHistory.CitedExcerpt("https://k.example/7", "4,367 zł")] },
+        ]);
+
+        Assert.Equal(
+            "[web_search → https://k.example/7; https://k.example/1; https://k.example/2; https://k.example/3; https://k.example/4]\n"
+            + "[web_search cited: https://k.example/7 — \"4,367 zł\"]",
+            rendered);
+    }
+
     // Rows stored before the call id (#441) have no id: each record renders on its own row.
     [Fact]
     public void LegacyRecordsWithoutId_RenderUnpaired()
