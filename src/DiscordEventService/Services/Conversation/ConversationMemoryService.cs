@@ -289,8 +289,8 @@ internal sealed class ConversationMemoryService(
         {
             var turnRows = turn.ToList();
             var rendered = ConversationHistory.FormatTurnMarkers([.. turnRows.Select(row => ParseWebSearches(row.WebSearchesJson!))]);
-            for (var i = 0; i < turnRows.Count; i++)
-                markers[turnRows[i].Id] = rendered[i];
+            foreach (var (row, text) in turnRows.Zip(rendered))
+                markers[row.Id] = text;
         }
 
         return markers;

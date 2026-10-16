@@ -151,7 +151,11 @@ internal static class ConversationHistory
 
     // The cited_text of a web_search_result_location citation: the page passage the answer
     // quoted. A later turn can re-check a detail of the answer against it.
-    internal sealed record CitedExcerpt(string Url, string Text);
+    internal sealed record CitedExcerpt
+    {
+        public required string Url { get; init; }
+        public required string Text { get; init; }
+    }
 
     // The sources a marker lists: enough to re-cite, short enough for the window.
     private const int MaxMarkerSources = 5;
@@ -190,24 +194,17 @@ internal static class ConversationHistory
 
     // The adapter puts each citations_delta on an empty TextContent as a CitationAnnotation
     // whose Snippet is the cited_text; the coalescer keeps annotated contents apart. One
-    // excerpt per URL (the first non-empty one), cut to the replay length; sanitized on render,
-    // like the titles.
+    // excerpt per URL (the first non-empty one); capped and sanitized on render, like the titles.
     private static List<CitedExcerpt> CitedExcerpts(ChatMessage message)
     {
         List<CitedExcerpt> excerpts = [];
-        var annotations = message.Contents.OfType<TextContent>()
-            .SelectMany(text => text.Annotations ?? [])
-            .OfType<CitationAnnotation>();
-        foreach (var annotation in annotations)
+        foreach (var (url, annotation) in WebSearchCitations.Annotations(message.Contents))
         {
             if (excerpts.Count == MaxCitedExcerpts)
                 break;
-            if (annotation.Url is not { IsAbsoluteUri: true } url || string.IsNullOrWhiteSpace(annotation.Snippet))
-                continue;
-
-            var urlValue = url.OriginalString;
-            if (IsHttpUrl(urlValue) && !excerpts.Any(existing => existing.Url.Equals(urlValue, StringComparison.Ordinal)))
-                excerpts.Add(new CitedExcerpt(urlValue, Truncate(annotation.Snippet.Trim(), MaxExcerptLength)));
+            if (annotation.Snippet is { } snippet && !string.IsNullOrWhiteSpace(snippet) && IsHttpUrl(url)
+                && !excerpts.Any(existing => existing.Url.Equals(url, StringComparison.Ordinal)))
+                excerpts.Add(new CitedExcerpt { Url = url, Text = snippet });
         }
 
         return excerpts;
@@ -301,9 +298,6 @@ internal static class ConversationHistory
         var clean = new string([.. value.Select(c => char.IsControl(c) || c is '[' or ']' or '"' ? ' ' : c)]).Trim();
         return clean.Length <= maxLength ? clean : clean[..maxLength] + "…";
     }
-
-    private static string Truncate(string value, int maxLength) =>
-        value.Length <= maxLength ? value : value[..maxLength];
 
     // Only http(s): the URL is replayed verbatim, so it must not carry a newline or another scheme.
     private static bool IsHttpUrl(string url) =>
