@@ -259,7 +259,8 @@ internal sealed class ConversationMemoryService(
     // dropped whole rather than replayed dangling.
     private IReadOnlyList<ChatMessage> BuildWindow(List<ConversationMessageEntity> rows, int tokenBudget)
     {
-        var groups = GroupRows(rows);
+        var markers = WebSearchMarkers(rows);
+        var groups = GroupRows(rows, markers);
 
         List<List<ConversationMessageEntity>> included = [];
         var totalTokens = 0;
@@ -274,8 +275,29 @@ internal sealed class ConversationMemoryService(
         included.Reverse();
         DropUnreplayableEdges(included);
 
-        return included.SelectMany(RehydrateGroup).ToList();
+        return included.SelectMany(group => RehydrateGroup(group, markers)).ToList();
     }
+
+    // Each row's web search markers, keyed by row id; a row without searches has no entry.
+    // Rendered per turn over all loaded rows, before the grouping: a search's call and result
+    // pair across rows (#440), and a row whose only search moved to its result's row renders
+    // nothing.
+    private static Dictionary<Guid, string> WebSearchMarkers(List<ConversationMessageEntity> rows)
+    {
+        Dictionary<Guid, string> markers = [];
+        foreach (var turn in rows.Where(row => row.WebSearchesJson is not null).GroupBy(row => row.TurnIndex))
+        {
+            var turnRows = turn.ToList();
+            var rendered = ConversationHistory.FormatTurnMarkers([.. turnRows.Select(row => ParseWebSearches(row.WebSearchesJson!))]);
+            foreach (var (row, text) in turnRows.Zip(rendered))
+                markers[row.Id] = text;
+        }
+
+        return markers;
+    }
+
+    private static List<ConversationHistory.WebSearchRecord> ParseWebSearches(string webSearchesJson) =>
+        JsonSerializer.Deserialize<List<ConversationHistory.WebSearchRecord>>(webSearchesJson, ToolCallsSerializerOptions) ?? [];
 
     // Two shapes the Claude API rejects with thinking on (#426), trimmed from the window:
     // - a window that starts with an assistant row (the budget cut off its user row): the
@@ -300,11 +322,12 @@ internal sealed class ConversationMemoryService(
     // The tool-result rows of a group replay as ONE Tool message, as the live loop sent them:
     // the Claude API wants every tool_result of a tool_use message in the single user message
     // right after it, and the adapter turns each ChatMessage into its own message (#426).
-    private IEnumerable<ChatMessage> RehydrateGroup(List<ConversationMessageEntity> group)
+    private IEnumerable<ChatMessage> RehydrateGroup(
+        List<ConversationMessageEntity> group, Dictionary<Guid, string> markers)
     {
         var results = group.Where(row => row.Role == ConversationMessageRole.Tool).ToList();
         foreach (var row in group.Where(row => row.Role != ConversationMessageRole.Tool))
-            yield return Rehydrate(row);
+            yield return Rehydrate(row, markers.GetValueOrDefault(row.Id));
 
         if (results.Count > 0)
             yield return new ChatMessage(ChatRole.Tool, [.. results.Select(RehydrateToolResult)]);
@@ -314,7 +337,8 @@ internal sealed class ConversationMemoryService(
     private static AIContent RehydrateToolResult(ConversationMessageEntity row) =>
         new FunctionResultContent(row.ToolCallId!, row.ToolResult ?? string.Empty);
 
-    private List<List<ConversationMessageEntity>> GroupRows(List<ConversationMessageEntity> rows)
+    private List<List<ConversationMessageEntity>> GroupRows(
+        List<ConversationMessageEntity> rows, Dictionary<Guid, string> markers)
     {
         List<List<ConversationMessageEntity>> groups = [];
         List<ConversationMessageEntity>? openGroup = null;
@@ -337,11 +361,13 @@ internal sealed class ConversationMemoryService(
             }
 
             // A reasoning-only assistant row (a round that ended with thinking alone) replays as
-            // nothing: reasoning is stripped. Skipped HERE, before the edge trimming, so the
+            // nothing: reasoning is stripped. So does a row whose only search renders on its
+            // result's row. Skipped HERE, before the edge trimming, so the
             // edges are checked on the rows the request carries — counted as the answer, it
             // would hide an unanswered tool group in front of it (#426).
             if (row.Role == ConversationMessageRole.Assistant
-                && string.IsNullOrEmpty(row.Text) && row.ToolCallsJson is null && row.WebSearchesJson is null)
+                && string.IsNullOrEmpty(row.Text) && row.ToolCallsJson is null
+                && string.IsNullOrEmpty(markers.GetValueOrDefault(row.Id)))
                 continue;
 
             CloseGroup(groups, ref openGroup, ref pendingCallIds);
@@ -394,7 +420,7 @@ internal sealed class ConversationMemoryService(
         }
     }
 
-    private ChatMessage Rehydrate(ConversationMessageEntity row)
+    private ChatMessage Rehydrate(ConversationMessageEntity row, string? webSearchMarkers)
     {
         switch (row.Role)
         {
@@ -408,8 +434,10 @@ internal sealed class ConversationMemoryService(
                 List<AIContent> contents = [];
                 // Reasoning is persisted but deliberately NOT replayed — stale thinking
                 // signatures (research A-OQ2); revisit if reply quality suffers.
-                if (row.WebSearchesJson is not null)
-                    contents.Add(RehydrateWebSearches(row.WebSearchesJson));
+                // The searches as text markers before the row's text (#440): the model sees the
+                // search behind an answer and does not retract it as invented.
+                if (!string.IsNullOrEmpty(webSearchMarkers))
+                    contents.Add(new TextContent(webSearchMarkers));
                 if (!string.IsNullOrEmpty(row.Text))
                     contents.Add(new TextContent(row.Text));
                 if (row.ToolCallsJson is not null)
@@ -417,12 +445,6 @@ internal sealed class ConversationMemoryService(
                 return new ChatMessage(ChatRole.Assistant, contents);
         }
     }
-
-    // The searches as text markers before the row's text (#440): the model sees the search
-    // behind an answer and does not retract it as invented.
-    private static TextContent RehydrateWebSearches(string webSearchesJson) =>
-        new(ConversationHistory.FormatMarkers(
-            JsonSerializer.Deserialize<List<ConversationHistory.WebSearchRecord>>(webSearchesJson, ToolCallsSerializerOptions) ?? []));
 
     private IEnumerable<FunctionCallContent> RehydrateToolCalls(string toolCallsJson)
     {

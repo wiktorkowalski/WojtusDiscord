@@ -33,8 +33,9 @@ public class ConversationMessageEntity
     // a dictionary of JsonElements.
     public string? ToolCallsJson { get; set; }
 
-    // Assistant rows only: JSON array of the round's web searches (#440) — { query } for a
-    // server_tool_use block, { urls } for its result. The blocks themselves are not kept
+    // Assistant rows only: JSON array of the round's web searches (#440) — { id, query } for a
+    // server_tool_use block, { id, sources } (or error) for its result, { cited } for the
+    // excerpts the row's text cited. Rows from before the id have none. The blocks are not kept
     // (encrypted_content), but without this record a later turn sees an answer with no
     // search behind it and the model "admits" it made the facts up.
     public string? WebSearchesJson { get; set; }

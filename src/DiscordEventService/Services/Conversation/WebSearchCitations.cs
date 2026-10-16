@@ -15,22 +15,20 @@ internal static class WebSearchCitations
     // whole turn (a later round may re-search what an earlier round already cited).
     public static void AccumulateRound(IEnumerable<ChatResponseUpdate> updates, List<Citation> citations)
     {
-        var annotations = updates
-            .SelectMany(update => update.Contents)
-            .OfType<TextContent>()
-            .SelectMany(text => text.Annotations ?? [])
-            .OfType<CitationAnnotation>();
-
-        foreach (var annotation in annotations)
+        foreach (var (url, annotation) in Annotations(updates.SelectMany(update => update.Contents)))
         {
-            if (annotation.Url is not { IsAbsoluteUri: true } url)
-                continue;
-
-            var urlValue = url.OriginalString;
-            if (!citations.Any(existing => existing.Url.Equals(urlValue, StringComparison.Ordinal)))
-                citations.Add(new Citation(urlValue, annotation.Title));
+            if (!citations.Any(existing => existing.Url.Equals(url, StringComparison.Ordinal)))
+                citations.Add(new Citation(url, annotation.Title));
         }
     }
+
+    // The citations among the contents, with an absolute URL, in order.
+    public static IEnumerable<(string Url, CitationAnnotation Annotation)> Annotations(IEnumerable<AIContent> contents) =>
+        contents.OfType<TextContent>()
+            .SelectMany(text => text.Annotations ?? [])
+            .OfType<CitationAnnotation>()
+            .Where(annotation => annotation.Url is { IsAbsoluteUri: true })
+            .Select(annotation => (annotation.Url!.OriginalString, annotation));
 
     // One subtext line of domain-named markdown links (the model already inlines
     // domain-named links in its own text; this is the structured source list under the

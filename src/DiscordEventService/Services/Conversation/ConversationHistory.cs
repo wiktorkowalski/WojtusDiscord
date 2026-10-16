@@ -127,10 +127,15 @@ internal static class ConversationHistory
     public static string? SearchQuery(WebSearchToolCallContent call) => call.Queries is [var query, ..] ? query : null;
 
     // What the store keeps of one web search block (#440): the query of a server_tool_use, or
-    // the sources (or error code) of a web_search_tool_result. A later turn gets this record
-    // as text, not the blocks: their encrypted_content would fill the replay window.
+    // the sources (or error code) of a web_search_tool_result, both under the block's call id.
+    // A third kind holds the answer's cited excerpts. A later turn gets these records as text,
+    // not the blocks: their encrypted_content would fill the replay window. Rows stored before
+    // the id existed (#441) have a null Id and render unpaired.
     internal sealed record WebSearchRecord
     {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? Id { get; init; }
+
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? Query { get; init; }
 
@@ -139,13 +144,29 @@ internal static class ConversationHistory
 
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? Error { get; init; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<CitedExcerpt>? Cited { get; init; }
+    }
+
+    // The cited_text of a web_search_result_location citation: the page passage the answer
+    // quoted. A later turn can re-check a detail of the answer against it.
+    internal sealed record CitedExcerpt
+    {
+        public required string Url { get; init; }
+        public required string Text { get; init; }
     }
 
     // The sources a marker lists: enough to re-cite, short enough for the window.
     private const int MaxMarkerSources = 5;
     private const int MaxMarkerFieldLength = 120;
 
-    // The web search blocks of one ForReplay message, in the model's order.
+    // Cited excerpts per row and per excerpt: at most ~1.2k chars of page text in the window.
+    private const int MaxCitedExcerpts = 5;
+    private const int MaxExcerptLength = 240;
+
+    // The web search blocks of one ForReplay message, in the model's order, then the excerpts
+    // its text cited.
     public static List<WebSearchRecord> WebSearchRecords(ChatMessage message, ILogger logger)
     {
         List<WebSearchRecord> records = [];
@@ -157,7 +178,7 @@ internal static class ConversationHistory
             if (block.TryPickServerToolUse(out var call)
                 && call.Input.TryGetValue("query", out var query) && query.ValueKind == JsonValueKind.String)
             {
-                records.Add(new WebSearchRecord { Query = query.GetString() });
+                records.Add(new WebSearchRecord { Id = call.ID, Query = query.GetString() });
             }
             else if (block.TryPickWebSearchToolResult(out var result))
             {
@@ -165,7 +186,28 @@ internal static class ConversationHistory
             }
         }
 
+        if (CitedExcerpts(message) is { Count: > 0 } cited)
+            records.Add(new WebSearchRecord { Cited = cited });
+
         return records;
+    }
+
+    // The adapter puts each citations_delta on an empty TextContent as a CitationAnnotation
+    // whose Snippet is the cited_text; the coalescer keeps annotated contents apart. One
+    // excerpt per URL (the first non-empty one); capped and sanitized on render, like the titles.
+    private static List<CitedExcerpt> CitedExcerpts(ChatMessage message)
+    {
+        List<CitedExcerpt> excerpts = [];
+        foreach (var (url, annotation) in WebSearchCitations.Annotations(message.Contents))
+        {
+            if (excerpts.Count == MaxCitedExcerpts)
+                break;
+            if (annotation.Snippet is { } snippet && !string.IsNullOrWhiteSpace(snippet) && IsHttpUrl(url)
+                && !excerpts.Any(existing => existing.Url.Equals(url, StringComparison.Ordinal)))
+                excerpts.Add(new CitedExcerpt { Url = url, Text = snippet });
+        }
+
+        return excerpts;
     }
 
     // The block came from FromRawUnchecked: an odd shape must not fail the turn's persist.
@@ -174,45 +216,87 @@ internal static class ConversationHistory
         try
         {
             if (result.Content.TryPickItem(out var results))
-                return new WebSearchRecord { Sources = [.. results.Select(r => new WebSearchCitations.Citation(r.Url, r.Title))] };
+                return new WebSearchRecord
+                {
+                    Id = result.ToolUseID,
+                    Sources = [.. results.Select(r => new WebSearchCitations.Citation(r.Url, r.Title))],
+                };
             if (result.Content.TryPickRequestError(out var error))
-                return new WebSearchRecord { Error = error.RawData.TryGetValue("error_code", out var code) ? code.ToString() : "unknown" };
+                return new WebSearchRecord
+                {
+                    Id = result.ToolUseID,
+                    Error = error.RawData.TryGetValue("error_code", out var code) ? code.ToString() : "unknown",
+                };
         }
         catch (Exception ex) when (ex is InvalidOperationException or JsonException or KeyNotFoundException)
         {
             logger.LogWarning(ex, "Unreadable web search result {CallId}; storing it without sources", result.ToolUseID);
         }
 
-        return new WebSearchRecord { Error = "unreadable" };
+        return new WebSearchRecord { Id = result.ToolUseID, Error = "unreadable" };
     }
 
-    // One line per record, e.g. `[web_search: "pogoda Kraków"]` or
-    // `[web_search results: Pogoda — https://…; …]`. The system prompt tells the model what
-    // these lines are and never to write one itself.
-    public static string FormatMarkers(IEnumerable<WebSearchRecord> records) =>
-        string.Join('\n', records.Select(FormatMarker));
+    // The markers of one row on its own, as its EstTokens counts them.
+    public static string FormatMarkers(IReadOnlyList<WebSearchRecord> records) => FormatTurnMarkers([records])[0];
 
-    private static string FormatMarker(WebSearchRecord record)
+    // The markers of each row of one turn, one line per search, e.g.
+    // `[web_search "pogoda Kraków" → Pogoda — https://…; …]`, then one
+    // `[web_search cited: https://… — "…"]` line per cited excerpt. A search's call and result
+    // often sit on different rows (the call next to a client tool, the result in the next
+    // round): the pair renders once, on the result's row, which the window keeps longest. The
+    // system prompt tells the model what these lines are and never to write one itself. A
+    // source the turn cited is listed first: cut by the source cap, it would look unsearched.
+    public static List<string> FormatTurnMarkers(IReadOnlyList<IReadOnlyList<WebSearchRecord>> rows)
     {
+        var queries = new Dictionary<string, string>(StringComparer.Ordinal);
+        var answered = new HashSet<string>(StringComparer.Ordinal);
+        var citedUrls = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var record in rows.SelectMany(row => row))
+        {
+            foreach (var excerpt in record.Cited ?? [])
+                citedUrls.Add(excerpt.Url);
+            if (record.Id is not { } id)
+                continue;
+            if (record.Query is { } query)
+                queries.TryAdd(id, query);
+            else if (record.Sources is not null || record.Error is not null)
+                answered.Add(id);
+        }
+
+        return [.. rows.Select(row => string.Join('\n', row.SelectMany(record => FormatRecord(record, queries, answered, citedUrls))))];
+    }
+
+    private static IEnumerable<string> FormatRecord(
+        WebSearchRecord record, Dictionary<string, string> queries, HashSet<string> answered, HashSet<string> citedUrls)
+    {
+        if (record.Cited is { } cited)
+            return cited.Where(excerpt => IsHttpUrl(excerpt.Url)).Select(excerpt =>
+                $"[web_search cited: {excerpt.Url} — \"{Sanitize(excerpt.Text, MaxExcerptLength)}\"]");
+
         if (record.Query is { } query)
-            return $"[web_search: \"{Sanitize(query)}\"]";
-        if (record.Sources?.Where(source => IsHttpUrl(source.Url)).Take(MaxMarkerSources).ToList() is { Count: > 0 } sources)
-            return "[web_search results: " + string.Join("; ", sources.Select(FormatSource)) + "]";
-        return $"[web_search failed: {Sanitize(record.Error ?? "no results")}]";
+            return record.Id is { } callId && answered.Contains(callId) ? [] : [$"[web_search \"{Sanitize(query)}\"]"];
+
+        var head = record.Id is { } id && queries.TryGetValue(id, out var pairedQuery)
+            ? $"[web_search \"{Sanitize(pairedQuery)}\""
+            : "[web_search";
+        if (record.Sources?.Where(source => IsHttpUrl(source.Url)).OrderBy(source => !citedUrls.Contains(source.Url))
+                .Take(MaxMarkerSources).ToList() is { Count: > 0 } sources)
+            return [$"{head} → {string.Join("; ", sources.Select(FormatSource))}]"];
+        return [$"{head} failed: {Sanitize(record.Error ?? "no results")}]"];
     }
 
     private static string FormatSource(WebSearchCitations.Citation source) =>
         Sanitize(source.Title) is { Length: > 0 } title ? $"{title} — {source.Url}" : source.Url;
 
-    // Titles come from arbitrary web pages and replay as the assistant's own words: one line,
-    // no brackets or quotes that could close the marker, and capped.
-    private static string Sanitize(string? value)
+    // Titles and excerpts come from arbitrary web pages and replay as the assistant's own
+    // words: one line, no brackets or quotes that could close the marker, and capped.
+    private static string Sanitize(string? value, int maxLength = MaxMarkerFieldLength)
     {
         if (string.IsNullOrWhiteSpace(value))
             return string.Empty;
 
         var clean = new string([.. value.Select(c => char.IsControl(c) || c is '[' or ']' or '"' ? ' ' : c)]).Trim();
-        return clean.Length <= MaxMarkerFieldLength ? clean : clean[..MaxMarkerFieldLength] + "…";
+        return clean.Length <= maxLength ? clean : clean[..maxLength] + "…";
     }
 
     // Only http(s): the URL is replayed verbatim, so it must not carry a newline or another scheme.
