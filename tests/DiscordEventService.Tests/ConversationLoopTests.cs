@@ -88,13 +88,13 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         var events = await CollectAsync(service.GenerateReplyAsync("znajdz mema o zolwiu", context, CancellationToken.None));
 
         // The model was silent before the tool, and the loop no longer injects a canned
-        // cue (#274) — the tool-batch summary is the round's only render event.
-        var summary = Assert.Single(events.OfType<ConversationUpdate.ToolBatchSummary>());
-        Assert.Contains("meme_search", summary.Text);
-        Assert.True(IndexOf<ConversationUpdate.AssistantTextDelta>(events) > IndexOf<ConversationUpdate.ToolBatchSummary>(events),
-            "a silent tool round should yield no text before its summary");
+        // cue (#274) — the tool-call lines are the round's only render event.
+        var call = Assert.Single(events.OfType<ConversationUpdate.ToolCall>());
+        Assert.Equal("-# 🔧 meme_search", call.Line);
+        Assert.True(IndexOf<ConversationUpdate.AssistantTextDelta>(events) > IndexOf<ConversationUpdate.ToolCall>(events),
+            "a silent tool round should yield no text before its tool calls");
         // The answer is the deltas after the summary, accumulated into one message.
-        Assert.Equal(finalAnswer, FinalAnswer(events));
+        Assert.Equal(finalAnswer, await TurnRendering.FinalAnswerAsync(events));
 
         // Two model calls: the tool-requesting round, then the answering round.
         Assert.Equal(2, client.Calls.Count);
@@ -150,12 +150,37 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
 
         var events = await CollectAsync(service.GenerateReplyAsync("memy?", context, CancellationToken.None));
 
-        // The model's own narration is surfaced and precedes the tool-batch summary.
+        // The model's own narration is surfaced and precedes the tool-call lines.
         Assert.Equal("Sprawdzam memy. ", FirstDelta(events));
-        Assert.True(IndexOf<ConversationUpdate.AssistantTextDelta>(events) < IndexOf<ConversationUpdate.ToolBatchSummary>(events));
-        Assert.Single(events.OfType<ConversationUpdate.ToolBatchSummary>());
+        Assert.True(IndexOf<ConversationUpdate.AssistantTextDelta>(events) < IndexOf<ConversationUpdate.ToolCall>(events));
+        Assert.Single(events.OfType<ConversationUpdate.ToolCall>());
         // The answer is accumulated from its deltas.
-        Assert.Equal("Oto co znalazłem.", FinalAnswer(events));
+        Assert.Equal("Oto co znalazłem.", await TurnRendering.FinalAnswerAsync(events));
+    }
+
+    [Fact]
+    public async Task GenerateReplyAsync_TwoCallsOfOneToolInARound_YieldOneLineEach()
+    {
+        // #438: two meme_search calls are two messages, in the model's order — no Distinct.
+        var client = new ScriptedChatClient((callIndex, _, _) => callIndex switch
+        {
+            0 =>
+            [
+                new ChatResponseUpdate(ChatRole.Assistant, "Szukam dwóch. "),
+                ToolCallUpdate("call_1", "meme_search",
+                    new Dictionary<string, object?> { ["query"] = "zolw", ["limit"] = 5 }),
+                ToolCallUpdate("call_2", "meme_search",
+                    new Dictionary<string, object?> { ["query"] = "kot", ["limit"] = 5 }),
+            ],
+            _ => StreamText("Gotowe."),
+        });
+
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester", IsAdmin: false, ChannelId: 7UL);
+        var events = await CollectAsync(BuildService(client).GenerateReplyAsync("memy?", context, CancellationToken.None));
+
+        Assert.Equal(["-# 🔧 meme_search", "-# 🔧 meme_search"],
+            events.OfType<ConversationUpdate.ToolCall>().Select(call => call.Line));
+        Assert.Equal("Gotowe.", await TurnRendering.FinalAnswerAsync(events));
     }
 
     [Fact]
@@ -175,7 +200,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
 
         var events = await CollectAsync(service.GenerateReplyAsync("loop forever", context, CancellationToken.None));
 
-        Assert.Equal(cappedAnswer, FinalAnswer(events));
+        Assert.Equal(cappedAnswer, await TurnRendering.FinalAnswerAsync(events));
         // cap rounds allowing tool calls, then one finalizing call that forbids them. The
         // tools stay declared on it: the Claude API rejects tool_use history with no tools.
         Assert.Equal(cap + 1, client.Calls.Count);
@@ -200,7 +225,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             "dwa narzędzia", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: false, ChannelId: 7UL),
             CancellationToken.None));
 
-        Assert.Equal("Gotowe.", FinalAnswer(events));
+        Assert.Equal("Gotowe.", await TurnRendering.FinalAnswerAsync(events));
         var toolMessage = Assert.Single(client.Calls[1], m => m.Role == ChatRole.Tool);
         Assert.Equal(["call_a", "call_b"], toolMessage.Contents.OfType<FunctionResultContent>().Select(r => r.CallId));
     }
@@ -242,13 +267,13 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             CancellationToken.None));
 
         Assert.Equal(2, client.Calls.Count);
-        Assert.Equal("Szukam… Mam.", FinalAnswer(events));
+        Assert.Equal("Szukam… Mam.", await TurnRendering.FinalAnswerAsync(events));
         Assert.Equal(ChatRole.Assistant, client.Calls[1][^1].Role);
         Assert.Equal("Szukam… ", client.Calls[1][^1].Text);
     }
 
-    // A retried round after a pause: the reset clears the renderer's whole buffer, so the
-    // paused text must be rendered again before the retry streams.
+    // A retried round after a pause: the reset drops only the failed attempt's text, so the
+    // paused text stays in the renderer's buffer.
     [Fact]
     public async Task GenerateReplyAsync_PauseThenRetriedRound_KeepsThePausedText()
     {
@@ -259,7 +284,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             CancellationToken.None));
 
         Assert.Contains(events, e => e is ConversationUpdate.RoundReset);
-        Assert.Equal("Szukam… Mam.", ConversationRetryTests.RenderedText(events));
+        Assert.Equal("Szukam… Mam.", await TurnRendering.FinalAnswerAsync(events));
     }
 
     // Call 1 pauses; call 2 streams text and dies; call 3 answers.
@@ -320,8 +345,8 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             CancellationToken.None));
 
         Assert.Single(client.Calls);
-        Assert.DoesNotContain(events, e => e is ConversationUpdate.ToolBatchSummary);
-        Assert.Equal(ConversationService.RefusalMessage, FinalAnswer(events));
+        Assert.DoesNotContain(events, e => e is ConversationUpdate.ToolCall);
+        Assert.Equal(ConversationService.RefusalMessage, await TurnRendering.FinalAnswerAsync(events));
         Assert.Single(log.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("refused"));
         Assert.StartsWith("Conversation turn refused: ",
             Assert.Single(log.Entries, e => e.Level == LogLevel.Information).Message);
@@ -478,21 +503,6 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
 
     private static string FirstDelta(IEnumerable<ConversationUpdate> events) =>
         events.OfType<ConversationUpdate.AssistantTextDelta>().First().Text;
-
-    // The deltas after the last tool-batch summary form the final answer message.
-    private static string FinalAnswer(IReadOnlyList<ConversationUpdate> events)
-    {
-        var lastSummary = -1;
-        for (var i = 0; i < events.Count; i++)
-        {
-            if (events[i] is ConversationUpdate.ToolBatchSummary)
-                lastSummary = i;
-        }
-
-        return string.Concat(events.Skip(lastSummary + 1)
-            .OfType<ConversationUpdate.AssistantTextDelta>()
-            .Select(delta => delta.Text));
-    }
 
     private static int IndexOf<TUpdate>(IReadOnlyList<ConversationUpdate> events) where TUpdate : ConversationUpdate
     {

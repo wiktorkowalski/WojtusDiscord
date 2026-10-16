@@ -174,15 +174,19 @@ public sealed class ConversationFlowTests
     [Fact]
     public async Task RenderEvents_MapToDiscreteMessages_PerRound()
     {
-        _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Sprawdzam."));
-        _turns.Updates.Add(new ConversationUpdate.ToolBatchSummary("-# 🔧 meme_search"));
+        _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Szukam w sieci."));
+        _turns.Updates.Add(new ConversationUpdate.ToolCall("-# 🔎 web_search: żółw"));
+        _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Sprawdzam memy."));
+        _turns.Updates.Add(new ConversationUpdate.ToolCall("-# 🔧 meme_search"));
+        _turns.Updates.Add(new ConversationUpdate.ToolCall("-# 🔧 meme_search"));
         _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Zna"));
-        _turns.Updates.Add(new ConversationUpdate.RoundReset());
+        _turns.Updates.Add(new ConversationUpdate.RoundReset("Zna".Length));
         _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Znalazłem trzy."));
 
         await BuildFlow().HandleAsync(Message(guildId: null), BotId, _gateway);
 
-        Assert.Equal(["Sprawdzam.\n-# 🔧 meme_search", "Znalazłem trzy."], _origin.Sent);
+        Assert.Equal(["Szukam w sieci.", "-# 🔎 web_search: żółw", "Sprawdzam memy.",
+            "-# 🔧 meme_search", "-# 🔧 meme_search", "Znalazłem trzy."], _origin.Sent);
     }
 
     [Fact]

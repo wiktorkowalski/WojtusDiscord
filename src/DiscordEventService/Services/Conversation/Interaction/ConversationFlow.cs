@@ -162,22 +162,7 @@ internal sealed class ConversationFlow(
         await renderer.TriggerTypingAsync();
 
         await foreach (var update in conversation.GenerateReplyAsync(content, context, cancellationToken))
-        {
-            switch (update)
-            {
-                case ConversationUpdate.AssistantTextDelta delta:
-                    await renderer.AppendDeltaAsync(delta.Text);
-                    break;
-
-                case ConversationUpdate.ToolBatchSummary summary:
-                    await renderer.CompleteRoundAsync(summary.Text);
-                    break;
-
-                case ConversationUpdate.RoundReset:
-                    renderer.ResetRound();
-                    break;
-            }
-        }
+            await renderer.ApplyAsync(update);
 
         // The deltas after the last tool round are the answer.
         await renderer.CompleteTurnAsync();

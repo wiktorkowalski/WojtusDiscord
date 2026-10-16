@@ -3,28 +3,12 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// The discrete render contract (#274), now reachable end-to-end over the interaction port
-// (#308) instead of only its pure ComposeRound: deltas buffer silently, a tool round posts
-// exactly one message, the answer posts complete at the end, a blank buffer posts nothing,
-// and a failed round's partial deltas are dropped rather than appended to the retry.
+// The discrete render contract (#274, #438), end-to-end over the interaction port (#308):
+// deltas buffer silently, the narration before a tool call posts as one message and every
+// call as its own message, the answer posts complete at the end, a blank buffer posts
+// nothing, and a failed round's partial deltas are dropped rather than appended to the retry.
 public sealed class TurnRendererTests
 {
-    [Fact]
-    public void ComposeRound_NarrationPresent_SummaryBecomesClosingSubtextLine()
-    {
-        var composed = TurnRenderer.ComposeRound("Sprawdzam memy. ", "-# 🔧 meme_search");
-
-        Assert.Equal("Sprawdzam memy.\n-# 🔧 meme_search", composed);
-    }
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("   \n ")]
-    public void ComposeRound_NoVisibleNarration_SummaryStandsAlone(string narration)
-    {
-        Assert.Equal("-# 🔧 meme_search", TurnRenderer.ComposeRound(narration, "-# 🔧 meme_search"));
-    }
-
     [Fact]
     public async Task Deltas_BufferUntilTheTurnEnds_ThenPostAsOneMessage()
     {
@@ -42,18 +26,34 @@ public sealed class TurnRendererTests
     }
 
     [Fact]
-    public async Task CompleteRound_PostsNarrationWithSummary_AndRetriggersTyping()
+    public async Task ToolCalls_PostNarrationThenEachCall_AndRetriggersTypingAfterEach()
     {
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface);
         await renderer.AppendDeltaAsync("Zaraz sprawdzę.");
 
-        await renderer.CompleteRoundAsync("-# 🔧 meme_search");
+        await renderer.PostToolCallAsync("-# 🔧 meme_search");
+        await renderer.PostToolCallAsync("-# 🔧 meme_search");
 
-        Assert.Equal(["Zaraz sprawdzę.\n-# 🔧 meme_search"], surface.Sent);
-        // The round's post cleared Discord's typing indicator, so it is re-triggered for
-        // the next round's model call, which is already in flight.
-        Assert.Equal(2, surface.TypingCount);
+        // Two calls of one tool are two messages: no Distinct by name.
+        Assert.Equal(["Zaraz sprawdzę.", "-# 🔧 meme_search", "-# 🔧 meme_search"], surface.Sent);
+        // Every post cleared Discord's typing indicator, so it is re-triggered after each:
+        // once for the first delta, then once per message.
+        Assert.Equal(4, surface.TypingCount);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   \n ")]
+    public async Task ToolCall_NoVisibleNarration_PostsOnlyTheCalls(string narration)
+    {
+        var surface = new FakeTurnSurface();
+        var renderer = new TurnRenderer(surface);
+        await renderer.AppendDeltaAsync(narration);
+
+        await renderer.PostToolCallAsync("-# 🔧 guild_stats");
+
+        Assert.Equal(["-# 🔧 guild_stats"], surface.Sent);
     }
 
     [Fact]
@@ -63,12 +63,27 @@ public sealed class TurnRendererTests
         var renderer = new TurnRenderer(surface);
 
         await renderer.AppendDeltaAsync("Sprawdzam.");
-        await renderer.CompleteRoundAsync("-# 🔧 meme_search");
+        await renderer.PostToolCallAsync("-# 🔧 meme_search");
         await renderer.AppendDeltaAsync("Znalazłem trzy.");
         await renderer.CompleteTurnAsync();
 
-        Assert.Equal(["Sprawdzam.\n-# 🔧 meme_search", "Znalazłem trzy."], surface.Sent);
-        Assert.Equal(2, renderer.MessageCount);
+        Assert.Equal(["Sprawdzam.", "-# 🔧 meme_search", "Znalazłem trzy."], surface.Sent);
+        Assert.Equal(3, renderer.MessageCount);
+    }
+
+    [Fact]
+    public async Task SearchCall_SplitsTheTextBeforeAndAfterTheSearch()
+    {
+        var surface = new FakeTurnSurface();
+        var renderer = new TurnRenderer(surface);
+
+        await renderer.AppendDeltaAsync("Okej, szukam kursu…");
+        await renderer.PostToolCallAsync("-# 🔎 web_search: kurs EUR/PLN");
+        await renderer.AppendDeltaAsync("Dziś 4,25 zł.");
+        await renderer.CompleteTurnAsync();
+
+        Assert.Equal(["Okej, szukam kursu…", "-# 🔎 web_search: kurs EUR/PLN", "Dziś 4,25 zł."], surface.Sent);
+        Assert.Equal(3, surface.TypingCount);
     }
 
     [Fact]
@@ -77,12 +92,14 @@ public sealed class TurnRendererTests
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface);
 
+        await renderer.AppendDeltaAsync("Szukam… ");
         await renderer.AppendDeltaAsync("Zna");
-        renderer.ResetRound();
+        renderer.ResetRound("Zna".Length);
         await renderer.AppendDeltaAsync("Znalazłem trzy.");
         await renderer.CompleteTurnAsync();
 
-        Assert.Equal(["Znalazłem trzy."], surface.Sent);
+        // Only the failed attempt's text goes; the paused text before it stays.
+        Assert.Equal(["Szukam… Znalazłem trzy."], surface.Sent);
     }
 
     [Theory]

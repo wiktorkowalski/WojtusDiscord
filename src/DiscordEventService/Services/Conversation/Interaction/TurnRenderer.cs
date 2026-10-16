@@ -4,10 +4,10 @@ using DiscordEventService.Services.EventHandlers;
 
 namespace DiscordEventService.Services.Conversation.Interaction;
 
-// Renders one conversation turn as discrete messages (#274): streamed deltas are
-// buffered (never edited in live), each tool round posts one standalone message (the
-// model's narration cue with the tool-batch summary as a subtext line), and the final
-// answer is posted complete at the end. The typing indicator bridges the gaps — sending
+// Renders one conversation turn as discrete messages (#274, #438): streamed deltas are
+// buffered (never edited in live), the model's narration before a tool call posts as one
+// message and every tool call as its own subtext line after it, and the final answer is
+// posted complete at the end. The typing indicator bridges the gaps — sending
 // a message clears it, so it is re-triggered after every post and refreshed while a long
 // round streams. Writes through ITurnSurface (#308), so the whole render contract —
 // chunking, typing refresh, the blank-message guard — is testable without Discord; the
@@ -26,6 +26,23 @@ internal sealed class TurnRenderer(ITurnSurface surface)
     // How many messages this turn has actually posted (for the turn summary log).
     public int MessageCount { get; private set; }
 
+    // Maps one render event of the loop to its message operation.
+    public Task ApplyAsync(ConversationUpdate update)
+    {
+        switch (update)
+        {
+            case ConversationUpdate.AssistantTextDelta delta:
+                return AppendDeltaAsync(delta.Text);
+            case ConversationUpdate.ToolCall toolCall:
+                return PostToolCallAsync(toolCall.Line);
+            case ConversationUpdate.RoundReset reset:
+                ResetRound(reset.Length);
+                return Task.CompletedTask;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(update), update, "Unknown conversation update");
+        }
+    }
+
     // Buffer a streamed token — no message I/O until a round boundary; just keep the
     // typing indicator alive so the channel shows the bot is working.
     public Task AppendDeltaAsync(string text)
@@ -34,30 +51,24 @@ internal sealed class TurnRenderer(ITurnSurface surface)
         return TriggerTypingAsync(force: false);
     }
 
-    // A tool round finished: post its narration cue + summary as one standalone message,
-    // then re-trigger typing for the next round's model call already in flight.
-    public async Task CompleteRoundAsync(string summaryLine)
+    // A tool call: post the narration before it, then the call's line, re-triggering typing
+    // after each post — the model or the next call is already working.
+    public async Task PostToolCallAsync(string line)
     {
-        await PostAsync(ComposeRound(TakeBuffer(), summaryLine));
-        await TriggerTypingAsync(force: true);
+        await PostAndTypeAsync(TakeBuffer());
+        await PostAndTypeAsync(line);
     }
 
     // The turn is over: whatever is buffered after the last tool round is the answer,
     // posted complete (chunked past the message cap).
     public Task CompleteTurnAsync() => PostAsync(TakeBuffer());
 
-    // A round attempt failed after streaming partial deltas (#268): drop them so the
-    // retried stream (or the failure line) renders exactly once. Every tool round boundary
-    // flushes the buffer; a pause_turn does not, so the loop re-sends the paused text after
-    // the reset (#426).
-    public void ResetRound() => _text.Clear();
+    // A round attempt failed after streaming partial deltas (#268): drop its `length` buffered
+    // characters so the retried stream (or the failure line) renders exactly once. The text
+    // before them stays: a pause_turn does not flush the buffer (#426).
+    public void ResetRound(int length) => _text.Length -= Math.Min(length, _text.Length);
 
     public Task TriggerTypingAsync() => TriggerTypingAsync(force: true);
-
-    // The round message: narration first, summary as the closing subtext line. A round
-    // where the model streamed nothing visible still gets the summary alone.
-    internal static string ComposeRound(string narration, string summaryLine) =>
-        string.IsNullOrWhiteSpace(narration) ? summaryLine : $"{narration.TrimEnd()}\n{summaryLine}";
 
     private string TakeBuffer()
     {
@@ -66,17 +77,26 @@ internal sealed class TurnRenderer(ITurnSurface surface)
         return content;
     }
 
-    private async Task PostAsync(string content)
+    // Returns false when there was nothing to post.
+    private async Task<bool> PostAsync(string content)
     {
         // Never emit a blank message — a whitespace-only buffer renders empty.
         if (string.IsNullOrWhiteSpace(content))
-            return;
+            return false;
 
         foreach (var chunk in MessageChunker.Chunk(content, Limit))
         {
             await surface.SendAsync(chunk);
             MessageCount++;
         }
+        return true;
+    }
+
+    // Sending clears the typing indicator; bring it back after every round message.
+    private async Task PostAndTypeAsync(string content)
+    {
+        if (await PostAsync(content))
+            await TriggerTypingAsync(force: true);
     }
 
     private async Task TriggerTypingAsync(bool force)

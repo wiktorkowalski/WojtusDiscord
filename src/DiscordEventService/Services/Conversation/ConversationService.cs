@@ -143,6 +143,10 @@ internal sealed class ConversationService(
         // spreads one answer over several rounds.
         var answer = new StringBuilder();
 
+        // Whether visible text waits in the handler's buffer (#438): a search line posts the
+        // text before it, so `answer` alone cannot tell if an answer is left to post.
+        var textPending = false;
+
         // Streams one round into the transcript sink under the §2 retry policy (#268):
         // up to RetryMaxAttempts calls over the same intact `messages` prefix (a failed
         // attempt appended nothing and dispatched no tools), full-jitter backoff between
@@ -157,6 +161,9 @@ internal sealed class ConversationService(
             {
                 sink.Clear();
                 var streamedVisibleText = false;
+                // The text this attempt has in the handler's buffer: a search line posts it.
+                var bufferedLength = 0;
+                var textPendingAtStart = textPending;
                 Exception? failure = null;
                 var stopwatch = Stopwatch.StartNew();
 
@@ -205,7 +212,20 @@ internal sealed class ConversationService(
                             if (!streamedVisibleText)
                                 BotMetrics.ConversationFirstTokenReceived(options.Model, stopwatch.Elapsed);
                             streamedVisibleText = true;
+                            bufferedLength += update.Text.Length;
+                            textPending |= !string.IsNullOrWhiteSpace(update.Text);
                             yield return new ConversationUpdate.AssistantTextDelta(update.Text);
+                        }
+
+                        // The adapter yields a search call once, with its query assembled (#438).
+                        foreach (var content in update.Contents)
+                        {
+                            if (content is not WebSearchToolCallContent call
+                                || ConversationHistory.SearchQuery(call) is not { } query)
+                                continue;
+                            bufferedLength = 0;
+                            textPending = textPendingAtStart = false;
+                            yield return new ConversationUpdate.ToolCall($"-# 🔎 web_search: {query}");
                         }
                     }
                 }
@@ -232,15 +252,12 @@ internal sealed class ConversationService(
                 await memory.RecordUsageAsync(memoryTurn, context.InvokerId, failedUsage, cancellationToken);
 
                 // Partial deltas already reached the handler's buffer; drop them so the
-                // retried stream (or the failure line) renders exactly once. The reset clears
-                // the whole buffer, which after a pause_turn also holds the paused rounds'
-                // text: render that again.
-                if (streamedVisibleText)
-                {
-                    yield return new ConversationUpdate.RoundReset();
-                    if (answer.Length > 0)
-                        yield return new ConversationUpdate.AssistantTextDelta(answer.ToString());
-                }
+                // retried stream (or the failure line) renders exactly once. Only this
+                // attempt's text goes: after a pause_turn the buffer also holds the paused
+                // rounds' text, and a search line has posted what came before it.
+                textPending = textPendingAtStart;
+                if (bufferedLength > 0)
+                    yield return new ConversationUpdate.RoundReset(bufferedLength);
 
                 if (!ConversationRetryPolicy.IsTransient(failure) || attempt >= options.RetryMaxAttempts)
                 {
@@ -344,7 +361,7 @@ internal sealed class ConversationService(
             if (toolCalls.Count == 0)
             {
                 var answerText = answer.ToString();
-                var hadText = !string.IsNullOrWhiteSpace(answerText);
+                var hadText = textPending;
                 var finalAnswer = hadText ? answerText : EmptyAnswerFallback;
                 turnLog.Finish(TurnLog.Answered, finalAnswer);
                 if (!hadText)
@@ -362,7 +379,7 @@ internal sealed class ConversationService(
 
             // No injected canned cue when the model calls a tool silently (#274): the
             // progress note is the model's own (the system prompt demands one before every
-            // tool call), and a silent round still renders its tool-batch summary message.
+            // tool call), and a silent round still renders one message per tool call.
             logger.LogDebug("Round {Round}: model requested {Count} tool call(s)", round, toolCalls.Count);
             ReanchorTurnSpan();
             List<AIContent> results = [];
@@ -378,8 +395,10 @@ internal sealed class ConversationService(
             // tool_use message in the single user message right after it.
             messages.Add(new ChatMessage(ChatRole.Tool, results));
             answer.Clear();
+            textPending = false;
 
-            yield return new ConversationUpdate.ToolBatchSummary(SummarizeToolBatch(toolCalls));
+            foreach (var call in toolCalls)
+                yield return new ConversationUpdate.ToolCall($"-# 🔧 {call.Name}");
         }
 
         // Round cap reached: one final streamed call with tool calls forbidden forces a text
@@ -412,7 +431,7 @@ internal sealed class ConversationService(
         answer.Append(ConversationHistory.AnswerText(finalReplay));
 
         var cappedText = answer.ToString();
-        var cappedHadText = !string.IsNullOrWhiteSpace(cappedText);
+        var cappedHadText = textPending;
         var cappedAnswer = cappedHadText ? cappedText : CapReachedFallback;
         turnLog.Finish(TurnLog.RoundCap, cappedAnswer);
         if (!cappedHadText)
@@ -422,14 +441,6 @@ internal sealed class ConversationService(
         turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
         if (captureSensitiveData)
             turn?.SetTag("langfuse.trace.output", cappedAnswer);
-    }
-
-    // One short, dim status line naming the tools the model ran this round (Discord
-    // subtext via the `-#` prefix), e.g. "-# 🔧 meme_search".
-    private static string SummarizeToolBatch(IReadOnlyList<FunctionCallContent> toolCalls)
-    {
-        var names = toolCalls.Select(call => call.Name).Distinct(StringComparer.Ordinal);
-        return $"-# 🔧 {string.Join(", ", names)}";
     }
 
     // The refusal category comes from stop_details on the stream's message_delta event.

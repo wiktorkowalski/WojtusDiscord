@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Services.Conversation;
@@ -52,7 +51,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
 
         Assert.Equal(2, handler.CallCount);
-        Assert.Equal("Odpowiedź.", RenderedText(events));
+        Assert.Equal("Odpowiedź.", await TurnRendering.FinalAnswerAsync(events));
 
         var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
         Assert.Equal(2, rows.Count);
@@ -91,7 +90,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         Assert.Equal(2, handler.CallCount);
         // The partial delta reached the renderer, so a RoundReset must discard it.
         Assert.Contains(events, e => e is ConversationUpdate.RoundReset);
-        Assert.Equal("Cześć!", RenderedText(events));
+        Assert.Equal("Cześć!", await TurnRendering.FinalAnswerAsync(events));
 
         var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
         Assert.Equal(2, rows.Count);
@@ -114,7 +113,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
 
         Assert.Equal(options.Value.RetryMaxAttempts, handler.CallCount);
-        Assert.Equal(options.Value.FailureMessage, RenderedText(events));
+        Assert.Equal(options.Value.FailureMessage, await TurnRendering.FinalAnswerAsync(events));
 
         var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
         Assert.Equal(3, rows.Count);
@@ -135,7 +134,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
 
         Assert.Equal(1, handler.CallCount);
-        Assert.Equal(options.Value.FailureMessage, RenderedText(events));
+        Assert.Equal(options.Value.FailureMessage, await TurnRendering.FinalAnswerAsync(events));
 
         var row = await _db.ConversationUsage.SingleAsync();
         Assert.True(row.Failed);
@@ -159,7 +158,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         stopwatch.Stop();
 
         Assert.Equal(2, handler.CallCount);
-        Assert.Equal("Po przerwie.", RenderedText(events));
+        Assert.Equal("Po przerwie.", await TurnRendering.FinalAnswerAsync(events));
         Assert.True(stopwatch.ElapsedMilliseconds >= 950,
             $"expected the 1s retry-after-ms to be honored, waited only {stopwatch.ElapsedMilliseconds}ms");
     }
@@ -198,7 +197,7 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
             .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
 
         Assert.Equal(2, handler.CallCount);
-        Assert.Equal("Po timeoucie.", RenderedText(events));
+        Assert.Equal("Po timeoucie.", await TurnRendering.FinalAnswerAsync(events));
         var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
         Assert.Equal([true, false], rows.Select(r => r.Failed));
     }
@@ -224,26 +223,6 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
 
     private static ConversationContext Context() =>
         new(GuildDiscordId, InvokerId, "tester", IsAdmin: false, ChannelId: ThreadChannelId);
-
-    // What the discrete renderer (#274) would post: deltas buffered, RoundReset drops
-    // the current round's buffer, the remainder is the answer.
-    internal static string RenderedText(IReadOnlyList<ConversationUpdate> events)
-    {
-        var text = new StringBuilder();
-        foreach (var update in events)
-        {
-            switch (update)
-            {
-                case ConversationUpdate.AssistantTextDelta delta:
-                    text.Append(delta.Text);
-                    break;
-                case ConversationUpdate.RoundReset:
-                    text.Clear();
-                    break;
-            }
-        }
-        return text.ToString();
-    }
 
     private ConversationService BuildService(
         ScriptedClaudeHandler handler, out IOptions<ConversationOptions> conversationOptions,
