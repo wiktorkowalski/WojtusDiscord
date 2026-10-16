@@ -143,6 +143,7 @@ internal static class ConversationHistory
 
     // The sources a marker lists: enough to re-cite, short enough for the window.
     private const int MaxMarkerSources = 5;
+    private const int MaxMarkerFieldLength = 120;
 
     // The web search blocks of one ForReplay message, in the model's order.
     public static List<WebSearchRecord> WebSearchRecords(ChatMessage message, ILogger logger)
@@ -194,12 +195,32 @@ internal static class ConversationHistory
     private static string FormatMarker(WebSearchRecord record)
     {
         if (record.Query is { } query)
-            return $"[web_search: \"{query}\"]";
-        if (record.Sources is { Count: > 0 } sources)
-            return "[web_search results: " + string.Join("; ", sources.Take(MaxMarkerSources)
-                .Select(source => string.IsNullOrWhiteSpace(source.Title) ? source.Url : $"{source.Title} — {source.Url}")) + "]";
-        return $"[web_search failed: {record.Error ?? "no results"}]";
+            return $"[web_search: \"{Sanitize(query)}\"]";
+        if (record.Sources?.Where(source => IsHttpUrl(source.Url)).Take(MaxMarkerSources).ToList() is { Count: > 0 } sources)
+            return "[web_search results: " + string.Join("; ", sources.Select(FormatSource)) + "]";
+        return $"[web_search failed: {Sanitize(record.Error ?? "no results")}]";
     }
+
+    private static string FormatSource(WebSearchCitations.Citation source) =>
+        Sanitize(source.Title) is { Length: > 0 } title ? $"{title} — {source.Url}" : source.Url;
+
+    // Titles come from arbitrary web pages and replay as the assistant's own words: one line,
+    // no brackets or quotes that could close the marker, and capped.
+    private static string Sanitize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var clean = new string([.. value.Select(c => char.IsControl(c) || c is '[' or ']' or '"' ? ' ' : c)]).Trim();
+        return clean.Length <= MaxMarkerFieldLength ? clean : clean[..MaxMarkerFieldLength] + "…";
+    }
+
+    // Only http(s): the URL is replayed verbatim, so it must not carry a newline or another scheme.
+    private static bool IsHttpUrl(string url) =>
+        url.Length <= 2048
+        && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+        && !url.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || c is '[' or ']');
 
     // Text of a response without the empty citation carriers: Claude splits an answer into
     // many text blocks (one per citation span), and ChatMessage.Text joins them all.
