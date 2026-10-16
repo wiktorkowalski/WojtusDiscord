@@ -23,7 +23,7 @@ public sealed class AnthropicChatOptionsTests
 
         var request = await SendOnceAsync(options, Tools("b", "a"));
 
-        Assert.Equal("claude-sonnet-5", request["model"]!.GetValue<string>());
+        Assert.Equal("claude-sonnet-5-5", request["model"]!.GetValue<string>());
         Assert.Equal(16000, request["max_tokens"]!.GetValue<int>());
         Assert.Equal("adaptive", request["thinking"]!["type"]!.GetValue<string>());
         Assert.Equal("summarized", request["thinking"]!["display"]!.GetValue<string>());

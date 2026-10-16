@@ -16,7 +16,7 @@ namespace DiscordEventService.Tests;
 // Every block gets the next content index; End() closes the message.
 internal sealed class ClaudeSse
 {
-    public const string Model = "claude-sonnet-5";
+    public const string Model = "claude-sonnet-5-5";
     public const string Signature = "SIG_ABC";
 
     private readonly StringBuilder _sse = new();
