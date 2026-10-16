@@ -269,7 +269,7 @@ public sealed class UsageAlertTests(PostgresFixture fixture)
         var memory = new ConversationMemoryService(
             NewContext(), Options.Create(options), NullLogger<ConversationMemoryService>.Instance);
         await memory.RecordUsageAsync(new ConversationTurnState(_conversationId, 0, []), InvokerId,
-            new ConversationRoundUsage(1, 1, "claude-sonnet-5", tokens.Input, tokens.Output, tokens.CacheRead,
+            new ConversationRoundUsage(1, 1, "claude-sonnet-5-5", tokens.Input, tokens.Output, tokens.CacheRead,
                 tokens.CacheWrite, cost.TotalUsd, cost.TokensUsd, tokens.WebSearches, 10, Failed: false),
             CancellationToken.None);
 
@@ -279,6 +279,21 @@ public sealed class UsageAlertTests(PostgresFixture fixture)
         Assert.Single(notifier.Messages);
         var row = await _db.ConversationUsage.SingleAsync();
         Assert.Equal((100_000, 60_000, 0), (row.PromptTokens, row.CacheReadTokens, row.CacheWriteTokens));
+    }
+
+    // The default model and the rollback model (#435) both have a price, so a switch by
+    // Conversation__Model never leaves the ledger cost null.
+    [Theory]
+    [InlineData("claude-sonnet-5-5")]
+    [InlineData("claude-sonnet-5")]
+    public void ComputedCost_DefaultAndRollbackModel_ArePriced(string model)
+    {
+        var tokens = new RoundTokens(1_000_000, 100_000, 0, 0, null);
+
+        var cost = ConversationCost.Compute(new ConversationOptions { Model = model }, tokens, NullLogger.Instance);
+
+        Assert.NotNull(cost);
+        Assert.Equal(3.0, cost.TotalUsd, precision: 9);
     }
 
     [Fact]

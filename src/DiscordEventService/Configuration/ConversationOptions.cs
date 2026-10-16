@@ -13,7 +13,7 @@ internal sealed class ConversationOptions
     public const string KnownReasoningEfforts = "low|medium|high|xhigh|max";
 
     // The Claude API model id. Its price must be in Prices, or the ledger cost stays null.
-    public string Model { get; set; } = "claude-sonnet-5";
+    public string Model { get; set; } = "claude-sonnet-5-5";
 
     // `output_config.effort` of every call; adaptive thinking decides how much to think within it.
     // Required: the regex alone lets an empty value through.
@@ -123,6 +123,14 @@ internal sealed class ConversationOptions
     // The binder merges config keys into this default; it never removes one.
     public Dictionary<string, ModelPrice> Prices { get; set; } = new(StringComparer.Ordinal)
     {
+        ["claude-sonnet-5-5"] = new ModelPrice
+        {
+            InputPerMTokUsd = 2,
+            OutputPerMTokUsd = 10,
+            CacheReadPerMTokUsd = 0.20,
+            CacheWritePerMTokUsd = 2.50,
+        },
+        // The model before #435, kept so a rollback by Conversation__Model still gets a cost.
         ["claude-sonnet-5"] = new ModelPrice
         {
             InputPerMTokUsd = 2,
