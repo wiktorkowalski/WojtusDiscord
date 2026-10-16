@@ -4,6 +4,7 @@ using System.Text.Json;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Services.Conversation;
+using DiscordEventService.Services.Conversation.Interaction;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -321,8 +322,10 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             .GenerateReplyAsync("jaka pogoda?", Context(), CancellationToken.None));
 
         Assert.Equal(2, handler.CallCount);
-        Assert.DoesNotContain(events, e => e is ConversationUpdate.ToolBatchSummary);
-        Assert.Equal("Szukam… Słonecznie.\n-# 🔗 [weather.example](https://weather.example/krk)", FinalAnswer(events));
+        Assert.DoesNotContain(events, e => e is ConversationUpdate.ToolCalls);
+        // The search line posts the text before it (#438), so the answer is what came after.
+        Assert.Equal(["Szukam… ", "-# 🔎 web_search: pogoda kraków",
+            "Słonecznie.\n-# 🔗 [weather.example](https://weather.example/krk)"], await RenderAsync(events));
 
         // The second request ends with the paused assistant message, search blocks included.
         var last = ClaudeRequest.Messages(handler.Requests[1])[^1]!;
@@ -343,11 +346,131 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         Assert.DoesNotContain("🔗", FinalAnswer(events));
     }
 
+    // #438: the text before a search, the search line and the text after it are three
+    // messages — the prod turn "Okej, szukam…Dziś (16.10.2026)…" glued the two texts.
+    [Fact]
+    public async Task SearchMidRound_TextBeforeAndAfter_RenderAsThreeMessages()
+    {
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.Start()
+            .Text("Okej, szukam aktualnego kursu EUR/PLN…")
+            .WebSearch("srvtoolu_1", "kurs EUR PLN", ("https://kursy.example/eur", "Kurs"))
+            .Text("Dziś (16.10.2026) euro kosztuje 4,25 zł.", ("https://kursy.example/eur", "Kurs"))
+            .End(webSearches: 1));
+
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
+            .GenerateReplyAsync("wyszukaj w necie kurs euro", Context(), CancellationToken.None));
+
+        Assert.Equal(
+        [
+            "Okej, szukam aktualnego kursu EUR/PLN…",
+            "-# 🔎 web_search: kurs EUR PLN",
+            "Dziś (16.10.2026) euro kosztuje 4,25 zł.\n-# 🔗 [kursy.example](https://kursy.example/eur)",
+        ], await RenderAsync(events));
+    }
+
+    // A search and a local tool in one turn: every call is its own message, in the model's order.
+    [Fact]
+    public async Task SearchThenMemeSearch_EveryCallIsItsOwnMessage()
+    {
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start()
+                .Text("Szukam w sieci. ")
+                .WebSearch("srvtoolu_1", "grumpy cat", ("https://cats.example/grumpy", "Grumpy"))
+                .Text("Teraz memy. ")
+                .ToolUse("toolu_1", "meme_search", """{"query":"kot","limit":5}""")
+                .ToolUse("toolu_2", "meme_search", """{"query":"grumpy","limit":5}""")
+                .End("tool_use", webSearches: 1),
+            _ => ClaudeSse.Start().Text("Nie mam takiego mema.").End(),
+        });
+
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
+            .GenerateReplyAsync("wyszukaj w necie grumpy cat, a potem znajdź mema o kocie", Context(), CancellationToken.None));
+
+        Assert.Equal(
+        [
+            "Szukam w sieci. ",
+            "-# 🔎 web_search: grumpy cat",
+            "Teraz memy. ",
+            "-# 🔧 meme_search",
+            "-# 🔧 meme_search",
+            "Nie mam takiego mema.",
+        ], await RenderAsync(events));
+    }
+
+    // A retried attempt after a posted search line: that post cannot be taken back, so the
+    // retry shows its narration and search line again — but the text before the reset goes
+    // out once, never re-sent on top of what is already on screen.
+    [Fact]
+    public async Task SearchPostedThenAttemptFails_RetryRendersTheAnswerOnce()
+    {
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start()
+                .Text("Szukam… ")
+                .WebSearch("srvtoolu_1", "pogoda", ("https://weather.example/krk", "Weather"))
+                .Text("Słonecz")
+                .Error("overloaded_error"),
+            _ => ClaudeSse.Start()
+                .Text("Szukam… ")
+                .WebSearch("srvtoolu_2", "pogoda", ("https://weather.example/krk", "Weather"))
+                .Text("Słonecznie.", ("https://weather.example/krk", "Weather"))
+                .End(webSearches: 1),
+        });
+
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
+            .GenerateReplyAsync("jaka pogoda?", Context(), CancellationToken.None));
+
+        Assert.Equal(2, handler.CallCount);
+        Assert.Equal(
+        [
+            "Szukam… ",
+            "-# 🔎 web_search: pogoda",
+            "Szukam… ",
+            "-# 🔎 web_search: pogoda",
+            "Słonecznie.\n-# 🔗 [weather.example](https://weather.example/krk)",
+        ], await RenderAsync(events));
+    }
+
+    // A failed attempt after a paused round: the reset re-sends only the paused text the search
+    // line did not post. Re-sending the whole paused answer would repeat "Szukam… " on screen.
+    [Fact]
+    public async Task PausedSearchThenFailedAttempt_ResetResendsOnlyTheUnpostedText()
+    {
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start()
+                .Text("Szukam… ")
+                .WebSearch("srvtoolu_1", "pogoda", ("https://weather.example/krk", "Weather"))
+                .Text("Jest ")
+                .End("pause_turn", webSearches: 1),
+            1 => ClaudeSse.Start().Text("sło").Error("overloaded_error"),
+            _ => ClaudeSse.Start().Text("słonecznie.").End(),
+        });
+
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
+            .GenerateReplyAsync("jaka pogoda?", Context(), CancellationToken.None));
+
+        Assert.Equal(3, handler.CallCount);
+        Assert.Equal(["Szukam… ", "-# 🔎 web_search: pogoda", "Jest słonecznie."], await RenderAsync(events));
+    }
+
+    // The events through the real renderer, as the messages Discord receives.
+    private static async Task<List<string>> RenderAsync(IEnumerable<ConversationUpdate> events)
+    {
+        var surface = new FakeTurnSurface();
+        var renderer = new TurnRenderer(surface);
+        foreach (var update in events)
+            await renderer.ApplyAsync(update);
+        await renderer.CompleteTurnAsync();
+        return surface.Sent;
+    }
+
     private static ConversationContext Context() =>
         new(GuildDiscordId, InvokerId, "tester", IsAdmin: false, ChannelId: ThreadChannelId);
 
-    // What the discrete renderer (#274) posts after the last tool round: buffered deltas,
-    // dropped on RoundReset, reset at each tool-batch boundary.
+    // What the discrete renderer (#274) posts after the last tool call: buffered deltas,
+    // dropped on RoundReset, reset at each tool round and web search.
     private static string FinalAnswer(IReadOnlyList<ConversationUpdate> events)
     {
         var text = new StringBuilder();
@@ -358,7 +481,7 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
                 case ConversationUpdate.AssistantTextDelta delta:
                     text.Append(delta.Text);
                     break;
-                case ConversationUpdate.ToolBatchSummary or ConversationUpdate.RoundReset:
+                case ConversationUpdate.ToolCalls or ConversationUpdate.ServerToolCall or ConversationUpdate.RoundReset:
                     text.Clear();
                     break;
             }
@@ -374,6 +497,8 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             ReasoningEffort = "low",
             PrimaryGuildId = GuildDiscordId,
             WebSearch = new WebSearchOptions { Enabled = webSearchEnabled },
+            RetryBaseDelayMs = 1,
+            RetryMaxDelayMs = 2,
         });
         if (model is not null)
             conversationOptions.Value.Model = model;
