@@ -580,6 +580,9 @@ internal sealed class ConversationService(
               that may have changed recently — you can search the web (it runs automatically
               when you use your web search tool); prefer searching over guessing when freshness
               matters, and cite your sources.
+              Earlier turns show each web search you ran as a line like [web_search: "…"] or
+              [web_search results: …]. The bot adds these lines; never write one yourself. Never
+              say an earlier answer was invented or not searched when such a line is there.
 
               For RIGHT-NOW questions use the LIVE tools instead of the database — the database is
               an ingested copy and can lag. voice_occupants tells you who is sitting in which voice

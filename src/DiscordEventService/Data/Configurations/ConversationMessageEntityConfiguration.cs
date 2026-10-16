@@ -9,9 +9,9 @@ internal sealed class ConversationMessageEntityConfiguration : IEntityTypeConfig
     // Role decides which columns a row carries: assistant rows may bundle tool calls,
     // tool rows must name the call they answer, user rows carry only text.
     private const string RoleShapeConstraintSql =
-        "(role = 0 AND tool_calls_json IS NULL AND tool_call_id IS NULL AND tool_result IS NULL) OR " +
+        "(role = 0 AND tool_calls_json IS NULL AND web_searches_json IS NULL AND tool_call_id IS NULL AND tool_result IS NULL) OR " +
         "(role = 1 AND tool_call_id IS NULL AND tool_result IS NULL) OR " +
-        "(role = 2 AND tool_call_id IS NOT NULL AND tool_result IS NOT NULL AND tool_calls_json IS NULL)";
+        "(role = 2 AND tool_call_id IS NOT NULL AND tool_result IS NOT NULL AND tool_calls_json IS NULL AND web_searches_json IS NULL)";
 
     public void Configure(EntityTypeBuilder<ConversationMessageEntity> builder)
     {
@@ -23,6 +23,7 @@ internal sealed class ConversationMessageEntityConfiguration : IEntityTypeConfig
         builder.HasIndex(m => new { m.ConversationId, m.Id });
 
         builder.Property(m => m.ToolCallsJson).HasColumnType("jsonb");
+        builder.Property(m => m.WebSearchesJson).HasColumnType("jsonb");
 
         // Append-only history — never cascade-delete it with the conversation row.
         builder.HasOne(m => m.Conversation)

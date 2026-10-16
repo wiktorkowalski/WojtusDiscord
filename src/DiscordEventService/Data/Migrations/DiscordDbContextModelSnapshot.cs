@@ -119,6 +119,10 @@ namespace DiscordEventService.Data.Migrations
                         .HasColumnType("integer")
                         .HasColumnName("turn_index");
 
+                    b.Property<string>("WebSearchesJson")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("web_searches_json");
+
                     b.HasKey("Id")
                         .HasName("pk_conversation_message");
 
@@ -127,7 +131,7 @@ namespace DiscordEventService.Data.Migrations
 
                     b.ToTable("conversation_message", null, t =>
                         {
-                            t.HasCheckConstraint("ck_conversation_message_role_shape", "(role = 0 AND tool_calls_json IS NULL AND tool_call_id IS NULL AND tool_result IS NULL) OR (role = 1 AND tool_call_id IS NULL AND tool_result IS NULL) OR (role = 2 AND tool_call_id IS NOT NULL AND tool_result IS NOT NULL AND tool_calls_json IS NULL)");
+                            t.HasCheckConstraint("ck_conversation_message_role_shape", "(role = 0 AND tool_calls_json IS NULL AND web_searches_json IS NULL AND tool_call_id IS NULL AND tool_result IS NULL) OR (role = 1 AND tool_call_id IS NULL AND tool_result IS NULL) OR (role = 2 AND tool_call_id IS NOT NULL AND tool_result IS NOT NULL AND tool_calls_json IS NULL AND web_searches_json IS NULL)");
                         });
                 });
 
