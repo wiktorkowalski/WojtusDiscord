@@ -48,6 +48,7 @@ internal sealed class ConversationMemoryService(
 
     private static readonly JsonSerializerOptions ToolCallsSerializerOptions = new(JsonSerializerDefaults.Web);
 
+
     // Loads (or creates) the channel's conversation and builds the replay window for a
     // new turn. The window walks stored messages newest->oldest summing est_tokens until
     // WindowTokenBudget, backstopped by WindowMaxMessages — and never splits an assistant
@@ -123,7 +124,10 @@ internal sealed class ConversationMemoryService(
             var reasoning = string.Concat(
                 message.Contents.OfType<TextReasoningContent>().Select(content => content.Text));
             var toolCallsJson = SerializeToolCalls(message.Contents.OfType<FunctionCallContent>().ToList());
-            if (string.IsNullOrEmpty(text) && string.IsNullOrEmpty(reasoning) && toolCallsJson is null)
+            var webSearches = ConversationHistory.WebSearchRecords(message, logger);
+            var webSearchesJson = webSearches.Count == 0 ? null : JsonSerializer.Serialize(webSearches, ToolCallsSerializerOptions);
+            if (string.IsNullOrEmpty(text) && string.IsNullOrEmpty(reasoning) && toolCallsJson is null
+                && webSearchesJson is null)
                 continue;
 
             db.ConversationMessages.Add(new ConversationMessageEntity
@@ -133,10 +137,12 @@ internal sealed class ConversationMemoryService(
                 Role = ConversationMessageRole.Assistant,
                 Text = string.IsNullOrEmpty(text) ? null : text,
                 ToolCallsJson = toolCallsJson,
+                WebSearchesJson = webSearchesJson,
                 Reasoning = string.IsNullOrEmpty(reasoning) ? null : reasoning,
                 PromptTokens = usageRecorded ? null : promptTokens,
                 CompletionTokens = usageRecorded ? null : completionTokens,
-                EstTokens = EstimateTokens(text, toolCallsJson, reasoning),
+                // The markers, not the stored JSON: the window carries what replay sends.
+                EstTokens = EstimateTokens(text, toolCallsJson, ConversationHistory.FormatMarkers(webSearches), reasoning),
                 CreatedAtUtc = DateTime.UtcNow,
             });
             usageRecorded = true;
@@ -335,7 +341,7 @@ internal sealed class ConversationMemoryService(
             // edges are checked on the rows the request carries — counted as the answer, it
             // would hide an unanswered tool group in front of it (#426).
             if (row.Role == ConversationMessageRole.Assistant
-                && string.IsNullOrEmpty(row.Text) && row.ToolCallsJson is null)
+                && string.IsNullOrEmpty(row.Text) && row.ToolCallsJson is null && row.WebSearchesJson is null)
                 continue;
 
             CloseGroup(groups, ref openGroup, ref pendingCallIds);
@@ -402,6 +408,8 @@ internal sealed class ConversationMemoryService(
                 List<AIContent> contents = [];
                 // Reasoning is persisted but deliberately NOT replayed — stale thinking
                 // signatures (research A-OQ2); revisit if reply quality suffers.
+                if (row.WebSearchesJson is not null)
+                    contents.Add(RehydrateWebSearches(row.WebSearchesJson));
                 if (!string.IsNullOrEmpty(row.Text))
                     contents.Add(new TextContent(row.Text));
                 if (row.ToolCallsJson is not null)
@@ -409,6 +417,12 @@ internal sealed class ConversationMemoryService(
                 return new ChatMessage(ChatRole.Assistant, contents);
         }
     }
+
+    // The searches as text markers before the row's text (#440): the model sees the search
+    // behind an answer and does not retract it as invented.
+    private static TextContent RehydrateWebSearches(string webSearchesJson) =>
+        new(ConversationHistory.FormatMarkers(
+            JsonSerializer.Deserialize<List<ConversationHistory.WebSearchRecord>>(webSearchesJson, ToolCallsSerializerOptions) ?? []));
 
     private IEnumerable<FunctionCallContent> RehydrateToolCalls(string toolCallsJson)
     {

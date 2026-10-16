@@ -33,6 +33,12 @@ public class ConversationMessageEntity
     // a dictionary of JsonElements.
     public string? ToolCallsJson { get; set; }
 
+    // Assistant rows only: JSON array of the round's web searches (#440) — { query } for a
+    // server_tool_use block, { urls } for its result. The blocks themselves are not kept
+    // (encrypted_content), but without this record a later turn sees an answer with no
+    // search behind it and the model "admits" it made the facts up.
+    public string? WebSearchesJson { get; set; }
+
     // Tool rows only. ToolResult is the tool's raw string, stored as plain text —
     // NEVER a serialized ChatMessage blob: rehydrating FunctionResultContent with a
     // string Result keeps the MEAI adapter's `as string` fast-path and byte-identical

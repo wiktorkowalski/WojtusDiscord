@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Anthropic.Models.Messages;
 using Microsoft.Extensions.AI;
 
@@ -124,6 +125,102 @@ internal static class ConversationHistory
 
     // The query of a search call; a call without one is dropped from the history and from the render.
     public static string? SearchQuery(WebSearchToolCallContent call) => call.Queries is [var query, ..] ? query : null;
+
+    // What the store keeps of one web search block (#440): the query of a server_tool_use, or
+    // the sources (or error code) of a web_search_tool_result. A later turn gets this record
+    // as text, not the blocks: their encrypted_content would fill the replay window.
+    internal sealed record WebSearchRecord
+    {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? Query { get; init; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<WebSearchCitations.Citation>? Sources { get; init; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? Error { get; init; }
+    }
+
+    // The sources a marker lists: enough to re-cite, short enough for the window.
+    private const int MaxMarkerSources = 5;
+    private const int MaxMarkerFieldLength = 120;
+
+    // The web search blocks of one ForReplay message, in the model's order.
+    public static List<WebSearchRecord> WebSearchRecords(ChatMessage message, ILogger logger)
+    {
+        List<WebSearchRecord> records = [];
+        foreach (var content in message.Contents)
+        {
+            if (content.RawRepresentation is not ContentBlockParam block)
+                continue;
+
+            if (block.TryPickServerToolUse(out var call)
+                && call.Input.TryGetValue("query", out var query) && query.ValueKind == JsonValueKind.String)
+            {
+                records.Add(new WebSearchRecord { Query = query.GetString() });
+            }
+            else if (block.TryPickWebSearchToolResult(out var result))
+            {
+                records.Add(ToRecord(result, logger));
+            }
+        }
+
+        return records;
+    }
+
+    // The block came from FromRawUnchecked: an odd shape must not fail the turn's persist.
+    private static WebSearchRecord ToRecord(WebSearchToolResultBlockParam result, ILogger logger)
+    {
+        try
+        {
+            if (result.Content.TryPickItem(out var results))
+                return new WebSearchRecord { Sources = [.. results.Select(r => new WebSearchCitations.Citation(r.Url, r.Title))] };
+            if (result.Content.TryPickRequestError(out var error))
+                return new WebSearchRecord { Error = error.RawData.TryGetValue("error_code", out var code) ? code.ToString() : "unknown" };
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or JsonException or KeyNotFoundException)
+        {
+            logger.LogWarning(ex, "Unreadable web search result {CallId}; storing it without sources", result.ToolUseID);
+        }
+
+        return new WebSearchRecord { Error = "unreadable" };
+    }
+
+    // One line per record, e.g. `[web_search: "pogoda Kraków"]` or
+    // `[web_search results: Pogoda — https://…; …]`. The system prompt tells the model what
+    // these lines are and never to write one itself.
+    public static string FormatMarkers(IEnumerable<WebSearchRecord> records) =>
+        string.Join('\n', records.Select(FormatMarker));
+
+    private static string FormatMarker(WebSearchRecord record)
+    {
+        if (record.Query is { } query)
+            return $"[web_search: \"{Sanitize(query)}\"]";
+        if (record.Sources?.Where(source => IsHttpUrl(source.Url)).Take(MaxMarkerSources).ToList() is { Count: > 0 } sources)
+            return "[web_search results: " + string.Join("; ", sources.Select(FormatSource)) + "]";
+        return $"[web_search failed: {Sanitize(record.Error ?? "no results")}]";
+    }
+
+    private static string FormatSource(WebSearchCitations.Citation source) =>
+        Sanitize(source.Title) is { Length: > 0 } title ? $"{title} — {source.Url}" : source.Url;
+
+    // Titles come from arbitrary web pages and replay as the assistant's own words: one line,
+    // no brackets or quotes that could close the marker, and capped.
+    private static string Sanitize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return string.Empty;
+
+        var clean = new string([.. value.Select(c => char.IsControl(c) || c is '[' or ']' or '"' ? ' ' : c)]).Trim();
+        return clean.Length <= MaxMarkerFieldLength ? clean : clean[..MaxMarkerFieldLength] + "…";
+    }
+
+    // Only http(s): the URL is replayed verbatim, so it must not carry a newline or another scheme.
+    private static bool IsHttpUrl(string url) =>
+        url.Length <= 2048
+        && Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+        && !url.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || c is '[' or ']');
 
     // Text of a response without the empty citation carriers: Claude splits an answer into
     // many text blocks (one per citation span), and ChatMessage.Text joins them all.
