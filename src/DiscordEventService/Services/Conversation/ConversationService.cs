@@ -143,6 +143,10 @@ internal sealed class ConversationService(
         // spreads one answer over several rounds.
         var answer = new StringBuilder();
 
+        // Whether visible text waits in the handler's buffer (#438): a search line posts the
+        // text before it, so `answer` alone cannot tell if an answer is left to post.
+        var textPending = false;
+
         // Streams one round into the transcript sink under the §2 retry policy (#268):
         // up to RetryMaxAttempts calls over the same intact `messages` prefix (a failed
         // attempt appended nothing and dispatched no tools), full-jitter backoff between
@@ -159,6 +163,7 @@ internal sealed class ConversationService(
                 var streamedVisibleText = false;
                 // The text this attempt has in the handler's buffer: a search line posts it.
                 var bufferedLength = 0;
+                var textPendingAtStart = textPending;
                 Exception? failure = null;
                 var stopwatch = Stopwatch.StartNew();
 
@@ -208,6 +213,7 @@ internal sealed class ConversationService(
                                 BotMetrics.ConversationFirstTokenReceived(options.Model, stopwatch.Elapsed);
                             streamedVisibleText = true;
                             bufferedLength += update.Text.Length;
+                            textPending |= !string.IsNullOrWhiteSpace(update.Text);
                             yield return new ConversationUpdate.AssistantTextDelta(update.Text);
                         }
 
@@ -218,6 +224,7 @@ internal sealed class ConversationService(
                                 || ConversationHistory.SearchQuery(call) is not { } query)
                                 continue;
                             bufferedLength = 0;
+                            textPending = textPendingAtStart = false;
                             yield return new ConversationUpdate.ToolCall($"-# 🔎 web_search: {query}");
                         }
                     }
@@ -248,6 +255,7 @@ internal sealed class ConversationService(
                 // retried stream (or the failure line) renders exactly once. Only this
                 // attempt's text goes: after a pause_turn the buffer also holds the paused
                 // rounds' text, and a search line has posted what came before it.
+                textPending = textPendingAtStart;
                 if (bufferedLength > 0)
                     yield return new ConversationUpdate.RoundReset(bufferedLength);
 
@@ -353,7 +361,7 @@ internal sealed class ConversationService(
             if (toolCalls.Count == 0)
             {
                 var answerText = answer.ToString();
-                var hadText = !string.IsNullOrWhiteSpace(answerText);
+                var hadText = textPending;
                 var finalAnswer = hadText ? answerText : EmptyAnswerFallback;
                 turnLog.Finish(TurnLog.Answered, finalAnswer);
                 if (!hadText)
@@ -387,6 +395,7 @@ internal sealed class ConversationService(
             // tool_use message in the single user message right after it.
             messages.Add(new ChatMessage(ChatRole.Tool, results));
             answer.Clear();
+            textPending = false;
 
             foreach (var call in toolCalls)
                 yield return new ConversationUpdate.ToolCall($"-# 🔧 {call.Name}");
@@ -422,7 +431,7 @@ internal sealed class ConversationService(
         answer.Append(ConversationHistory.AnswerText(finalReplay));
 
         var cappedText = answer.ToString();
-        var cappedHadText = !string.IsNullOrWhiteSpace(cappedText);
+        var cappedHadText = textPending;
         var cappedAnswer = cappedHadText ? cappedText : CapReachedFallback;
         turnLog.Finish(TurnLog.RoundCap, cappedAnswer);
         if (!cappedHadText)

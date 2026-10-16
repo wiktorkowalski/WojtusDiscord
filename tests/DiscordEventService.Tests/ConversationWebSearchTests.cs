@@ -367,6 +367,23 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         ], await TurnRendering.RenderAsync(events));
     }
 
+    // Review of #439: the search line posts the text before it, so a turn with no text after
+    // the search still has no answer to post — the fallback goes, not a bare search line.
+    [Fact]
+    public async Task SearchWithNoTextAfterIt_PostsTheEmptyAnswerFallback()
+    {
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.Start()
+            .Text("Szukam… ")
+            .WebSearch("srvtoolu_1", "pogoda", ("https://weather.example/krk", "Weather"))
+            .End(webSearches: 1));
+
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
+            .GenerateReplyAsync("jaka pogoda?", Context(), CancellationToken.None));
+
+        Assert.Equal(["Szukam… ", "-# 🔎 web_search: pogoda", "Hmm, nie wiem, jak na to odpowiedzieć."],
+            await TurnRendering.RenderAsync(events));
+    }
+
     // A search and a local tool in one turn: every call is its own message, in the model's order.
     [Fact]
     public async Task SearchThenMemeSearch_EveryCallIsItsOwnMessage()
