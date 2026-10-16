@@ -37,3 +37,14 @@ The scope is the conversation only. Meme indexing, the meme benchmark, `OpenRout
 - **Input tokens include the cache.** `prompt_tokens` and the input token metric count cache reads and cache writes. A cached prompt costs less than its token count suggests.
 - **Langfuse model definition.** ADR-0006 records a Langfuse project model definition keyed `anthropic/claude-sonnet-5`. The new model id does not match it. A follow-up must add a definition for `claude-sonnet-5`. The `conversation.cost_usd` trace attribute stays the authoritative cost.
 - **Outbound monitoring.** The runtime dashboard watches `api.anthropic.com` as its own host. The OpenRouter panels now cover meme vision calls only.
+
+## Amendment: Claude Sonnet 5.5 (2026-10-16, #435)
+
+The model id is now `claude-sonnet-5-5`. The prices are the same as `claude-sonnet-5`. The price table keeps the `claude-sonnet-5` row, so a rollback by `Conversation__Model` still gets a cost.
+
+- **Breaking changes that do not apply.** Sonnet 5.5 rejects `thinking: disabled`, forced `tool_choice` (`any` / `tool`) and non-default sampling values. The loop sends none of them: adaptive thinking, `auto`, and `none` on the post-cap round.
+- **Effort.** The effort levels are recalibrated on 5.5. `medium` stays: it is the start point for multistep tool use, and the live tests showed no problem.
+- **Preserved thinking.** On 5.5 a replayed thinking block is valid only while everything before it is unchanged. The loop passed the check with `prefix_mismatch_behavior: "error"` (beta `thinking-binding-controls-2026-08-01`) in live tests: multi-round tools, web search plus a local tool in one prompt (the deferred result), and a follow-up in the same thread. A direct API test showed that the `server_tool_use` block `ConversationHistory` rebuilds is byte-identical to the block the API sent, and a thinking block after it stays valid. Moving `cache_control` is not an edit. The request does not send the beta: the history is append-only. A future change that edits earlier messages, the system prompt or the tools within a turn breaks this. Run the same check again for such a change.
+- **Text between tool calls.** 5.5 sends longer notes between tool calls as thinking blocks, not text. The bot narrates less between tools. This is accepted.
+- **Refusals.** 5.5 declines in five categories (`cyber`, `bio`, `frontier_llm`, `reasoning_extraction`, `general_harms`). The loop handles `refusal` as before. The server-side fallback (`fallbacks: "default"`) is not used: it retries only `cyber` and `frontier_llm`, it needs a beta header and a raw body field, and the ledger would record the wrong model.
+- **Langfuse.** The cost on the generation span comes from `langfuse.observation.cost_details` (#434). No Langfuse model definition is necessary for `claude-sonnet-5-5`.
