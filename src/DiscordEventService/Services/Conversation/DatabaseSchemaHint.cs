@@ -10,10 +10,16 @@ namespace DiscordEventService.Services.Conversation;
 // without bloating every round's tool payload. The text is stable, so it is built once and cached.
 internal sealed record DatabaseSchemaHint(string Text)
 {
+    // In the dashboard explorer, but the query role has no SELECT on them, so naming them would only
+    // invite a permission error. raw_event_logs: whole payloads, deleted content included (#460).
+    private static readonly HashSet<string> UnreadableTables = ["raw_event_logs"];
+
     public static DatabaseSchemaHint Build(SchemaCatalog catalog)
     {
         var builder = new StringBuilder();
-        foreach (var table in catalog.Tables.OrderBy(t => t.TableName, StringComparer.Ordinal))
+        foreach (var table in catalog.Tables
+                     .Where(t => !UnreadableTables.Contains(t.TableName))
+                     .OrderBy(t => t.TableName, StringComparer.Ordinal))
         {
             builder.Append(table.TableName).Append('(');
             builder.AppendJoin(", ", table.Columns.Select(DescribeColumn));

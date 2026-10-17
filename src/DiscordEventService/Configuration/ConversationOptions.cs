@@ -95,6 +95,10 @@ internal sealed class ConversationOptions
     public int QueryTimeoutSeconds { get; set; } = 10;
     public int QueryServerTimeoutSeconds { get; set; } = 15;
 
+    // What query_database hides from members (#460): Postgres row-level security on the query role,
+    // fed from these settings at boot (QuerySandboxSettingsWriter), so the model's SQL cannot skip it.
+    public QueryDatabaseOptions QueryDatabase { get; set; } = new();
+
     // Langfuse OTLP tracing (ADR-0006). All three are required to export; when any is
     // absent the feature still works, traces just aren't shipped.
     public string? LangfuseHost { get; set; }
@@ -145,6 +149,15 @@ internal sealed class ConversationOptions
 
     // The web search fee: $10 per 1,000 searches on the Claude API, any model.
     public double WebSearchPerThousandUsd { get; set; } = 10;
+}
+
+// Conversation:QueryDatabase:* (#460). Global switches, no per-turn bypass. A hidden channel id also
+// hides every channel and thread under it (a category hides its channels, a channel its threads).
+internal sealed class QueryDatabaseOptions
+{
+    public bool ExcludeDeletedMessages { get; set; } = true;
+
+    public ulong[] HiddenChannelIds { get; set; } = [];
 }
 
 // One model's token prices in USD per million tokens. CacheWrite is the 5-minute TTL write
