@@ -11,8 +11,9 @@ namespace DiscordEventService.Services.Conversation;
 internal sealed record DatabaseSchemaHint(string Text)
 {
     // In the dashboard explorer, but the query role has no SELECT on them, so naming them would only
-    // invite a permission error. raw_event_logs: whole payloads, deleted content included (#460).
-    private static readonly HashSet<string> UnreadableTables = ["raw_event_logs"];
+    // invite a permission error. raw_event_logs and failed_events: whole payloads, deleted content
+    // included (#460, #468).
+    private static readonly HashSet<string> UnreadableTables = ["raw_event_logs", "failed_events"];
 
     public static DatabaseSchemaHint Build(SchemaCatalog catalog)
     {
