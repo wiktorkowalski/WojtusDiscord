@@ -205,8 +205,8 @@ internal sealed class CostAlertOptions
     public bool Enabled { get; set; } = true;
 
     // Monthly caps warn at 80% and 100%; the daily runaway tripwire at 100% only.
-    public double? GlobalMonthlyUsd { get; set; } = 10;
-    public double? PerUserMonthlyUsd { get; set; } = 3;
+    public double? GlobalMonthlyUsd { get; set; } = 50;
+    public double? PerUserMonthlyUsd { get; set; } = 15;
     public double? GlobalDailyUsd { get; set; } = 5;
 
     // How many per-invoker sums a global-cap alert lists as the spend breakdown.

@@ -334,7 +334,11 @@ public sealed class UsageAlertTests(PostgresFixture fixture)
 
     private static IOptions<ConversationOptions> BuildOptions(Action<ConversationOptions>? configure)
     {
+        // Pinned caps: the seeds below are sized for these, not for the production defaults.
         var options = new ConversationOptions();
+        options.CostAlerts.GlobalMonthlyUsd = 10;
+        options.CostAlerts.PerUserMonthlyUsd = 3;
+        options.CostAlerts.GlobalDailyUsd = 5;
         configure?.Invoke(options);
         return Options.Create(options);
     }
