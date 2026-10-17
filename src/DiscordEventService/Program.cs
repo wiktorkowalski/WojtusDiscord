@@ -287,6 +287,17 @@ if (dbOptions.AutoMigrate)
     BotMetrics.BootPhaseFinished("migrate", Stopwatch.GetElapsedTime(migrateStartedAt));
 }
 
+// #460: what query_database hides comes from config, so write it on every boot, after the migration
+// that creates its tables.
+using (var scope = app.Services.CreateScope())
+{
+    await QuerySandboxSettingsWriter.ApplyAsync(
+        scope.ServiceProvider.GetRequiredService<DiscordDbContext>(),
+        app.Services.GetRequiredService<IOptions<ConversationOptions>>().Value.QueryDatabase,
+        app.Services.GetRequiredService<ILogger<Program>>(),
+        CancellationToken.None);
+}
+
 // #288: must run before app.Run() starts the Hangfire server, so dead chain jobs are deleted
 // before any worker can re-fetch them.
 var sweepStartedAt = Stopwatch.GetTimestamp();
