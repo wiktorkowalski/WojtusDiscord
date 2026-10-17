@@ -76,10 +76,13 @@ internal sealed class ConversationOptions
     // estimated message sizes (chars/4, a zero-dependency proxy; the per-request usage of
     // the API can't size a per-message window). The Claude tokenizer counts more tokens per
     // character than the old GPT-normalized OpenRouter counts, so the budget is a soft
-    // bound: compare it with the ledger's prompt_tokens (#426). WindowMaxMessages is the
-    // row backstop against a few huge tool dumps blowing the estimate.
-    public int WindowTokenBudget { get; set; } = 12000;
-    public int WindowMaxMessages { get; set; } = 40;
+    // bound: compare it with the ledger's prompt_tokens (#426). WindowMaxMessages caps the
+    // rows each turn loads before the budget trims them.
+    // A thread is one conversation, so the window holds all of it in practice: a row cap of 40
+    // let one person's spam push another person's messages out (#450). The token budget is the
+    // real bound; chars/4 undercounts, so 80k estimated stays well under the model's context.
+    public int WindowTokenBudget { get; set; } = 80000;
+    public int WindowMaxMessages { get; set; } = 1000;
 
     // query_database (#238 §4). The query runs inside a read-only transaction that first drops to
     // QueryRoleName via SET LOCAL ROLE — a non-superuser, SELECT-only role — so the model's SQL can

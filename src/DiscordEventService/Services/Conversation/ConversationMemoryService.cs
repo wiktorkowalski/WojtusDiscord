@@ -12,7 +12,12 @@ namespace DiscordEventService.Services.Conversation;
 // A turn's handle into the conversation store (#267): which conversation it belongs to,
 // its monotonic turn index, and the token-windowed replay of everything stored so far.
 internal sealed record ConversationTurnState(
-    Guid ConversationId, int TurnIndex, IReadOnlyList<ChatMessage> Window);
+    Guid ConversationId, int TurnIndex, IReadOnlyList<ChatMessage> Window)
+{
+    // The rows this turn wrote. TurnIndex alone does not name one turn: two turns started at
+    // once in one thread can share it (#450 review).
+    public List<Guid> RowIds { get; } = [];
+}
 
 // One model-call attempt's ledger row content (#267, #426). §1 always writes Attempt=1 and
 // Failed=false; the §2 retry policy adds attempt>1 and failed rows (which may still bill).
@@ -86,7 +91,7 @@ internal sealed class ConversationMemoryService(
         // The uuidv7 PK is insertion order; the newest WindowMaxMessages rows are the
         // most history the window may ever replay.
         var rows = await db.ConversationMessages
-            .Where(m => m.ConversationId == conversation.Id)
+            .Where(m => m.ConversationId == conversation.Id && !m.Refused)
             .OrderByDescending(m => m.Id)
             .Take(options.WindowMaxMessages)
             .ToListAsync(cancellationToken);
@@ -114,9 +119,16 @@ internal sealed class ConversationMemoryService(
         };
         row.EstTokens = EstimateTokens(UserText(row));
         db.ConversationMessages.Add(row);
-        await TouchAndSaveAsync(turn.ConversationId, cancellationToken);
+        await TouchAndSaveAsync(turn, cancellationToken);
         return Rehydrate(row, webSearchMarkers: null);
     }
+
+    // Takes the whole turn out of every later window (#450): the user row, the partial answer
+    // and any tool rows. The store stays append-only; the rows are flagged, not deleted.
+    public async Task MarkTurnRefusedAsync(ConversationTurnState turn, CancellationToken cancellationToken) =>
+        await db.ConversationMessages
+            .Where(m => turn.RowIds.Contains(m.Id))
+            .ExecuteUpdateAsync(setters => setters.SetProperty(m => m.Refused, true), cancellationToken);
 
     // A user row's text under a bot-added author line (#461), e.g. `[from: Damrad, id 123]`.
     // Several people can write in one thread; without the line the model takes them for one
@@ -169,7 +181,7 @@ internal sealed class ConversationMemoryService(
             usageRecorded = true;
         }
 
-        await TouchAndSaveAsync(turn.ConversationId, cancellationToken);
+        await TouchAndSaveAsync(turn, cancellationToken);
     }
 
     public async Task PersistToolResultAsync(
@@ -188,7 +200,7 @@ internal sealed class ConversationMemoryService(
             EstTokens = EstimateTokens(wireText),
             CreatedAtUtc = DateTime.UtcNow,
         });
-        await TouchAndSaveAsync(turn.ConversationId, cancellationToken);
+        await TouchAndSaveAsync(turn, cancellationToken);
     }
 
     public async Task RecordUsageAsync(
@@ -478,11 +490,17 @@ internal sealed class ConversationMemoryService(
         }
     }
 
-    private async Task TouchAndSaveAsync(Guid conversationId, CancellationToken cancellationToken)
+    // Also records which rows the turn wrote: MarkTurnRefusedAsync flags exactly those.
+    private async Task TouchAndSaveAsync(ConversationTurnState turn, CancellationToken cancellationToken)
     {
-        var conversation = await db.Conversations.FindAsync([conversationId], cancellationToken);
+        var conversation = await db.Conversations.FindAsync([turn.ConversationId], cancellationToken);
         if (conversation is not null)
             conversation.LastActivityAtUtc = DateTime.UtcNow;
+        var added = db.ChangeTracker.Entries<ConversationMessageEntity>()
+            .Where(entry => entry.State == EntityState.Added)
+            .Select(entry => entry.Entity)
+            .ToList();
         await db.SaveChangesAsync(cancellationToken);
+        turn.RowIds.AddRange(added.Select(row => row.Id));
     }
 }

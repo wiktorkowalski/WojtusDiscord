@@ -277,6 +277,21 @@ internal sealed class ConversationService(
             }
         }
 
+        // Ends a turn the API refused, in any round including the post-cap one. The turn leaves
+        // every later window (#450). Returns the text to post after any partial answer.
+        async Task<string> RefuseAsync(List<ChatResponseUpdate> sink, int round)
+        {
+            LogRefusal(sink, round, context);
+            await memory.MarkTurnRefusedAsync(memoryTurn, cancellationToken);
+            turnLog.Finish(TurnLog.Refused, RefusalMessage);
+            turn?.SetTag("conversation.refused", true);
+            turn?.SetTag("conversation.rounds", round);
+            turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
+            if (captureSensitiveData)
+                turn?.SetTag("langfuse.trace.output", RefusalMessage);
+            return string.IsNullOrWhiteSpace(answer.ToString()) ? RefusalMessage : $"\n{RefusalMessage}";
+        }
+
         // Records a successful round: the cost, the citations, the transcript rows and the
         // ledger row. Returns the round's assistant messages as the next request sends them.
         async Task<List<ChatMessage>> CompleteRoundAsync(
@@ -333,15 +348,7 @@ internal sealed class ConversationService(
 
             if (response.FinishReason == ChatFinishReason.ContentFilter)
             {
-                LogRefusal(sink, round, context);
-                turnLog.Finish(TurnLog.Refused, RefusalMessage);
-                yield return new ConversationUpdate.AssistantTextDelta(
-                    string.IsNullOrWhiteSpace(answer.ToString()) ? RefusalMessage : $"\n{RefusalMessage}");
-                turn?.SetTag("conversation.refused", true);
-                turn?.SetTag("conversation.rounds", round);
-                turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
-                if (captureSensitiveData)
-                    turn?.SetTag("langfuse.trace.output", RefusalMessage);
+                yield return new ConversationUpdate.AssistantTextDelta(await RefuseAsync(sink, round));
                 yield break;
             }
 
@@ -428,8 +435,15 @@ internal sealed class ConversationService(
             yield break;
         }
 
-        var finalReplay = await CompleteRoundAsync(finalSink, finalRound, finalOutcome, finalSink.ToChatResponse());
+        var finalResponse = finalSink.ToChatResponse();
+        var finalReplay = await CompleteRoundAsync(finalSink, finalRound, finalOutcome, finalResponse);
         answer.Append(ConversationHistory.AnswerText(finalReplay));
+
+        if (finalResponse.FinishReason == ChatFinishReason.ContentFilter)
+        {
+            yield return new ConversationUpdate.AssistantTextDelta(await RefuseAsync(finalSink, finalRound));
+            yield break;
+        }
 
         var cappedText = answer.ToString();
         var cappedHadText = textPending;

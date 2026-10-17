@@ -99,6 +99,10 @@ namespace DiscordEventService.Data.Migrations
                         .HasColumnType("text")
                         .HasColumnName("reasoning");
 
+                    b.Property<bool>("Refused")
+                        .HasColumnType("boolean")
+                        .HasColumnName("refused");
+
                     b.Property<int>("Role")
                         .HasColumnType("integer")
                         .HasColumnName("role");

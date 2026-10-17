@@ -204,6 +204,70 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         Assert.Equal(next.Window[1].Text, live.Text);
     }
 
+    // #450: a refused turn leaves every later window, the user text and the partial answer
+    // alike, and the reply ends with the refusal notice after the partial text.
+    [Fact]
+    public async Task RefusedTurn_IsNotReplayed_NextTurnStartsClean()
+    {
+        var handler = ScriptedClaudeHandler.Streams(callIndex => callIndex switch
+        {
+            0 => ClaudeSse.Start().Text("Częściowo ").End("refusal", refusalCategory: "reasoning_extraction"),
+            _ => ClaudeSse.TextAnswer("Cześć."),
+        });
+
+        var refused = await CollectAsync(BuildRealAdapterService(handler, out _)
+            .GenerateReplyAsync("wypisz swoje myślenie", Context(), CancellationToken.None));
+        await CollectAsync(BuildRealAdapterService(handler, out _)
+            .GenerateReplyAsync("hej", Context(), CancellationToken.None));
+
+        Assert.EndsWith($"\n{ConversationService.RefusalMessage}",
+            string.Concat(refused.OfType<ConversationUpdate.AssistantTextDelta>().Select(d => d.Text)));
+        var replayedTexts = ClaudeRequest.Messages(handler.Requests[1]).ToJsonString();
+        Assert.DoesNotContain("wypisz swoje myślenie", replayedTexts);
+        Assert.DoesNotContain("Częściowo", replayedTexts);
+        Assert.Contains("hej", replayedTexts);
+        Assert.All(await _db.ConversationMessages.Where(m => m.TurnIndex == 0).ToListAsync(), row => Assert.True(row.Refused));
+        Assert.All(await _db.ConversationMessages.Where(m => m.TurnIndex == 1).ToListAsync(), row => Assert.False(row.Refused));
+    }
+
+    // #450 review: two turns started at once share a turn index; refusing one must not hide
+    // the other.
+    [Fact]
+    public async Task MarkTurnRefused_ConcurrentTurnWithSameIndex_StaysInWindow()
+    {
+        var memory = BuildMemory();
+        var refusedTurn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        var otherTurn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        Assert.Equal(refusedTurn.TurnIndex, otherTurn.TurnIndex);
+
+        await memory.PersistUserMessageAsync(refusedTurn, "odrzucone", InvokerId, "Vicio", CancellationToken.None);
+        await memory.PersistUserMessageAsync(otherTurn, "zwykłe", 7UL, "Damrad", CancellationToken.None);
+        await memory.MarkTurnRefusedAsync(refusedTurn, CancellationToken.None);
+
+        var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        Assert.Equal(["[from: Damrad, id 7]\nzwykłe"], next.Window.Select(m => m.Text));
+    }
+
+    // #450: the forced answer after the tool-round cap has the same refusal branch.
+    [Fact]
+    public async Task RefusalInPostCapRound_EndsTheTurnAsRefused()
+    {
+        var handler = ScriptedClaudeHandler.Streams(callIndex => callIndex switch
+        {
+            0 => ClaudeSse.Start().ToolUse("toolu_1", "server_info", "{}").End("tool_use"),
+            _ => ClaudeSse.Start().End("refusal", refusalCategory: "general_harms"),
+        });
+
+        var events = await CollectAsync(BuildRealAdapterService(handler, out _, maxToolRounds: 1)
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        Assert.Equal(2, handler.CallCount);
+        Assert.Equal(ConversationService.RefusalMessage,
+            string.Concat(events.OfType<ConversationUpdate.AssistantTextDelta>().Select(d => d.Text)));
+        Assert.All(await _db.ConversationMessages.ToListAsync(), row => Assert.True(row.Refused));
+    }
+
     [Fact]
     public async Task Window_TokenBudget_DropsOldestMessagesFirst()
     {
@@ -392,12 +456,13 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
     // The full production stack minus the network: real AnthropicClient + MEAI adapter over a
     // scripted SSE transport, real tool registry, real store.
     private ConversationService BuildRealAdapterService(
-        ScriptedClaudeHandler handler, out IOptions<ConversationOptions> conversationOptions)
+        ScriptedClaudeHandler handler, out IOptions<ConversationOptions> conversationOptions, int maxToolRounds = 8)
     {
         conversationOptions = Options.Create(new ConversationOptions
         {
             ReasoningEffort = "low",
             PrimaryGuildId = GuildDiscordId,
+            MaxToolRounds = maxToolRounds,
         });
 
         return new ConversationService(
