@@ -1,4 +1,3 @@
-using DiscordEventService.Infrastructure;
 using DiscordEventService.Services.Conversation.Interaction;
 using DSharpPlus;
 using DSharpPlus.EventArgs;
@@ -12,7 +11,7 @@ internal sealed class ConfirmationComponentHandler(ConfirmationFlow flow)
 {
     public Task HandleEventAsync(DiscordClient sender, ComponentInteractionCreatedEventArgs e) =>
         flow.HandleAsync(
-            new ConfirmationClick(e.Id, e.User.Id, e.User.ShownName(), e.Guild?.Id),
+            new ConfirmationClick(e.Id, e.User.Id, e.User.Username, e.Guild?.Id),
             new DiscordConfirmationSurface(e),
             // The channel holding the card — where the outcome feedback turn (#310) posts.
             new DiscordTurnSurface(e.Channel));
