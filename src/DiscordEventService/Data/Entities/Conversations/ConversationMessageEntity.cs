@@ -69,6 +69,10 @@ public class ConversationMessageEntity
     // usage can't size a per-message window).
     public int EstTokens { get; set; }
 
+    // Every row of a turn the API refused (#450). The rows stay for the record, but the
+    // window never replays them: a refusal left in context gets the next turns refused too.
+    public bool Refused { get; set; }
+
     public DateTime CreatedAtUtc { get; set; }
 
     public ConversationEntity Conversation { get; set; } = null!;

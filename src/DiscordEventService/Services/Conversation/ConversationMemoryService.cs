@@ -86,7 +86,7 @@ internal sealed class ConversationMemoryService(
         // The uuidv7 PK is insertion order; the newest WindowMaxMessages rows are the
         // most history the window may ever replay.
         var rows = await db.ConversationMessages
-            .Where(m => m.ConversationId == conversation.Id)
+            .Where(m => m.ConversationId == conversation.Id && !m.Refused)
             .OrderByDescending(m => m.Id)
             .Take(options.WindowMaxMessages)
             .ToListAsync(cancellationToken);
@@ -117,6 +117,13 @@ internal sealed class ConversationMemoryService(
         await TouchAndSaveAsync(turn.ConversationId, cancellationToken);
         return Rehydrate(row, webSearchMarkers: null);
     }
+
+    // Takes the whole turn out of every later window (#450): the user row, the partial answer
+    // and any tool rows. The store stays append-only; the rows are flagged, not deleted.
+    public async Task MarkTurnRefusedAsync(ConversationTurnState turn, CancellationToken cancellationToken) =>
+        await db.ConversationMessages
+            .Where(m => m.ConversationId == turn.ConversationId && m.TurnIndex == turn.TurnIndex)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(m => m.Refused, true), cancellationToken);
 
     // A user row's text under a bot-added author line (#461), e.g. `[from: Damrad, id 123]`.
     // Several people can write in one thread; without the line the model takes them for one
