@@ -197,15 +197,22 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
 
     // #384: the meme search log holds what each person typed, and any member can run query_database.
     // The role gets SELECT on a new table by default, so the migration has to take it back.
+    // #444: the same for the assistant's conversations, DMs included, and the usage ledger that ties a
+    // row to its invoker.
     [Theory]
     [InlineData("meme_search_log")]
     [InlineData("meme_search_log_results")]
-    public async Task ExecuteAsync_MemeSearchLogTable_IsDeniedToTheQueryRole(string table)
+    [InlineData("conversation")]
+    [InlineData("conversation_message")]
+    [InlineData("conversation_usage")]
+    [InlineData("usage_alerts")]
+    public async Task RunAsync_PrivateTable_IsDeniedToTheQueryRole(string table)
     {
-        var result = await NewService().ExecuteAsync($"SELECT count(*) FROM {table}", CancellationToken.None);
+        var (text, failed) = await NewService().RunAsync($"SELECT count(*) FROM {table}", CancellationToken.None);
 
-        Assert.DoesNotContain("row_count", result);
-        Assert.Contains("permission denied", result);
+        Assert.True(failed);
+        Assert.DoesNotContain("row_count", text);
+        Assert.Contains("permission denied", text);
     }
 
     // The same gate read from the catalog: no privilege of any kind, for the query role and for
@@ -213,7 +220,11 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
     [Theory]
     [InlineData("meme_search_log")]
     [InlineData("meme_search_log_results")]
-    public async Task MemeSearchLogTable_GrantsNothingToTheQueryRoleOrToPublic(string table)
+    [InlineData("conversation")]
+    [InlineData("conversation_message")]
+    [InlineData("conversation_usage")]
+    [InlineData("usage_alerts")]
+    public async Task PrivateTable_GrantsNothingToTheQueryRoleOrToPublic(string table)
     {
         var privileges = await _db.Database.SqlQuery<bool>($"""
             SELECT has_table_privilege(r.role, {table}, p.privilege) AS "Value"
@@ -228,15 +239,24 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
         Assert.True(control);
     }
 
-    [Fact]
-    public async Task SchemaHint_DoesNotNameTheMemeSearchLog()
+    // The hint has one "name(columns)" line per table; matching the line start keeps "conversation"
+    // from hitting conversation_id, a column of other tables.
+    [Theory]
+    [InlineData("meme_search_log")]
+    [InlineData("meme_search_log_results")]
+    [InlineData("conversation")]
+    [InlineData("conversation_message")]
+    [InlineData("conversation_usage")]
+    [InlineData("usage_alerts")]
+    public async Task SchemaHint_DoesNotNameThePrivateTable(string table)
     {
         await using var context = NewContext();
         var catalog = SchemaCatalog.Build(context.Model);
 
-        Assert.DoesNotContain("meme_search_log", DatabaseSchemaHint.Build(catalog).Text);
-        Assert.False(catalog.TryGetTable("meme_search_log", out _));
-        Assert.False(catalog.TryGetTable("meme_search_log_results", out _));
+        Assert.DoesNotContain(
+            DatabaseSchemaHint.Build(catalog).Text.Split('\n'),
+            line => line.StartsWith($"{table}(", StringComparison.Ordinal));
+        Assert.False(catalog.TryGetTable(table, out _));
     }
 
     [Fact]

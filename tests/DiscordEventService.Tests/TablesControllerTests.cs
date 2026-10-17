@@ -122,11 +122,16 @@ public sealed class TablesControllerTests(PostgresFixture fixture) : IClassFixtu
             (await controller.GetRows("raw_event_logs", filterColumn: "nope", filter: "x", ct: default)).Result);
     }
 
-    // #384: the meme search log holds what each person typed. No HTTP endpoint serves it.
+    // #384, #444: the meme search log and the assistant's conversations hold what each person typed.
+    // No HTTP endpoint serves them.
     [Theory]
     [InlineData("meme_search_log")]
     [InlineData("meme_search_log_results")]
-    public async Task MemeSearchLogTable_IsNotListedAndNotReadable(string table)
+    [InlineData("conversation")]
+    [InlineData("conversation_message")]
+    [InlineData("conversation_usage")]
+    [InlineData("usage_alerts")]
+    public async Task PrivateTable_IsNotListedAndNotReadable(string table)
     {
         var controller = NewController();
 
