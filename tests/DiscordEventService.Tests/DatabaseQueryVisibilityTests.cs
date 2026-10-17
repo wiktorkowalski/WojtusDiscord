@@ -39,6 +39,7 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
         _db = NewContext();
         await _db.Database.MigrateAsync();
         await _db.MessageEvents.ExecuteDeleteAsync();
+        await _db.AutoModEvents.ExecuteDeleteAsync();
         await _db.MessageMentions.ExecuteDeleteAsync();
         await _db.MessageEditHistory.ExecuteDeleteAsync();
         await _db.Messages.ExecuteDeleteAsync();
@@ -70,7 +71,7 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
 
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
-    public static TheoryData<string> MessageTables => ["messages", "message_edit_history", "message_mentions", "message_events"];
+    public static TheoryData<string> MessageTables => ["messages", "message_edit_history", "message_mentions", "message_events", "auto_mod_events"];
 
     [Theory]
     [MemberData(nameof(MessageTables))]
@@ -151,6 +152,7 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
         Assert.Equal(4, await context.MessageEditHistory.CountAsync());
         Assert.Equal(4, await context.MessageMentions.CountAsync());
         Assert.Equal(5, await context.MessageEvents.CountAsync());
+        Assert.Equal(4, await context.AutoModEvents.CountAsync());
     }
 
     [Fact]
@@ -184,7 +186,7 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
         var filter = table switch
         {
             "messages" => $"discord_id = {messageDiscordId}",
-            "message_edit_history" or "message_events" => $"message_discord_id = {messageDiscordId}",
+            "message_edit_history" or "message_events" or "auto_mod_events" => $"message_discord_id = {messageDiscordId}",
             "message_mentions" => _messageUuids.TryGetValue(messageDiscordId, out var uuid)
                 ? $"message_id = '{uuid}'"
                 : "false",
@@ -236,6 +238,18 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
             MentionType = MessageMentionType.User,
         });
         _db.MessageEvents.Add(Event(discordId, channel.DiscordId, MessageEventType.Created));
+        _db.AutoModEvents.Add(new AutoModEventEntity
+        {
+            GuildDiscordId = GuildDiscordId,
+            RuleDiscordId = 9500UL,
+            EventType = AutoModEventType.ActionExecuted,
+            ChannelDiscordId = channel.DiscordId,
+            MessageDiscordId = discordId,
+            Content = message.Content,
+            MatchedContent = "text",
+            EventTimestampUtc = DateTime.UtcNow,
+            ReceivedAtUtc = DateTime.UtcNow,
+        });
     }
 
     private static MessageEventEntity Event(ulong messageDiscordId, ulong channelDiscordId, MessageEventType type) => new()

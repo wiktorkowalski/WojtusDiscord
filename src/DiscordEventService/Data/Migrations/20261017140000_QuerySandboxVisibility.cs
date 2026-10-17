@@ -30,11 +30,11 @@ namespace DiscordEventService.Data.Migrations
                 """);
 
             // SECURITY DEFINER so a policy evaluated as the query role can read the settings that role
-            // cannot SELECT. Each returns one value per query: the policies call them in a scalar subquery,
-            // which Postgres runs once as an InitPlan instead of once per row (the cast keeps "<> ALL" on
-            // its array form; without it, "<> ALL ((SELECT …))" compares against the subquery's rows).
-            // Owned by the migrating login (superuser or table owner), so the lookups inside bypass RLS and
-            // cannot recurse. A missing settings row reads as "exclude": the default fails closed.
+            // cannot SELECT. The policies test membership as "NOT IN (SELECT unnest(…))": an uncorrelated
+            // subquery, which Postgres runs once per query as a hashed SubPlan, so each row costs one hash
+            // probe (an "<> ALL (array)" over an InitPlan would scan the whole array per row). Owned by the
+            // migrating login (superuser or table owner), so the lookups inside bypass RLS and cannot
+            // recurse. A missing settings row reads as "exclude": the default fails closed.
             migrationBuilder.Sql("""
                 CREATE OR REPLACE FUNCTION public.query_sandbox_excludes_deleted() RETURNS boolean
                 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $fn$
@@ -75,8 +75,8 @@ namespace DiscordEventService.Data.Migrations
             // RLS does not touch ingestion: the app login owns these tables (and is a superuser), and owners
             // and superusers bypass RLS; FORCE is deliberately not set. message_edit_history and
             // message_mentions follow their message through messages' own policy (a policy's subquery is
-            // filtered by the queried table's RLS too). message_events carries ids only, so it checks the
-            // arrays. raw_event_logs holds whole payloads that cannot be row-filtered by deletion, so the
+            // filtered by the queried table's RLS too). message_events and auto_mod_events carry ids only, so
+            // they check the id sets. raw_event_logs holds whole payloads that cannot be row-filtered by deletion, so the
             // role loses it entirely.
             migrationBuilder.Sql("""
                 DO $do$
@@ -89,7 +89,7 @@ namespace DiscordEventService.Data.Migrations
                         DROP POLICY IF EXISTS query_sandbox_visible ON messages;
                         CREATE POLICY query_sandbox_visible ON messages FOR SELECT TO wojtus_query
                             USING ((NOT is_deleted OR NOT (SELECT public.query_sandbox_excludes_deleted()))
-                                   AND channel_id <> ALL ((SELECT public.query_sandbox_hidden_channel_uuids())::uuid[]));
+                                   AND channel_id NOT IN (SELECT unnest(public.query_sandbox_hidden_channel_uuids())));
 
                         ALTER TABLE message_edit_history ENABLE ROW LEVEL SECURITY;
                         DROP POLICY IF EXISTS query_sandbox_visible ON message_edit_history;
@@ -103,9 +103,19 @@ namespace DiscordEventService.Data.Migrations
 
                         ALTER TABLE message_events ENABLE ROW LEVEL SECURITY;
                         DROP POLICY IF EXISTS query_sandbox_visible ON message_events;
+                DROP POLICY IF EXISTS query_sandbox_visible ON auto_mod_events;
                         CREATE POLICY query_sandbox_visible ON message_events FOR SELECT TO wojtus_query
-                            USING (message_discord_id <> ALL ((SELECT public.query_sandbox_deleted_message_ids())::bigint[])
-                                   AND channel_discord_id <> ALL ((SELECT public.query_sandbox_hidden_channel_ids())::bigint[]));
+                            USING (message_discord_id NOT IN (SELECT unnest(public.query_sandbox_deleted_message_ids()))
+                                   AND channel_discord_id NOT IN (SELECT unnest(public.query_sandbox_hidden_channel_ids())));
+
+                        -- AutoMod keeps the text it flagged, keyed by channel and (when not blocked) message.
+                        ALTER TABLE auto_mod_events ENABLE ROW LEVEL SECURITY;
+                        DROP POLICY IF EXISTS query_sandbox_visible ON auto_mod_events;
+                        CREATE POLICY query_sandbox_visible ON auto_mod_events FOR SELECT TO wojtus_query
+                            USING ((message_discord_id IS NULL
+                                    OR message_discord_id NOT IN (SELECT unnest(public.query_sandbox_deleted_message_ids())))
+                                   AND (channel_discord_id IS NULL
+                                    OR channel_discord_id NOT IN (SELECT unnest(public.query_sandbox_hidden_channel_ids()))));
                     END IF;
                 END
                 $do$;
@@ -120,10 +130,12 @@ namespace DiscordEventService.Data.Migrations
                 DROP POLICY IF EXISTS query_sandbox_visible ON message_edit_history;
                 DROP POLICY IF EXISTS query_sandbox_visible ON message_mentions;
                 DROP POLICY IF EXISTS query_sandbox_visible ON message_events;
+                DROP POLICY IF EXISTS query_sandbox_visible ON auto_mod_events;
                 ALTER TABLE messages DISABLE ROW LEVEL SECURITY;
                 ALTER TABLE message_edit_history DISABLE ROW LEVEL SECURITY;
                 ALTER TABLE message_mentions DISABLE ROW LEVEL SECURITY;
                 ALTER TABLE message_events DISABLE ROW LEVEL SECURITY;
+                ALTER TABLE auto_mod_events DISABLE ROW LEVEL SECURITY;
 
                 DROP FUNCTION IF EXISTS public.query_sandbox_deleted_message_ids();
                 DROP FUNCTION IF EXISTS public.query_sandbox_hidden_channel_uuids();
