@@ -230,6 +230,25 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         Assert.All(await _db.ConversationMessages.Where(m => m.TurnIndex == 1).ToListAsync(), row => Assert.False(row.Refused));
     }
 
+    // #450 review: two turns started at once share a turn index; refusing one must not hide
+    // the other.
+    [Fact]
+    public async Task MarkTurnRefused_ConcurrentTurnWithSameIndex_StaysInWindow()
+    {
+        var memory = BuildMemory();
+        var refusedTurn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        var otherTurn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        Assert.Equal(refusedTurn.TurnIndex, otherTurn.TurnIndex);
+
+        await memory.PersistUserMessageAsync(refusedTurn, "odrzucone", InvokerId, "Vicio", CancellationToken.None);
+        await memory.PersistUserMessageAsync(otherTurn, "zwykłe", 7UL, "Damrad", CancellationToken.None);
+        await memory.MarkTurnRefusedAsync(refusedTurn, CancellationToken.None);
+
+        var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        Assert.Equal(["[from: Damrad, id 7]\nzwykłe"], next.Window.Select(m => m.Text));
+    }
+
     // #450: the forced answer after the tool-round cap has the same refusal branch.
     [Fact]
     public async Task RefusalInPostCapRound_EndsTheTurnAsRefused()
