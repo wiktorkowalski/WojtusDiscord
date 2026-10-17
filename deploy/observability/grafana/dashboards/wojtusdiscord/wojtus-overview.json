@@ -1128,11 +1128,11 @@
               },
               {
                 "color": "#fab219",
-                "value": 1
+                "value": 3
               },
               {
                 "color": "#d03b3b",
-                "value": 2
+                "value": 5
               }
             ]
           },
@@ -1159,7 +1159,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Cost of conversation and meme vision model calls in the last 24 hours. The bot computes the conversation cost from the tokens and the price table in config; it holds the web search fee. The conversation alert fires above 2 USD."
+      "description": "Cost of conversation and meme vision model calls in the last 24 hours. The bot computes the conversation cost from the tokens and the price table in config; it holds the web search fee. The conversation alert fires above 5 USD."
     },
     {
       "type": "stat",

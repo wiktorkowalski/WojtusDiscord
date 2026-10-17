@@ -242,14 +242,14 @@ groups:
       # The bot computes the counter from the tokens and the price table in config: the web search fee is inside it.
       - alert: WojtusConversationCostHigh
         expr: |
-          sum(sum_over_time(((wojtus_conversation_cost_usd_total{job="wojtusdiscord"} - (((last_over_time(wojtus_conversation_cost_usd_total{job="wojtusdiscord"}[10m] offset 5m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 900)) or (wojtus_conversation_cost_usd_total{job="wojtusdiscord"} offset 5m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 900))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 5m))) >= 0) or (wojtus_conversation_cost_usd_total{job="wojtusdiscord"} + 0))[24h:5m])) > 2
+          sum(sum_over_time(((wojtus_conversation_cost_usd_total{job="wojtusdiscord"} - (((last_over_time(wojtus_conversation_cost_usd_total{job="wojtusdiscord"}[10m] offset 5m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 900)) or (wojtus_conversation_cost_usd_total{job="wojtusdiscord"} offset 5m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 900))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 5m))) >= 0) or (wojtus_conversation_cost_usd_total{job="wojtusdiscord"} + 0))[24h:5m])) > 5
         for: 10m
         labels:
           severity: warning
           service: wojtusdiscord
         annotations:
           summary: "Conversation cost is {{ $value | printf \"%.2f\" }} USD in 24 hours"
-          description: "Normal is a few cents a day. Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user."
+          description: "Normal is about 2 USD a day on claude-sonnet-5-5 (2026-10). Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user."
 
       - alert: WojtusConversationUsageAlert
         expr: |

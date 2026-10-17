@@ -209,9 +209,9 @@ b += rule("WojtusRestartLoop",
           "Check 'docker logs discord-event-service' for the exception before each exit, and docker_container_memory_oom_kills_total for an OOM kill.",
           "4 changes are 5 process starts within the hour. A deploy session of 4 starts in 49 minutes\n(2026-10-05 23:42 to 00:31) is 3 changes and does not fire.")
 b += rule("WojtusConversationCostHigh",
-          f"sum({xi('wojtus_conversation_cost_usd_total', '', '24h', '5m')}) > 2", "10m",
+          f"sum({xi('wojtus_conversation_cost_usd_total', '', '24h', '5m')}) > 5", "10m",
           'Conversation cost is {{ $value | printf \\"%.2f\\" }} USD in 24 hours',
-          "Normal is a few cents a day. Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user.",
+          "Normal is about 2 USD a day on claude-sonnet-5-5 (2026-10). Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user.",
           "The bot computes the counter from the tokens and the price table in config: the web search fee is inside it.")
 b += rule("WojtusConversationUsageAlert",
           f"sum by (cap)({xi('wojtus_conversation_usage_alerts_total', '', '1h')}) > 0", None,
