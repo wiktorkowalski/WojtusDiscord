@@ -12,10 +12,10 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// #460 against a real Postgres: what query_database may read is decided by row-level security on the
-// query role, fed from Conversation:QueryDatabase through QuerySandboxSettingsWriter. Each message-
+// #460 / #468 against a real Postgres: what query_database may read is decided by row-level security on
+// the query role, fed from Conversation:QueryDatabase through QuerySandboxSettingsWriter. Each message-
 // bearing table gets the same pair: hidden with the defaults, visible with the switch off. The app
-// login (the superuser EF uses for ingestion) still sees everything.
+// login (the superuser EF uses for ingestion, and meme_search) still sees everything.
 public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
     : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
@@ -39,6 +39,11 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
         _db = NewContext();
         await _db.Database.MigrateAsync();
         await _db.MessageEvents.ExecuteDeleteAsync();
+        await _db.PollEvents.ExecuteDeleteAsync();
+        await _db.ReactionEvents.ExecuteDeleteAsync();
+        await _db.PinEvents.ExecuteDeleteAsync();
+        await _db.MemeAnnotations.ExecuteDeleteAsync();
+        await _db.MemeIndex.ExecuteDeleteAsync();
         await _db.AutoModEvents.ExecuteDeleteAsync();
         await _db.MessageMentions.ExecuteDeleteAsync();
         await _db.MessageEditHistory.ExecuteDeleteAsync();
@@ -66,12 +71,18 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
         AddMessage(guild, author, hidden, HiddenChannelMessageId, deleted: false);
         AddMessage(guild, author, thread, ThreadMessageId, deleted: false);
         _db.MessageEvents.Add(Event(DeleteEventOnlyMessageId, VisibleChannelDiscordId, MessageEventType.Deleted));
+        _db.ReactionEvents.Add(Reaction(DeleteEventOnlyMessageId, VisibleChannelDiscordId));
+        _db.PinEvents.AddRange(Pin(VisibleChannelDiscordId), Pin(HiddenChannelDiscordId), Pin(ThreadInHiddenChannelDiscordId));
         await _db.SaveChangesAsync();
     }
 
     public Task DisposeAsync() => _db.DisposeAsync().AsTask();
 
-    public static TheoryData<string> MessageTables => ["messages", "message_edit_history", "message_mentions", "message_events", "auto_mod_events"];
+    public static TheoryData<string> MessageTables =>
+    [
+        "messages", "message_edit_history", "message_mentions", "message_events", "auto_mod_events",
+        "poll_events", "reaction_events", "meme_index", "meme_annotations",
+    ];
 
     [Theory]
     [MemberData(nameof(MessageTables))]
@@ -104,9 +115,25 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
     {
         await ApplyAsync(new QueryDatabaseOptions());
         Assert.Equal(0, await CountAsync("message_events", DeleteEventOnlyMessageId));
+        Assert.Equal(0, await CountAsync("reaction_events", DeleteEventOnlyMessageId));
 
         await ApplyAsync(new QueryDatabaseOptions { ExcludeDeletedMessages = false });
         Assert.Equal(1, await CountAsync("message_events", DeleteEventOnlyMessageId));
+        Assert.Equal(1, await CountAsync("reaction_events", DeleteEventOnlyMessageId));
+    }
+
+    [Fact]
+    public async Task HiddenChannel_HidesItsPinsAndItsThreadsPins()
+    {
+        // pin_events carries a channel only, so deletion does not apply to it.
+        await ApplyAsync(new QueryDatabaseOptions { HiddenChannelIds = [HiddenChannelDiscordId] });
+        Assert.Equal(1, await CountPinsAsync(VisibleChannelDiscordId));
+        Assert.Equal(0, await CountPinsAsync(HiddenChannelDiscordId));
+        Assert.Equal(0, await CountPinsAsync(ThreadInHiddenChannelDiscordId));
+
+        await ApplyAsync(new QueryDatabaseOptions());
+        Assert.Equal(1, await CountPinsAsync(HiddenChannelDiscordId));
+        Assert.Equal(1, await CountPinsAsync(ThreadInHiddenChannelDiscordId));
     }
 
     [Fact]
@@ -126,7 +153,7 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
         await service.RunAsync("SELECT set_config('wojtus.include_deleted', 'on', false)", CancellationToken.None);
         Assert.Equal(0, await CountAsync("messages", DeletedMessageId));
 
-        foreach (var table in new[] { "query_sandbox_settings", "query_sandbox_hidden_channels", "raw_event_logs" })
+        foreach (var table in new[] { "query_sandbox_settings", "query_sandbox_hidden_channels", "raw_event_logs", "failed_events" })
         {
             var (text, failed) = await service.RunAsync($"SELECT * FROM {table}", CancellationToken.None);
             Assert.True(failed, $"{table}: {text}");
@@ -153,6 +180,11 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
         Assert.Equal(4, await context.MessageMentions.CountAsync());
         Assert.Equal(5, await context.MessageEvents.CountAsync());
         Assert.Equal(4, await context.AutoModEvents.CountAsync());
+        Assert.Equal(4, await context.PollEvents.CountAsync());
+        Assert.Equal(5, await context.ReactionEvents.CountAsync());
+        Assert.Equal(3, await context.PinEvents.CountAsync());
+        Assert.Equal(4, await context.MemeIndex.CountAsync());
+        Assert.Equal(4, await context.MemeAnnotations.CountAsync());
     }
 
     [Fact]
@@ -176,6 +208,7 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
         var hint = DatabaseSchemaHint.Build(SchemaCatalog.Build(context.Model)).Text;
 
         Assert.DoesNotContain("raw_event_logs(", hint);
+        Assert.DoesNotContain("failed_events(", hint);
         Assert.DoesNotContain("query_sandbox_", hint);
         Assert.Contains("messages(", hint);
     }
@@ -186,13 +219,24 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
         var filter = table switch
         {
             "messages" => $"discord_id = {messageDiscordId}",
-            "message_edit_history" or "message_events" or "auto_mod_events" => $"message_discord_id = {messageDiscordId}",
+            "message_edit_history" or "message_events" or "auto_mod_events" or "poll_events" or "reaction_events"
+                or "meme_index" => $"message_discord_id = {messageDiscordId}",
+            // Each test message has one image, whose attachment id is the message id.
+            "meme_annotations" => $"attachment_discord_id = {messageDiscordId}",
             "message_mentions" => _messageUuids.TryGetValue(messageDiscordId, out var uuid)
                 ? $"message_id = '{uuid}'"
                 : "false",
             _ => throw new ArgumentOutOfRangeException(nameof(table)),
         };
-        var (text, failed) = await NewService().RunAsync($"SELECT count(*)::int AS n FROM {table} WHERE {filter}", CancellationToken.None);
+        return await QueryCountAsync($"SELECT count(*)::int AS n FROM {table} WHERE {filter}");
+    }
+
+    private Task<int> CountPinsAsync(ulong channelDiscordId) =>
+        QueryCountAsync($"SELECT count(*)::int AS n FROM pin_events WHERE channel_discord_id = {channelDiscordId}");
+
+    private async Task<int> QueryCountAsync(string sql)
+    {
+        var (text, failed) = await NewService().RunAsync(sql, CancellationToken.None);
         Assert.False(failed, text);
         using var doc = JsonDocument.Parse(text);
         return doc.RootElement.GetProperty("rows")[0].GetProperty("n").GetInt32();
@@ -250,7 +294,61 @@ public sealed class DatabaseQueryVisibilityTests(PostgresFixture fixture)
             EventTimestampUtc = DateTime.UtcNow,
             ReceivedAtUtc = DateTime.UtcNow,
         });
+        _db.PollEvents.Add(new PollEventEntity
+        {
+            MessageDiscordId = discordId,
+            ChannelDiscordId = channel.DiscordId,
+            GuildDiscordId = GuildDiscordId,
+            UserDiscordId = author.DiscordId,
+            AnswerId = 1,
+            EventType = PollEventType.VoteAdded,
+            EventTimestampUtc = DateTime.UtcNow,
+            ReceivedAtUtc = DateTime.UtcNow,
+        });
+        _db.ReactionEvents.Add(Reaction(discordId, channel.DiscordId));
+        _db.MemeIndex.Add(new MemeIndexEntity
+        {
+            MessageId = message.Id,
+            GuildDiscordId = GuildDiscordId,
+            ChannelDiscordId = channel.DiscordId,
+            MessageDiscordId = discordId,
+            AttachmentDiscordId = discordId,
+            FileName = "meme.png",
+            FileSizeBytes = 1,
+            Status = MemeIndexStatus.Indexed,
+            Annotations =
+            [
+                new MemeAnnotationEntity
+                {
+                    AttachmentDiscordId = discordId,
+                    ModelId = "m",
+                    PromptVersion = "v",
+                    IndexedAtUtc = DateTime.UtcNow,
+                    OcrText = message.Content,
+                },
+            ],
+        });
     }
+
+    private static ReactionEventEntity Reaction(ulong messageDiscordId, ulong channelDiscordId) => new()
+    {
+        MessageDiscordId = messageDiscordId,
+        ChannelDiscordId = channelDiscordId,
+        GuildDiscordId = GuildDiscordId,
+        UserDiscordId = 9400UL,
+        EmoteName = "x",
+        EventType = ReactionEventType.Added,
+        EventTimestampUtc = DateTime.UtcNow,
+        ReceivedAtUtc = DateTime.UtcNow,
+    };
+
+    private static PinEventEntity Pin(ulong channelDiscordId) => new()
+    {
+        ChannelDiscordId = channelDiscordId,
+        GuildDiscordId = GuildDiscordId,
+        EventTimestampUtc = DateTime.UtcNow,
+        ReceivedAtUtc = DateTime.UtcNow,
+    };
 
     private static MessageEventEntity Event(ulong messageDiscordId, ulong channelDiscordId, MessageEventType type) => new()
     {
