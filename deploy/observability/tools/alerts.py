@@ -211,7 +211,7 @@ b += rule("WojtusRestartLoop",
 b += rule("WojtusConversationCostHigh",
           f"sum({xi('wojtus_conversation_cost_usd_total', '', '24h', '5m')}) > 5", "10m",
           'Conversation cost is {{ $value | printf \\"%.2f\\" }} USD in 24 hours',
-          "Normal is a few cents a day. Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user.",
+          "Normal is about 2 USD a day on claude-sonnet-5-5 (2026-10). Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user.",
           "The bot computes the counter from the tokens and the price table in config: the web search fee is inside it.")
 b += rule("WojtusConversationUsageAlert",
           f"sum by (cap)({xi('wojtus_conversation_usage_alerts_total', '', '1h')}) > 0", None,

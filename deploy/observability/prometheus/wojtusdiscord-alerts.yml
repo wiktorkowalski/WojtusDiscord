@@ -249,7 +249,7 @@ groups:
           service: wojtusdiscord
         annotations:
           summary: "Conversation cost is {{ $value | printf \"%.2f\" }} USD in 24 hours"
-          description: "Normal is a few cents a day. Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user."
+          description: "Normal is about 2 USD a day on claude-sonnet-5-5 (2026-10). Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user."
 
       - alert: WojtusConversationUsageAlert
         expr: |

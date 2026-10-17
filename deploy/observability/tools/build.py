@@ -213,10 +213,10 @@ def overview():
     d.add(stat("Cost, 24 h", f'sum({xi("wojtus_conversation_cost_usd_total", "", "24h", "5m")} or vector(0))'
                f' + sum({xi("wojtus_meme_vision_cost_usd_total", "", "24h", "5m")} or vector(0))',
                unit="currencyUSD", decimals=2, no_value="$0.00",
-               thresholds=steps((GOOD, None), (WARN, 1), (CRIT, 2)),
+               thresholds=steps((GOOD, None), (WARN, 3), (CRIT, 5)),
                desc="Cost of conversation and meme vision model calls in the last 24 hours. The bot computes the"
                     " conversation cost from the tokens and the price table in config; it holds the web search fee."
-                    " The conversation alert fires above 2 USD."), 3, 3)
+                    " The conversation alert fires above 5 USD."), 3, 3)
     d.add(stat("Restarts, 24 h", f"sum(changes(wojtus_process_start_time_seconds{{{J}}}[24h]))", decimals=0,
                no_value="0", thresholds=steps((GOOD, None), (WARN, 4), (CRIT, 10)),
                desc="Process starts in the last 24 hours. A deploy is one restart; a few a day is normal."), 3, 3)

@@ -108,7 +108,7 @@ tests:
           - exp_labels: {severity: warning, service: wojtusdiscord}
             exp_annotations:
               summary: "Conversation cost is 6.00 USD in 24 hours"
-              description: "Normal is a few cents a day. Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user."
+              description: "Normal is about 2 USD a day on claude-sonnet-5-5 (2026-10). Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user."
       - {eval_time: 90m, exp_alerts: [], alertname: WojtusHangfireFailedJobsGrowing}
   # Round 2. A deploy: the public URL fails two probes, the health-check gauge is absent for the
   # first minutes of the new process. Nothing fires.
