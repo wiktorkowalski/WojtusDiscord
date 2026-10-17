@@ -14,6 +14,9 @@ namespace DiscordEventService.Tests;
 // soft-delete revival, and unknown-type handling are pinned here once.
 public sealed class ChannelUpsertServiceTests(PostgresFixture fixture) : IClassFixture<PostgresFixture>, IAsyncLifetime
 {
+    private static readonly TimeSpan BlockedInsertTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan BlockedInsertPollInterval = TimeSpan.FromMilliseconds(20);
+
     private DiscordDbContext _db = null!;
     private RecordingLogger _logger = null!;
     private ChannelUpsertService _service = null!;
@@ -145,6 +148,58 @@ public sealed class ChannelUpsertServiceTests(PostgresFixture fixture) : IClassF
         Assert.Equal(10UL, row.ParentDiscordId);
     }
 
+    // #467: ThreadCreated and the first MessageCreated in a new thread both upsert the thread.
+    // Writer A holds its insert open in a transaction, so writer B's insert must block on the
+    // unique index and lose with 23505 once A commits: the race, made deterministic.
+    [Fact]
+    public async Task UpsertChannelAsync_WhenTwoWritersInsertSameNewThread_KeepsOneRowAndLogsNoError()
+    {
+        var thread = Channel(id: 60, type: 11, name: "new-thread", parentId: 10);
+        var logA = new RecordingLogger();
+        var logB = new RecordingLogger();
+        await using var dbA = NewContext(logA);
+        await using var dbB = NewContext(logB);
+        var writerA = new ChannelUpsertService(dbA, logA.For<ChannelUpsertService>());
+        var writerB = new ChannelUpsertService(dbB, logB.For<ChannelUpsertService>());
+
+        await using var tx = await dbA.Database.BeginTransactionAsync();
+        var resultA = await writerA.UpsertChannelAsync(thread, _guildId);
+        var upsertB = writerB.UpsertChannelAsync(thread, _guildId);
+        await WaitForBlockedChannelInsertAsync();
+        await tx.CommitAsync();
+        var resultB = await upsertB;
+
+        Assert.True(resultA.IsSuccess);
+        Assert.True(resultB.IsSuccess);
+        Assert.Equal(resultA.Value, resultB.Value);
+        await using var verify = NewContext();
+        Assert.Equal(1, await verify.Channels.CountAsync(c => c.DiscordId == 60UL));
+
+        // The losing writer handled the race: no Error, the #314 Warning diagnostic kept.
+        Assert.DoesNotContain(logA.Entries.Concat(logB.Entries), e => e.Level >= LogLevel.Error);
+        Assert.Contains(logB.Entries, e =>
+            e.Level == LogLevel.Warning && e.Message.Contains("23505", StringComparison.Ordinal));
+    }
+
+    private async Task WaitForBlockedChannelInsertAsync()
+    {
+        await using var probe = NewContext();
+        var deadline = DateTime.UtcNow + BlockedInsertTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            // Raw SQL: pg_stat_activity and pg_blocking_pids have no LINQ mapping.
+            var blocked = await probe.Database.SqlQuery<int>($"""
+                SELECT count(*)::int AS "Value" FROM pg_stat_activity
+                WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0
+                """).SingleAsync();
+            if (blocked > 0)
+                return;
+            await Task.Delay(BlockedInsertPollInterval);
+        }
+
+        throw new TimeoutException("Writer B's channel insert never blocked on writer A's open insert");
+    }
+
     // DSharpPlus entities have internal setters; hydrating from gateway-shaped JSON is the
     // supported way to build one outside the library.
     private static DiscordChannel Channel(ulong id, int type, string name, string? topic = null,
@@ -168,13 +223,14 @@ public sealed class ChannelUpsertServiceTests(PostgresFixture fixture) : IClassF
             ?? throw new InvalidOperationException("DiscordChannel deserialization returned null");
     }
 
-    private DiscordDbContext NewContext()
+    private DiscordDbContext NewContext(RecordingLogger? efLog = null)
     {
-        var options = new DbContextOptionsBuilder<DiscordDbContext>()
+        var builder = new DbContextOptionsBuilder<DiscordDbContext>()
             .UseNpgsql(fixture.ConnectionString)
-            .UseSnakeCaseNamingConvention()
-            .Options;
-        return new DiscordDbContext(options);
+            .UseSnakeCaseNamingConvention();
+        if (efLog is not null)
+            builder.UseLoggerFactory(efLog.AsLoggerFactory());
+        return new DiscordDbContext(builder.Options);
     }
 
 }
