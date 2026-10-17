@@ -115,6 +115,8 @@ internal sealed class RawEventLogService(DiscordDbContext dbContext, ILogger<Raw
         // recursion. Strip it so the default object/dictionary serializer runs.
         private const string ProblemConverterName = "SnowflakeArrayAsDictionaryJsonConverter";
 
+        private static readonly Assembly DSharpPlusAssembly = typeof(DSharpPlus.DiscordClient).Assembly;
+
         private static readonly HashSet<string> SensitiveProperties = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "VoiceToken"
@@ -129,6 +131,12 @@ internal sealed class RawEventLogService(DiscordDbContext dbContext, ILogger<Raw
                 property.ItemConverter = null;
             if (SensitiveProperties.Contains(member.Name))
                 property.ShouldSerialize = _ => false;
+            // #466: DSharpPlus navigation getters (DiscordMessageSticker.Guild and friends) are cache
+            // lookups that throw when the target isn't cached — e.g. a sticker from another server.
+            // One such getter must not cost the whole payload, so a throwing DSharpPlus getter is
+            // written as absent instead.
+            if (property.ValueProvider is not null && member.DeclaringType?.Assembly == DSharpPlusAssembly)
+                property.ValueProvider = new NullOnThrowValueProvider(property.ValueProvider);
             return property;
         }
 
@@ -138,6 +146,23 @@ internal sealed class RawEventLogService(DiscordDbContext dbContext, ILogger<Raw
             if (contract.Converter?.GetType().Name == ProblemConverterName)
                 contract.Converter = null;
             return contract;
+        }
+
+        private sealed class NullOnThrowValueProvider(IValueProvider inner) : IValueProvider
+        {
+            public object? GetValue(object target)
+            {
+                try
+                {
+                    return inner.GetValue(target);
+                }
+                catch (JsonSerializationException)
+                {
+                    return null;
+                }
+            }
+
+            public void SetValue(object target, object? value) => inner.SetValue(target, value);
         }
     }
 }
