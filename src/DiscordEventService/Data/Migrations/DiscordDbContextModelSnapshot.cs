@@ -67,6 +67,14 @@ namespace DiscordEventService.Data.Migrations
                         .HasColumnName("id")
                         .HasDefaultValueSql("uuidv7()");
 
+                    b.Property<long?>("AuthorId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("author_id");
+
+                    b.Property<string>("AuthorName")
+                        .HasColumnType("text")
+                        .HasColumnName("author_name");
+
                     b.Property<int?>("CompletionTokens")
                         .HasColumnType("integer")
                         .HasColumnName("completion_tokens");

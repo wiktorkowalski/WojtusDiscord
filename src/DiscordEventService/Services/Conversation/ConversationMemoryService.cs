@@ -96,20 +96,41 @@ internal sealed class ConversationMemoryService(
         return new ConversationTurnState(conversation.Id, (lastTurnIndex ?? -1) + 1, window);
     }
 
-    public async Task PersistUserMessageAsync(
-        ConversationTurnState turn, string text, CancellationToken cancellationToken)
+    // Returns the message as the model sees it, built by the same Rehydrate a later turn
+    // replays it with: the current turn and its replay are byte-identical (#461).
+    public async Task<ChatMessage> PersistUserMessageAsync(
+        ConversationTurnState turn, string text, ulong authorId, string authorName,
+        CancellationToken cancellationToken)
     {
-        db.ConversationMessages.Add(new ConversationMessageEntity
+        var row = new ConversationMessageEntity
         {
             ConversationId = turn.ConversationId,
             TurnIndex = turn.TurnIndex,
             Role = ConversationMessageRole.User,
             Text = text,
-            EstTokens = EstimateTokens(text),
+            AuthorId = authorId,
+            AuthorName = SanitizeAuthorName(authorName),
             CreatedAtUtc = DateTime.UtcNow,
-        });
+        };
+        row.EstTokens = EstimateTokens(UserText(row));
+        db.ConversationMessages.Add(row);
         await TouchAndSaveAsync(turn.ConversationId, cancellationToken);
+        return Rehydrate(row, webSearchMarkers: null);
     }
+
+    // A user row's text under a bot-added author line (#461), e.g. `[from: Damrad, id 123]`.
+    // Several people can write in one thread; without the line the model takes them for one
+    // person. The system prompt says the bot writes this line. Rows from before #461 carry no
+    // author and replay as plain text.
+    private static string UserText(ConversationMessageEntity row) =>
+        row.AuthorId is { } authorId
+            ? $"[from: {row.AuthorName}, id {authorId}]\n{row.Text}"
+            : row.Text ?? string.Empty;
+
+    private const int AuthorNameMaxLength = 64;
+
+    private static string SanitizeAuthorName(string name) =>
+        ConversationHistory.Sanitize(name, AuthorNameMaxLength) is { Length: > 0 } clean ? clean : "?";
 
     // Persists one round's assembled assistant messages (text + tool calls + reasoning).
     // The provider-reported round usage lands on the round's first assistant row.
@@ -425,7 +446,7 @@ internal sealed class ConversationMemoryService(
         switch (row.Role)
         {
             case ConversationMessageRole.User:
-                return new ChatMessage(ChatRole.User, row.Text ?? string.Empty);
+                return new ChatMessage(ChatRole.User, UserText(row));
 
             case ConversationMessageRole.Tool:
                 return new ChatMessage(ChatRole.Tool, [RehydrateToolResult(row)]);

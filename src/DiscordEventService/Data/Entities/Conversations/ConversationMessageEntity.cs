@@ -28,6 +28,13 @@ public class ConversationMessageEntity
     // and for tool rows.
     public string? Text { get; set; }
 
+    // User rows only (#461): who wrote the message, so a thread with several people replays
+    // each message under its author. The name is a snapshot at persist time; replay never
+    // re-resolves it, so a nickname change cannot rewrite history. Null on rows from before
+    // #461 and on every assistant and tool row.
+    public ulong? AuthorId { get; set; }
+    public string? AuthorName { get; set; }
+
     // Assistant rows only: JSON array of { id, name, argumentsJson } — arguments kept
     // as raw JSON so rehydration rebuilds FunctionCallContent without re-serializing
     // a dictionary of JsonElements.

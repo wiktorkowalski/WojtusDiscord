@@ -288,9 +288,10 @@ internal static class ConversationHistory
     private static string FormatSource(WebSearchCitations.Citation source) =>
         Sanitize(source.Title) is { Length: > 0 } title ? $"{title} — {source.Url}" : source.Url;
 
-    // Titles and excerpts come from arbitrary web pages and replay as the assistant's own
-    // words: one line, no brackets or quotes that could close the marker, and capped.
-    private static string Sanitize(string? value, int maxLength = MaxMarkerFieldLength)
+    // Titles and excerpts come from arbitrary web pages, author names from Discord (#461), and
+    // all replay inside a bot-added marker: one line, no brackets or quotes that could close
+    // the marker, and capped.
+    internal static string Sanitize(string? value, int maxLength = MaxMarkerFieldLength)
     {
         if (string.IsNullOrWhiteSpace(value))
             return string.Empty;
