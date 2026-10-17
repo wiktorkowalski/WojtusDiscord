@@ -1,3 +1,4 @@
+using DiscordEventService.Infrastructure;
 using DiscordEventService.Services.Conversation.Interaction;
 using DSharpPlus;
 using DSharpPlus.Entities;
@@ -22,7 +23,7 @@ internal sealed class ConversationEventHandler(ConversationFlow flow) : IEventHa
             e.Guild?.Id,
             e.Author.Id,
             e.Author.IsBot,
-            e.Author.GlobalName ?? e.Author.Username,
+            e.Author.ShownName(),
             e.Message.Content ?? string.Empty,
             IsThread(e.Channel),
             // 0 means the cached channel carried no creator metadata — the flow then asks
