@@ -91,7 +91,7 @@ tests:
       - series: 'wojtus_backfill_runs_total{job="wojtusdiscord",instance="b",type="Messages",outcome="failed"}'
         values: '_x40 1x60'
       - series: 'wojtus_conversation_cost_usd_total{job="wojtusdiscord",instance="b",model="m"}'
-        values: '_x10 2.5x100'
+        values: '_x10 6x100'
       - series: 'wojtus_hangfire_jobs{job="wojtusdiscord",instance="b",state="failed"}'
         values: '3x400'
     alert_rule_test:
@@ -107,7 +107,7 @@ tests:
         exp_alerts:
           - exp_labels: {severity: warning, service: wojtusdiscord}
             exp_annotations:
-              summary: "Conversation cost is 2.50 USD in 24 hours"
+              summary: "Conversation cost is 6.00 USD in 24 hours"
               description: "Normal is a few cents a day. Open the Conversation & Memes dashboard for the model and the token counts, then the usage ledger for the user."
       - {eval_time: 90m, exp_alerts: [], alertname: WojtusHangfireFailedJobsGrowing}
   # Round 2. A deploy: the public URL fails two probes, the health-check gauge is absent for the

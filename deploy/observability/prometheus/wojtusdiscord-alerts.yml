@@ -242,7 +242,7 @@ groups:
       # The bot computes the counter from the tokens and the price table in config: the web search fee is inside it.
       - alert: WojtusConversationCostHigh
         expr: |
-          sum(sum_over_time(((wojtus_conversation_cost_usd_total{job="wojtusdiscord"} - (((last_over_time(wojtus_conversation_cost_usd_total{job="wojtusdiscord"}[10m] offset 5m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 900)) or (wojtus_conversation_cost_usd_total{job="wojtusdiscord"} offset 5m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 900))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 5m))) >= 0) or (wojtus_conversation_cost_usd_total{job="wojtusdiscord"} + 0))[24h:5m])) > 2
+          sum(sum_over_time(((wojtus_conversation_cost_usd_total{job="wojtusdiscord"} - (((last_over_time(wojtus_conversation_cost_usd_total{job="wojtusdiscord"}[10m] offset 5m) and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} > 900)) or (wojtus_conversation_cost_usd_total{job="wojtusdiscord"} offset 5m and on (job, instance) (wojtus_process_uptime_seconds{job="wojtusdiscord"} <= 900))) and on (job, instance) (wojtus_process_start_time_seconds{job="wojtusdiscord"} == last_over_time(wojtus_process_start_time_seconds{job="wojtusdiscord"}[10m] offset 5m))) >= 0) or (wojtus_conversation_cost_usd_total{job="wojtusdiscord"} + 0))[24h:5m])) > 5
         for: 10m
         labels:
           severity: warning

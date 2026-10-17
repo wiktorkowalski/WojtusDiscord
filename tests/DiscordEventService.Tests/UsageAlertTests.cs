@@ -107,10 +107,10 @@ public sealed class UsageAlertTests(PostgresFixture fixture)
     [Fact]
     public async Task DailyTripwire_SilentAt80_FiresAt100Only()
     {
-        var notifierAt85 = await RunCheckAsync(MonthlyCapsOff, seedBefore: 1.70); // 85% of $2
+        var notifierAt85 = await RunCheckAsync(MonthlyCapsOff, seedBefore: 4.25); // 85% of $5
         Assert.Empty(notifierAt85.Messages);
 
-        await SeedSpendAsync(InvokerId, 0.40); // total $2.10 — over
+        await SeedSpendAsync(InvokerId, 1.00); // total $5.25 — over
         var notifierOver = await RunCheckAsync(MonthlyCapsOff);
 
         var message = Assert.Single(notifierOver.Messages);
