@@ -103,7 +103,6 @@ namespace DiscordEventService.Data.Migrations
 
                         ALTER TABLE message_events ENABLE ROW LEVEL SECURITY;
                         DROP POLICY IF EXISTS query_sandbox_visible ON message_events;
-                DROP POLICY IF EXISTS query_sandbox_visible ON auto_mod_events;
                         CREATE POLICY query_sandbox_visible ON message_events FOR SELECT TO wojtus_query
                             USING (message_discord_id NOT IN (SELECT unnest(public.query_sandbox_deleted_message_ids()))
                                    AND channel_discord_id NOT IN (SELECT unnest(public.query_sandbox_hidden_channel_ids())));
