@@ -19,8 +19,8 @@ namespace DiscordEventService.Services.Conversation;
 // only AND switches to a non-superuser SELECT-only role (SET LOCAL ROLE) that lacks those privileges;
 // the role + txn reset on the always-RollbackAsync. Writes are rejected (25006), privileged/file
 // functions are rejected (permission denied), runaway queries are bounded by a client CommandTimeout
-// under a server statement_timeout, and rows + per-value lengths are capped. bigint columns (Discord
-// snowflakes) are stringified for precision. The result is untrusted DATA, never instructions.
+// under a server statement_timeout, and the row count, per-value length, array length and total JSON
+// size are capped. bigint columns (Discord snowflakes) are stringified for precision. The result is untrusted DATA, never instructions.
 internal sealed partial class DatabaseQueryService(
     DiscordDbContext db,
     IOptions<ConversationOptions> options,
@@ -31,10 +31,17 @@ internal sealed partial class DatabaseQueryService(
     [GeneratedRegex("^[A-Za-z_][A-Za-z0-9_]*$")]
     private static partial Regex QueryRoleNameRegex();
 
-    // Cap on a single field's serialized length, so a SELECT repeat('x', 1e9) can't OOM us — the row
-    // cap bounds row COUNT, this bounds row WIDTH.
-    private const int MaxFieldLength = 2000;
-    private const string TruncationMarker = "…[truncated]";
+    // Cap on a single field's serialized length — the row cap bounds row COUNT, this bounds row WIDTH.
+    // The reader runs in SequentialAccess mode and reads text and bytea columns only up to this cap;
+    // Npgsql skips the rest on the wire, so a SELECT repeat('x', 1e9) never lands in memory whole.
+    // shortcut: arrays and other values are still read whole before the cap (bounded only by the
+    // statement_timeout); stream them too if a huge array_agg ever shows up.
+    internal const int MaxFieldLength = 2000;
+    private const int MaxArrayElements = 100;
+    internal const string TruncationMarker = "…[truncated]";
+
+    // Cap on the whole result's JSON, so one wide query cannot flood the model's context (#448).
+    internal const int MaxResultLength = 24_000;
 
     // Fail fast instead of blocking if the model's SQL contends on a lock (e.g. an advisory lock or a
     // row lock another transaction holds) — an analytics read should never wait on a writer.
@@ -48,9 +55,6 @@ internal sealed partial class DatabaseQueryService(
         // throw escapes the DB-exception catch filters — emit them as named literals instead.
         NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
     };
-
-    public async Task<string> ExecuteAsync(string? sql, CancellationToken cancellationToken) =>
-        (await RunAsync(sql, cancellationToken)).Text;
 
     // A query that does not run to its rows ends as text for the model, never as an exception:
     // the model reads the reason and corrects itself. Failed says that the text is such a
@@ -90,7 +94,7 @@ internal sealed partial class DatabaseQueryService(
             {
                 CommandTimeout = settings.QueryTimeoutSeconds,
             })
-            await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+            await using (var reader = await command.ExecuteReaderAsync(CommandBehavior.SequentialAccess, cancellationToken))
             {
                 json = await ReadRowsAsJsonAsync(reader, settings.QueryRowLimit, cancellationToken);
             }
@@ -160,6 +164,8 @@ internal sealed partial class DatabaseQueryService(
 
         List<Dictionary<string, object?>> rows = [];
         var truncated = false;
+        string? note = null;
+        var resultLength = 0;
         while (await reader.ReadAsync(cancellationToken))
         {
             // Read N rows; the (N+1)th successful read proves more exist, so flag and stop.
@@ -169,16 +175,56 @@ internal sealed partial class DatabaseQueryService(
                 break;
             }
 
+            // SequentialAccess: each column is read once, in order.
             var row = new Dictionary<string, object?>(fieldCount, StringComparer.Ordinal);
             for (var i = 0; i < fieldCount; i++)
-                row[names[i]] = ConvertValue(reader.IsDBNull(i) ? null : reader.GetValue(i));
+                row[names[i]] = await ReadFieldAsync(reader, i, cancellationToken);
+
+            // No exemption for the first row: one wide row or one big array can be over the budget alone.
+            var rowLength = JsonSerializer.Serialize(row, JsonOptions).Length;
+            if (resultLength + rowLength > MaxResultLength)
+            {
+                truncated = true;
+                note = $"Result cut at {MaxResultLength} characters of JSON. Select fewer or shorter columns "
+                    + "(e.g. left(content, 200)), aggregate, or add a LIMIT.";
+                break;
+            }
+
+            resultLength += rowLength;
             rows.Add(row);
         }
 
-        return JsonSerializer.Serialize(new { row_count = rows.Count, truncated, rows }, JsonOptions);
+        return JsonSerializer.Serialize(new { row_count = rows.Count, truncated, note, rows }, JsonOptions);
     }
 
-    // Returns only JSON-safe shapes (null / bool / number / string / string[]) so STJ can never throw on
+    private static async Task<object?> ReadFieldAsync(
+        NpgsqlDataReader reader, int ordinal, CancellationToken cancellationToken)
+    {
+        if (await reader.IsDBNullAsync(ordinal, cancellationToken))
+            return null;
+
+        var type = reader.GetFieldType(ordinal);
+        if (type == typeof(string))
+        {
+            using var text = await reader.GetTextReaderAsync(ordinal, cancellationToken);
+            var buffer = new char[MaxFieldLength + 1];
+            var read = await text.ReadBlockAsync(buffer, cancellationToken);
+            return Cap(new string(buffer, 0, read));
+        }
+
+        if (type == typeof(byte[]))
+        {
+            // Two hex chars per byte; one byte over the cap is enough to know the value was cut.
+            await using var stream = await reader.GetStreamAsync(ordinal, cancellationToken);
+            var buffer = new byte[MaxFieldLength / 2 + 1];
+            var read = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, cancellationToken);
+            return Cap(Convert.ToHexString(buffer, 0, read));
+        }
+
+        return ConvertValue(reader.GetValue(ordinal));
+    }
+
+    // Returns only JSON-safe shapes (null / bool / number / string / object?[]) so STJ can never throw on
     // an exotic Npgsql type (inet -> IPAddress, ranges, …). bigint snowflakes -> strings (precision);
     // timestamps -> ISO-8601; strings/byte-hex are length-capped; anything unrecognised is stringified.
     private static object? ConvertValue(object? value) => value switch
@@ -193,12 +239,19 @@ internal sealed partial class DatabaseQueryService(
         DateTime dt => dt.ToString("o", CultureInfo.InvariantCulture),
         DateTimeOffset dto => dto.ToString("o", CultureInfo.InvariantCulture),
         Guid g => g.ToString(),
-        long[] longs => longs.Select(v => v.ToString(CultureInfo.InvariantCulture)).ToArray(),
-        string[] strings => strings.Select(Cap).ToArray(),
         byte[] bytes => Cap(Convert.ToHexString(bytes)),
+        // After byte[], which is bytea, not an array column. shortcut: a multi-dimensional array comes
+        // back flattened; nest it if the model ever needs the shape.
+        Array array => CapElements(array),
         IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
         _ => Cap(value.ToString() ?? string.Empty),
     };
+
+    private static object?[] CapElements(Array array)
+    {
+        var elements = array.Cast<object?>().Take(MaxArrayElements).Select(ConvertValue);
+        return array.Length <= MaxArrayElements ? elements.ToArray() : [.. elements, TruncationMarker];
+    }
 
     private static string Cap(string value) =>
         value.Length <= MaxFieldLength ? value : value[..MaxFieldLength] + TruncationMarker;
