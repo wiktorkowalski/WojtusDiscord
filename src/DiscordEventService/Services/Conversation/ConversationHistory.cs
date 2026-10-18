@@ -202,7 +202,7 @@ internal static class ConversationHistory
         {
             if (excerpts.Count == MaxCitedExcerpts)
                 break;
-            if (annotation.Snippet is { } snippet && !string.IsNullOrWhiteSpace(snippet) && IsHttpUrl(url)
+            if (annotation.Snippet is { } snippet && !string.IsNullOrWhiteSpace(snippet)
                 && !excerpts.Any(existing => existing.Url.Equals(url, StringComparison.Ordinal)))
                 excerpts.Add(new CitedExcerpt { Url = url, Text = snippet });
         }
@@ -270,7 +270,7 @@ internal static class ConversationHistory
         WebSearchRecord record, Dictionary<string, string> queries, HashSet<string> answered, HashSet<string> citedUrls)
     {
         if (record.Cited is { } cited)
-            return cited.Where(excerpt => IsHttpUrl(excerpt.Url)).Select(excerpt =>
+            return cited.Where(excerpt => WebSearchCitations.IsHttpUrl(excerpt.Url)).Select(excerpt =>
                 $"[web_search cited: {excerpt.Url} — \"{Sanitize(excerpt.Text, MaxExcerptLength)}\"]");
 
         if (record.Query is { } query)
@@ -279,7 +279,7 @@ internal static class ConversationHistory
         var head = record.Id is { } id && queries.TryGetValue(id, out var pairedQuery)
             ? $"[web_search \"{Sanitize(pairedQuery)}\""
             : "[web_search";
-        if (record.Sources?.Where(source => IsHttpUrl(source.Url)).OrderBy(source => !citedUrls.Contains(source.Url))
+        if (record.Sources?.Where(source => WebSearchCitations.IsHttpUrl(source.Url)).OrderBy(source => !citedUrls.Contains(source.Url))
                 .Take(MaxMarkerSources).ToList() is { Count: > 0 } sources)
             return [$"{head} → {string.Join("; ", sources.Select(FormatSource))}]"];
         return [$"{head} failed: {Sanitize(record.Error ?? "no results")}]"];
@@ -299,13 +299,6 @@ internal static class ConversationHistory
         var clean = new string([.. value.Select(c => char.IsControl(c) || c is '[' or ']' or '"' ? ' ' : c)]).Trim();
         return clean.Length <= maxLength ? clean : clean[..maxLength] + "…";
     }
-
-    // Only http(s): the URL is replayed verbatim, so it must not carry a newline or another scheme.
-    private static bool IsHttpUrl(string url) =>
-        url.Length <= 2048
-        && Uri.TryCreate(url, UriKind.Absolute, out var uri)
-        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-        && !url.Any(c => char.IsWhiteSpace(c) || char.IsControl(c) || c is '[' or ']');
 
     // Text of a response without the empty citation carriers: Claude splits an answer into
     // many text blocks (one per citation span), and ChatMessage.Text joins them all.

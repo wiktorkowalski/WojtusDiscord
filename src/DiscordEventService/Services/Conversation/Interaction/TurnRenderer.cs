@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using DiscordEventService.Services.EventHandlers;
 
 namespace DiscordEventService.Services.Conversation.Interaction;
 
