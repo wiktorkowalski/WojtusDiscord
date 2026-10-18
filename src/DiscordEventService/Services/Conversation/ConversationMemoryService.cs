@@ -96,9 +96,36 @@ internal sealed class ConversationMemoryService(
             .Take(options.WindowMaxMessages)
             .ToListAsync(cancellationToken);
         rows.Reverse();
+        await SalvageCappedTurnAsync(conversation.Id, rows, options.WindowMaxMessages, cancellationToken);
 
         var window = BuildWindow(rows, options.WindowTokenBudget);
         return new ConversationTurnState(conversation.Id, (lastTurnIndex ?? -1) + 1, window);
+    }
+
+    // The row cap cut a turn's user row off (#446: one turn of 8 rounds x 4 calls is 42 rows).
+    // Same salvage as the token budget's: the turn keeps its user row and answer, without
+    // its tool rows.
+    private async Task SalvageCappedTurnAsync(
+        Guid conversationId, List<ConversationMessageEntity> rows, int maxMessages, CancellationToken cancellationToken)
+    {
+        if (rows.Count < maxMessages || rows[0].Role == ConversationMessageRole.User)
+            return;
+
+        var cutTurn = rows[0].TurnIndex;
+        var userRow = await db.ConversationMessages
+            .Where(m => m.ConversationId == conversationId && !m.Refused
+                        && m.TurnIndex == cutTurn && m.Role == ConversationMessageRole.User)
+            .OrderBy(m => m.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (userRow is null)
+            return;
+
+        var dropped = rows.RemoveAll(row => row.TurnIndex == cutTurn
+            && (row.Role == ConversationMessageRole.Tool || row.ToolCallsJson is not null));
+        rows.Insert(0, userRow);
+        if (dropped > 0)
+            logger.LogDebug("Row cap cut turn {TurnIndex}: replaying its question without {Count} tool row(s)",
+            cutTurn, dropped);
     }
 
     // Returns the message as the model sees it, built by the same Rehydrate a later turn
@@ -174,8 +201,9 @@ internal sealed class ConversationMemoryService(
                 Reasoning = string.IsNullOrEmpty(reasoning) ? null : reasoning,
                 PromptTokens = usageRecorded ? null : promptTokens,
                 CompletionTokens = usageRecorded ? null : completionTokens,
-                // The markers, not the stored JSON: the window carries what replay sends.
-                EstTokens = EstimateTokens(text, toolCallsJson, ConversationHistory.FormatMarkers(webSearches), reasoning),
+                // The markers, not the stored JSON, and no reasoning (#446): the window carries
+                // what replay sends.
+                EstTokens = EstimateTokens(text, toolCallsJson, ConversationHistory.FormatMarkers(webSearches)),
                 CreatedAtUtc = DateTime.UtcNow,
             });
             usageRecorded = true;
@@ -299,9 +327,12 @@ internal sealed class ConversationMemoryService(
         var totalTokens = 0;
         for (var i = groups.Count - 1; i >= 0; i--)
         {
-            var groupTokens = groups[i].Sum(row => row.EstTokens);
+            var groupTokens = GroupTokens(groups[i]);
             if (totalTokens + groupTokens > tokenBudget)
+            {
+                SalvageCutTurn(groups, groups[i][0].TurnIndex, included, tokenBudget);
                 break;
+            }
             totalTokens += groupTokens;
             included.Add(groups[i]);
         }
@@ -310,6 +341,37 @@ internal sealed class ConversationMemoryService(
 
         return included.SelectMany(group => RehydrateGroup(group, markers)).ToList();
     }
+
+    // The budget ran out inside a turn (#446): a large tool result would otherwise cut the
+    // turn's user row off, and the edge trim then empties the window. The turn keeps its user
+    // row and answer and drops ALL its tool-call groups: keeping some would leave a hole in
+    // the chain. `user -> assistant` is a valid shape. Older turns stay cut.
+    private void SalvageCutTurn(
+        List<List<ConversationMessageEntity>> groups, int cutTurn,
+        List<List<ConversationMessageEntity>> included, int tokenBudget)
+    {
+        // The cut turn is the oldest one in `included`: re-adding its groups newest first
+        // keeps the list in walk order.
+        included.RemoveAll(group => group[0].TurnIndex == cutTurn);
+        var totalTokens = included.Sum(GroupTokens);
+        var dropped = 0;
+        foreach (var group in groups.Where(group => group[0].TurnIndex == cutTurn).Reverse())
+        {
+            if (group[0].ToolCallsJson is not null)
+                dropped++;
+            else if (totalTokens + GroupTokens(group) <= tokenBudget)
+            {
+                totalTokens += GroupTokens(group);
+                included.Add(group);
+            }
+        }
+
+        if (dropped > 0)
+            logger.LogDebug("Dropping {Count} tool-call group(s) of turn {TurnIndex} from the replay window to keep its question and answer",
+                dropped, cutTurn);
+    }
+
+    private static int GroupTokens(List<ConversationMessageEntity> group) => group.Sum(row => row.EstTokens);
 
     // Each row's web search markers, keyed by row id; a row without searches has no entry.
     // Rendered per turn over all loaded rows, before the grouping: a search's call and result
