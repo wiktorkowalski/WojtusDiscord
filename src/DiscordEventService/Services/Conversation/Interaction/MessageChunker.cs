@@ -76,10 +76,16 @@ internal static class MessageChunker
         foreach (var line in text.Split('\n'))
         {
             var trimmed = line.Trim();
+            // Discord closes a block at a ``` that ends a content line ("...}```"), as on its own line.
+            if (openFence is not null)
+            {
+                if (trimmed.EndsWith(Fence, StringComparison.Ordinal))
+                    openFence = null;
+            }
             // A one-line block (```json {}```) opens and closes on the same line.
-            if (trimmed.StartsWith(Fence, StringComparison.Ordinal)
+            else if (trimmed.StartsWith(Fence, StringComparison.Ordinal)
                 && trimmed.IndexOf(Fence, Fence.Length, StringComparison.Ordinal) < 0)
-                openFence = openFence is null ? Opener(trimmed) : null;
+                openFence = Opener(trimmed);
         }
 
         return openFence;

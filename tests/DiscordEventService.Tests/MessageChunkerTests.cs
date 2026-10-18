@@ -136,12 +136,16 @@ public sealed class MessageChunkerTests
     [Fact]
     public void Chunk_LongOpenerLine_ReopensWithTagOnly()
     {
-        var content = "```json {" + string.Join(", ", Enumerable.Range(1, 400).Select(i => $"\"k{i}\": {i}")) + "}```";
+        var block = "```json {" + string.Join(", ", Enumerable.Range(1, 400).Select(i => $"\"k{i}\": {i}")) + "}```";
+        var prose = string.Join(' ', Enumerable.Repeat("słowo", 600));
 
-        var chunks = MessageChunker.Chunk(content, 1950);
+        var chunks = MessageChunker.Chunk(block + "\n" + prose, 1950);
 
-        Assert.True(chunks.Count <= 5);
-        Assert.All(chunks.Skip(1), chunk => Assert.StartsWith("```json\n", chunk));
+        Assert.True(chunks.Count <= 8);
+        Assert.StartsWith("```json\n", chunks[1]);
+        // The "}```" tail closes the block: the prose after it is never wrapped in a fence.
+        Assert.StartsWith("słowo", chunks[^1]);
+        Assert.DoesNotContain(chunks, chunk => chunk.StartsWith("```json\nsłowo", StringComparison.Ordinal));
         Assert.All(chunks, chunk => Assert.True(chunk.Length <= 1950));
     }
 
