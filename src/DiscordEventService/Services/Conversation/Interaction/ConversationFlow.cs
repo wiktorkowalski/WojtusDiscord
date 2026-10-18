@@ -50,7 +50,20 @@ internal sealed class ConversationFlow(
             if (message.MentionedUserIds.Contains(botId)
                 && options.Value.ChannelAllowList.Contains(message.ChannelId))
             {
-                var thread = await gateway.CreateThreadAsync(BuildThreadName(message.Content, botId));
+                ITurnSurface thread;
+                try
+                {
+                    thread = await gateway.CreateThreadAsync(BuildThreadName(message.Content, botId));
+                }
+                catch (Exception ex)
+                {
+                    // No thread to answer in: say so inline, where the user asked (#445).
+                    logger.LogError(ex, "Could not create a conversation thread from message {MessageId} in channel {ChannelId}",
+                        message.MessageId, message.ChannelId);
+                    await TryPostLineAsync(gateway.Origin, options.Value.FailureMessage);
+                    return;
+                }
+
                 logger.LogDebug("Started conversation thread {ThreadId} from message {MessageId}",
                     thread.ChannelId, message.MessageId);
                 await RespondAsync(thread, message);
@@ -122,7 +135,7 @@ internal sealed class ConversationFlow(
         // Render the agentic loop's events as discrete messages (#274): deltas are
         // buffered, each tool round posts one standalone cue+summary message, and the
         // final answer is posted complete when the round finishes — no edit-in-place.
-        var renderer = new TurnRenderer(target);
+        var renderer = new TurnRenderer(target, logger);
         var startedAt = Stopwatch.GetTimestamp();
 
         // "failed" unless the turn ends on one of the two paths below: an exception that
@@ -139,9 +152,16 @@ internal sealed class ConversationFlow(
             logger.LogWarning("Conversation turn timed out after {Timeout}s in channel {ChannelId}",
                 options.Value.RequestTimeoutSeconds, context.ChannelId);
 
-            // Best-effort: post whatever the model had streamed so the user isn't left with
-            // silence after the wait (the buffer holds it; posting doesn't need the token).
-            await renderer.CompleteTurnAsync();
+            // Post whatever the model had streamed, then say the turn timed out: a cut-off
+            // sentence alone reads as the final answer (#445). Posting doesn't need the token.
+            await EndTurnWithLineAsync(renderer, target, options.Value.TimeoutMessage);
+        }
+        catch (Exception) when (!cts.IsCancellationRequested)
+        {
+            // A DB error, a failed Discord send, a broken stream: never leave the user with
+            // "typing" and then nothing (#445). The caller logs the rethrown exception.
+            await EndTurnWithLineAsync(renderer, target, options.Value.FailureMessage);
+            throw;
         }
         finally
         {
@@ -170,6 +190,34 @@ internal sealed class ConversationFlow(
         // Debug: the Information line of a turn is the turn log of ConversationService.
         logger.LogDebug("Conversation reply for {Author} sent {MessageCount} message(s)",
             context.InvokerDisplayName, renderer.MessageCount);
+    }
+
+    // The unhappy path (#445): post what the model had streamed, then the line that says why
+    // the turn ends here. Each post is tried once and logged, never thrown: the surface may be
+    // what broke.
+    private async Task EndTurnWithLineAsync(TurnRenderer renderer, ITurnSurface target, string line)
+    {
+        try
+        {
+            await renderer.CompleteTurnAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not post the partial answer in channel {ChannelId}", target.ChannelId);
+        }
+        await TryPostLineAsync(target, line);
+    }
+
+    private async Task TryPostLineAsync(ITurnSurface target, string line)
+    {
+        try
+        {
+            await target.SendAsync(line);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not post the line {Line} in channel {ChannelId}", line, target.ChannelId);
+        }
     }
 
     // Recognize a thread the bot started via its creator == the bot (live lookup; there

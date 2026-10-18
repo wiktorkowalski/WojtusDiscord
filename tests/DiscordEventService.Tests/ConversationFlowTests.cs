@@ -20,6 +20,8 @@ public sealed class ConversationFlowTests
     private const ulong OtherChannelId = 51UL;
     private const ulong GuildId = 900UL;
 
+    private static readonly ConversationOptions Defaults = new();
+
     private readonly RecordingLogger _logger = new();
     private readonly FakeTurnSource _turns = new();
     private readonly FakeUsageAlertService _usageAlerts = new();
@@ -197,20 +199,82 @@ public sealed class ConversationFlowTests
 
         await BuildFlow(timeoutSeconds: 1).HandleAsync(Message(guildId: null), BotId, _gateway);
 
-        Assert.Equal(["Zacząłem odpowiadać"], _origin.Sent);
+        Assert.Equal(["Zacząłem odpowiadać", Defaults.TimeoutMessage], _origin.Sent);
         Assert.Contains(_logger.Entries, entry => entry.Level == LogLevel.Warning);
         // Timeouts still burn tokens, so the cap check must run.
         Assert.Equal([HumanId], _usageAlerts.Checked);
     }
 
+    // #445: a hang during thinking, a tool or a backoff streamed nothing; silence is not an answer.
     [Fact]
-    public async Task AFailedTurn_IsLoggedNotThrown_AndStillRunsTheCostCapCheck()
+    public async Task ATimedOutTurn_WithNothingStreamed_PostsTheTimeoutLine()
+    {
+        _turns.HangUntilCancelled = true;
+
+        await BuildFlow(timeoutSeconds: 1).HandleAsync(Message(guildId: null), BotId, _gateway);
+
+        Assert.Equal([Defaults.TimeoutMessage], _origin.Sent);
+    }
+
+    [Fact]
+    public async Task AFailedTurn_PostsTheFailureLine_IsLoggedNotThrown_AndStillRunsTheCostCapCheck()
     {
         _turns.Failure = new InvalidOperationException("model exploded");
 
         await BuildFlow().HandleAsync(Message(guildId: null), BotId, _gateway);
 
+        Assert.Equal([Defaults.FailureMessage], _origin.Sent);
         Assert.Equal([HumanId], _usageAlerts.Checked);
+        Assert.Contains(_logger.Entries, entry => entry.Level == LogLevel.Error);
+    }
+
+    [Fact]
+    public async Task AFailedTurn_AfterADelta_PostsTheDeltaThenTheFailureLine()
+    {
+        _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Zacząłem"));
+        _turns.Failure = new InvalidOperationException("db down");
+
+        await BuildFlow().HandleAsync(Message(guildId: null), BotId, _gateway);
+
+        Assert.Equal(["Zacząłem", Defaults.FailureMessage], _origin.Sent);
+    }
+
+    // A failed chunk send stops the answer: a gapped answer must not read as complete.
+    [Fact]
+    public async Task AFailedSend_StopsTheTurn_AndPostsTheFailureLine()
+    {
+        _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Szukam."));
+        _turns.Updates.Add(new ConversationUpdate.ToolCall("-# 🔧 meme_search"));
+        _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("Odpowiedź."));
+        _origin.FailingSend = "Szukam.";
+
+        await BuildFlow().HandleAsync(Message(guildId: null), BotId, _gateway);
+
+        Assert.Equal([Defaults.FailureMessage], _origin.Sent);
+        Assert.Contains(_logger.Entries, entry => entry.Level == LogLevel.Error);
+    }
+
+    [Fact]
+    public async Task AThrowingTypingIndicator_StillPostsTheAnswer()
+    {
+        _origin.TypingFailure = new InvalidOperationException("Discord 429");
+        _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("gotowe"));
+
+        await BuildFlow().HandleAsync(Message(guildId: null), BotId, _gateway);
+
+        Assert.Equal(["gotowe"], _origin.Sent);
+        Assert.DoesNotContain(_logger.Entries, entry => entry.Level == LogLevel.Error);
+    }
+
+    [Fact]
+    public async Task AFailedThreadCreation_RepliesInlineWithTheFailureLine_AndRunsNoTurn()
+    {
+        _gateway.CreateThreadFailure = new InvalidOperationException("Discord 403");
+
+        await BuildFlow().HandleAsync(Message(mentionsBot: true), BotId, _gateway);
+
+        Assert.Equal([Defaults.FailureMessage], _origin.Sent);
+        Assert.Empty(_turns.Turns);
         Assert.Contains(_logger.Entries, entry => entry.Level == LogLevel.Error);
     }
 

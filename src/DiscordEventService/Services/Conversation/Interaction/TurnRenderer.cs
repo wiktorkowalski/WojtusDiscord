@@ -12,7 +12,7 @@ namespace DiscordEventService.Services.Conversation.Interaction;
 // round streams. Writes through ITurnSurface (#308), so the whole render contract —
 // chunking, typing refresh, the blank-message guard — is testable without Discord; the
 // surface is what suppresses mentions, since model text may contain @mentions.
-internal sealed class TurnRenderer(ITurnSurface surface)
+internal sealed class TurnRenderer(ITurnSurface surface, ILogger logger)
 {
     // Headroom under Discord's hard 2000-char cap.
     private const int Limit = 1950;
@@ -105,7 +105,15 @@ internal sealed class TurnRenderer(ITurnSurface surface)
             && Stopwatch.GetElapsedTime(_lastTypingTimestamp) < TypingRefresh)
             return;
 
-        await surface.TriggerTypingAsync();
+        // Best effort (#445): a 429/5xx on the typing POST must not end the turn mid-answer.
+        try
+        {
+            await surface.TriggerTypingAsync();
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Typing indicator failed in channel {ChannelId}", surface.ChannelId);
+        }
         _lastTypingTimestamp = Stopwatch.GetTimestamp();
     }
 }

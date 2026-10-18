@@ -148,6 +148,15 @@ internal sealed class ConversationService(
         // text before it, so `answer` alone cannot tell if an answer is left to post.
         var textPending = false;
 
+        // A paused round's text may wait in the buffer: without the newline the `-#` renders literally.
+        string FailureLine() => textPending ? $"\n{options.FailureMessage}" : options.FailureMessage;
+
+        // The flow's turn timeout (RequestTimeoutSeconds) started a moment before this point. A retry
+        // wait that passes it is cut by the turn token after RoundReset emptied the buffer, so the
+        // round gives up at once and posts the failure line instead (#445).
+        var turnStartedAt = Stopwatch.GetTimestamp();
+        var turnBudget = TimeSpan.FromSeconds(options.RequestTimeoutSeconds);
+
         // Streams one round into the transcript sink under the §2 retry policy (#268):
         // up to RetryMaxAttempts calls over the same intact `messages` prefix (a failed
         // attempt appended nothing and dispatched no tools), full-jitter backoff between
@@ -260,16 +269,21 @@ internal sealed class ConversationService(
                 if (bufferedLength > 0)
                     yield return new ConversationUpdate.RoundReset(bufferedLength);
 
-                if (!ConversationRetryPolicy.IsTransient(failure) || attempt >= options.RetryMaxAttempts)
+                var retryable = ConversationRetryPolicy.IsTransient(failure) && attempt < options.RetryMaxAttempts;
+                var delay = retryable
+                    ? ConversationRetryPolicy.ComputeDelay(attempt, options, Random.Shared, attemptScope.RetryAfter)
+                    : TimeSpan.Zero;
+                var pastBudget = retryable && Stopwatch.GetElapsedTime(turnStartedAt) + delay >= turnBudget;
+                if (!retryable || pastBudget)
                 {
-                    logger.LogError(failure, "Round {Round} failed after {Attempts} attempt(s)", round, attempt);
+                    logger.LogError(failure,
+                        "Round {Round} failed after {Attempts} attempt(s); retry wait past the turn budget: {PastBudget}",
+                        round, attempt, pastBudget);
                     outcome.Attempt = attempt;
                     outcome.Failure = failure;
                     yield break;
                 }
 
-                var delay = ConversationRetryPolicy.ComputeDelay(
-                    attempt, options, Random.Shared, attemptScope.RetryAfter);
                 logger.LogWarning(failure,
                     "Round {Round} attempt {Attempt} failed transiently; retrying in {DelayMs}ms",
                     round, attempt, (int)delay.TotalMilliseconds);
@@ -328,7 +342,7 @@ internal sealed class ConversationService(
             if (!outcome.Succeeded)
             {
                 turnLog.Finish(TurnLog.Failed, options.FailureMessage);
-                yield return new ConversationUpdate.AssistantTextDelta(options.FailureMessage);
+                yield return new ConversationUpdate.AssistantTextDelta(FailureLine());
                 turn?.SetTag("conversation.failed", true);
                 turn?.SetTag("conversation.rounds", round);
                 turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
@@ -427,7 +441,7 @@ internal sealed class ConversationService(
         if (!finalOutcome.Succeeded)
         {
             turnLog.Finish(TurnLog.Failed, options.FailureMessage);
-            yield return new ConversationUpdate.AssistantTextDelta(options.FailureMessage);
+            yield return new ConversationUpdate.AssistantTextDelta(FailureLine());
             turn?.SetTag("conversation.failed", true);
             turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
             if (captureSensitiveData)

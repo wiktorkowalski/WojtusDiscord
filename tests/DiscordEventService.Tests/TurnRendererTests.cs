@@ -1,4 +1,5 @@
 using DiscordEventService.Services.Conversation.Interaction;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace DiscordEventService.Tests;
@@ -13,7 +14,7 @@ public sealed class TurnRendererTests
     public async Task Deltas_BufferUntilTheTurnEnds_ThenPostAsOneMessage()
     {
         var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface);
+        var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
         await renderer.AppendDeltaAsync("Jasne, ");
         await renderer.AppendDeltaAsync("już patrzę.");
@@ -29,7 +30,7 @@ public sealed class TurnRendererTests
     public async Task ToolCalls_PostNarrationThenEachCall_AndRetriggersTypingAfterEach()
     {
         var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface);
+        var renderer = new TurnRenderer(surface, NullLogger.Instance);
         await renderer.AppendDeltaAsync("Zaraz sprawdzę.");
 
         await renderer.PostToolCallAsync("-# 🔧 meme_search");
@@ -48,7 +49,7 @@ public sealed class TurnRendererTests
     public async Task ToolCall_NoVisibleNarration_PostsOnlyTheCalls(string narration)
     {
         var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface);
+        var renderer = new TurnRenderer(surface, NullLogger.Instance);
         await renderer.AppendDeltaAsync(narration);
 
         await renderer.PostToolCallAsync("-# 🔧 guild_stats");
@@ -60,7 +61,7 @@ public sealed class TurnRendererTests
     public async Task RoundBoundary_FlushesTheBuffer_SoTheAnswerIsOnlyTheLastRoundsDeltas()
     {
         var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface);
+        var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
         await renderer.AppendDeltaAsync("Sprawdzam.");
         await renderer.PostToolCallAsync("-# 🔧 meme_search");
@@ -75,7 +76,7 @@ public sealed class TurnRendererTests
     public async Task SearchCall_SplitsTheTextBeforeAndAfterTheSearch()
     {
         var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface);
+        var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
         await renderer.AppendDeltaAsync("Okej, szukam kursu…");
         await renderer.PostToolCallAsync("-# 🔎 web_search: kurs EUR/PLN");
@@ -90,7 +91,7 @@ public sealed class TurnRendererTests
     public async Task ResetRound_DropsThePartialDeltas_SoTheRetryRendersOnce()
     {
         var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface);
+        var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
         await renderer.AppendDeltaAsync("Szukam… ");
         await renderer.AppendDeltaAsync("Zna");
@@ -108,7 +109,7 @@ public sealed class TurnRendererTests
     public async Task BlankBuffer_PostsNothing(string content)
     {
         var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface);
+        var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
         await renderer.AppendDeltaAsync(content);
         await renderer.CompleteTurnAsync();
@@ -121,7 +122,7 @@ public sealed class TurnRendererTests
     public async Task AnswerPastTheMessageCap_IsChunkedAndEachChunkCounts()
     {
         var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface);
+        var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
         await renderer.AppendDeltaAsync(new string('x', 4000));
         await renderer.CompleteTurnAsync();
@@ -136,7 +137,7 @@ public sealed class TurnRendererTests
     public async Task TypingRefresh_IsThrottled_WhileDeltasStream()
     {
         var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface);
+        var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
         // The first delta triggers typing; the rest fall inside the ~8s refresh window.
         for (var i = 0; i < 20; i++)
