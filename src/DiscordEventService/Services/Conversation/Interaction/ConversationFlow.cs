@@ -156,7 +156,7 @@ internal sealed class ConversationFlow(
             // sentence alone reads as the final answer (#445). Posting doesn't need the token.
             await EndTurnWithLineAsync(renderer, target, options.Value.TimeoutMessage);
         }
-        catch (Exception) when (!cts.IsCancellationRequested)
+        catch (Exception)
         {
             // A DB error, a failed Discord send, a broken stream: never leave the user with
             // "typing" and then nothing (#445). The caller logs the rethrown exception.
