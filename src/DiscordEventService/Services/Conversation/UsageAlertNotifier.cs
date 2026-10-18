@@ -8,7 +8,8 @@ namespace DiscordEventService.Services.Conversation;
 // a recording fake — the Discord impl is live-verified only, like the renderer.
 internal interface IUsageAlertNotifier
 {
-    Task NotifyAdminsAsync(string message, CancellationToken cancellationToken);
+    // Returns how many admins received the message; the caller logs a total failure.
+    Task<int> NotifyAdminsAsync(string message, CancellationToken cancellationToken);
 }
 
 // DMs every configured admin (#269 transport decision: Discord DM, not ntfy/Grafana —
@@ -20,16 +21,10 @@ internal sealed class DiscordUsageAlertNotifier(
     IOptions<ConversationOptions> conversationOptions,
     ILogger<DiscordUsageAlertNotifier> logger) : IUsageAlertNotifier
 {
-    public async Task NotifyAdminsAsync(string message, CancellationToken cancellationToken)
+    public async Task<int> NotifyAdminsAsync(string message, CancellationToken cancellationToken)
     {
-        var adminIds = conversationOptions.Value.AdminUserIds;
-        if (adminIds.Length == 0)
-        {
-            logger.LogWarning("Cost alert had no AdminUserIds to DM; dropping: {Message}", message);
-            return;
-        }
-
-        foreach (var adminId in adminIds)
+        var delivered = 0;
+        foreach (var adminId in conversationOptions.Value.AdminUserIds)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -38,11 +33,14 @@ internal sealed class DiscordUsageAlertNotifier(
                 var dm = await user.CreateDmChannelAsync();
                 await dm.SendMessageAsync(message);
                 logger.LogInformation("Cost alert DM sent to admin {AdminId}", adminId);
+                delivered++;
             }
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "Failed to DM cost alert to admin {AdminId}", adminId);
             }
         }
+
+        return delivered;
     }
 }

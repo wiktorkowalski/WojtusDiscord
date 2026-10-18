@@ -4,6 +4,9 @@ using DiscordEventService.Data.Entities.Conversations;
 using DiscordEventService.Services.Conversation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
@@ -241,6 +244,83 @@ public sealed class UsageAlertTests(PostgresFixture fixture)
         Assert.Single(await _db.UsageAlerts.ToListAsync());
     }
 
+    // #453: every turn after a crossing re-runs the check. The second one must read the
+    // existing row, not attempt an INSERT that fails with 23505 and logs EF Warnings.
+    [Fact]
+    public async Task SecondCheckAfterACrossing_MakesNoInsertAndNoEfFailure()
+    {
+        await SeedSpendAsync(InvokerId, 8.50);
+        await RunCheckAsync(GlobalMonthlyOnly);
+
+        var efLog = new RecordingLogger();
+        var notifier = new RecordingNotifier();
+        await new UsageAlertService(NewContext(efLog.AsLoggerFactory()), BuildOptions(GlobalMonthlyOnly), notifier,
+            NullLogger<UsageAlertService>.Instance).CheckAndAlertAsync(InvokerId);
+
+        Assert.Empty(notifier.Messages);
+        Assert.Contains(efLog.Entries, e => e.Message.Contains("FROM usage_alerts", StringComparison.Ordinal));
+        Assert.DoesNotContain(efLog.Entries, e => e.Message.Contains("INSERT INTO usage_alerts", StringComparison.Ordinal));
+        Assert.DoesNotContain(efLog.Entries, e => e.Message.Contains("23505", StringComparison.Ordinal)
+            || e.Message.Contains("Failed executing DbCommand", StringComparison.Ordinal)
+            || e.Message.Contains("saving changes", StringComparison.Ordinal));
+    }
+
+    // #453: a row written under the old limit must not suppress the levels of a raised one.
+    [Fact]
+    public async Task RaisedLimitAfterA100Alert_AlertsAgainAt80OfTheNewLimit()
+    {
+        await SeedSpendAsync(InvokerId, 10.50);
+        await RunCheckAsync(GlobalMonthlyOnly); // 80% + 100% of $10
+
+        await SeedSpendAsync(InvokerId, 6.00); // $16.50 = 82.5% of $20
+        var notifier = await RunCheckAsync(options =>
+        {
+            GlobalMonthlyOnly(options);
+            options.CostAlerts.GlobalMonthlyUsd = 20;
+        });
+
+        var message = Assert.Single(notifier.Messages);
+        Assert.Contains("80%", message);
+        var alerts = await _db.UsageAlerts.OrderBy(a => a.LimitUsd).ThenBy(a => a.Level)
+            .Select(a => new { a.Level, a.LimitUsd }).ToListAsync();
+        Assert.Equal([(80, 10.0), (100, 10.0), (80, 20.0)], alerts.Select(a => (a.Level, a.LimitUsd)));
+    }
+
+    // #453: the row is committed before delivery (at-most-once), so a crossing no admin
+    // received must at least be an Error.
+    [Fact]
+    public async Task ZeroDeliveredDms_LogAnError()
+    {
+        await SeedSpendAsync(InvokerId, 8.50);
+        var log = new RecordingLogger();
+
+        await new UsageAlertService(NewContext(), BuildOptions(GlobalMonthlyOnly), new RecordingNotifier { Delivered = 0 },
+            log.For<UsageAlertService>()).CheckAndAlertAsync(InvokerId);
+
+        Assert.Contains(log.Entries, e => e.Level == LogLevel.Error && e.Message.Contains("reached no admin", StringComparison.Ordinal));
+        Assert.Single(await _db.UsageAlerts.ToListAsync());
+    }
+
+    // #453: an unpriced model writes null costs, which sum as $0 and silence every cap — so
+    // the options fail validation (and boot, via ValidateOnStart) instead.
+    [Theory]
+    [InlineData(null, true)] // the default model
+    [InlineData("claude-unknown-9", false)]
+    public void ConversationModelWithoutAPrice_FailsOptionsValidation(string? model, bool valid)
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(model is null ? [] : new Dictionary<string, string?> { ["Conversation:Model"] = model })
+            .Build();
+        using var sp = new ServiceCollection().AddConversationFeature(config).BuildServiceProvider();
+
+        var read = () => sp.GetRequiredService<IOptions<ConversationOptions>>().Value;
+
+        if (valid)
+            Assert.NotNull(read());
+        else
+            Assert.Contains("Conversation:Prices", Assert.Throws<OptionsValidationException>(read).Message);
+    }
+
     // #426: the Claude API reports tokens, not money. The cost the bot computes from a round's
     // usage must flow through the ledger write into the sums the caps read, and fire an alert.
     [Fact]
@@ -373,29 +453,32 @@ public sealed class UsageAlertTests(PostgresFixture fixture)
     // Squarely inside last month's window regardless of today's date.
     private static DateTime LastMonth() => MonthStart().AddDays(-15);
 
-    private DiscordDbContext NewContext()
+    private DiscordDbContext NewContext(ILoggerFactory? loggerFactory = null)
     {
-        var options = new DbContextOptionsBuilder<DiscordDbContext>()
+        var builder = new DbContextOptionsBuilder<DiscordDbContext>()
             .UseNpgsql(fixture.ConnectionString)
-            .UseSnakeCaseNamingConvention()
-            .Options;
-        return new DiscordDbContext(options);
+            .UseSnakeCaseNamingConvention();
+        if (loggerFactory is not null)
+            builder.UseLoggerFactory(loggerFactory);
+        return new DiscordDbContext(builder.Options);
     }
 
     private sealed class RecordingNotifier : IUsageAlertNotifier
     {
         public List<string> Messages { get; } = [];
 
-        public Task NotifyAdminsAsync(string message, CancellationToken cancellationToken)
+        public int Delivered { get; init; } = 1;
+
+        public Task<int> NotifyAdminsAsync(string message, CancellationToken cancellationToken)
         {
             Messages.Add(message);
-            return Task.CompletedTask;
+            return Task.FromResult(Delivered);
         }
     }
 
     private sealed class ThrowingNotifier : IUsageAlertNotifier
     {
-        public Task NotifyAdminsAsync(string message, CancellationToken cancellationToken) =>
+        public Task<int> NotifyAdminsAsync(string message, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("DM refused");
     }
 }

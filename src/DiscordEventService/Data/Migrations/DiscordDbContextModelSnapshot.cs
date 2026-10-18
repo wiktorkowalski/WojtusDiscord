@@ -271,11 +271,11 @@ namespace DiscordEventService.Data.Migrations
                     b.HasKey("Id")
                         .HasName("pk_usage_alerts");
 
-                    b.HasIndex("Cap", "WindowStartUtc", "Level", "UserDiscordId")
+                    b.HasIndex("Cap", "WindowStartUtc", "Level", "UserDiscordId", "LimitUsd")
                         .IsUnique()
-                        .HasDatabaseName("ix_usage_alerts_cap_window_start_utc_level_user_discord_id");
+                        .HasDatabaseName("ix_usage_alerts_dedup");
 
-                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("Cap", "WindowStartUtc", "Level", "UserDiscordId"), false);
+                    NpgsqlIndexBuilderExtensions.AreNullsDistinct(b.HasIndex("Cap", "WindowStartUtc", "Level", "UserDiscordId", "LimitUsd"), false);
 
                     b.ToTable("usage_alerts", (string)null);
                 });

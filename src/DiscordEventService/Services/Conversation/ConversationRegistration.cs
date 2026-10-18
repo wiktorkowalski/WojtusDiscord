@@ -23,9 +23,11 @@ internal static class ConversationRegistration
         this IServiceCollection services, IConfiguration configuration)
     {
         // A ReasoningEffort the API does not know would be a 400 on every call: fail at boot.
+        // An unpriced model writes null costs, which sum as $0 and silence every cost cap (#453).
         services.AddOptions<ConversationOptions>()
             .Bind(configuration.GetSection(ConversationOptions.SectionName))
             .ValidateDataAnnotations()
+            .Validate(o => o.Model is not null && o.Prices.ContainsKey(o.Model), "Conversation:Prices has no entry for Conversation:Model")
             .ValidateOnStart();
 
         AddAnthropicOptions(services, configuration);
