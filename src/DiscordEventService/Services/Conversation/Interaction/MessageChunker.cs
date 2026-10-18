@@ -11,6 +11,9 @@ internal static class MessageChunker
     // A break in the first 1/N of the window would post a tiny message; WebSearchCitations relies on it.
     private const int MinBreakFraction = 4;
 
+    // The reopen repeats only the fence and its language tag: a long opener line would eat the budget.
+    private const int MaxFenceTagLength = 20;
+
     public static List<string> Chunk(string content, int limit)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
@@ -67,7 +70,7 @@ internal static class MessageChunker
         return char.IsHighSurrogate(window[budget - 1]) ? budget - 1 : budget;
     }
 
-    // The opener line ("```sql") of the block still open at the end of `text`, or null.
+    // The opener ("```sql") of the block still open at the end of `text`, or null.
     private static string? FenceAfter(string text, string? openFence)
     {
         foreach (var line in text.Split('\n'))
@@ -76,10 +79,16 @@ internal static class MessageChunker
             // A one-line block (```json {}```) opens and closes on the same line.
             if (trimmed.StartsWith(Fence, StringComparison.Ordinal)
                 && trimmed.IndexOf(Fence, Fence.Length, StringComparison.Ordinal) < 0)
-                openFence = openFence is null ? trimmed : null;
+                openFence = openFence is null ? Opener(trimmed) : null;
         }
 
         return openFence;
+    }
+
+    private static string Opener(string fenceLine)
+    {
+        var tag = fenceLine[Fence.Length..].Split(' ', 2)[0];
+        return tag.Length <= MaxFenceTagLength ? Fence + tag : Fence;
     }
 
     private static int SkipWhitespace(string content, int start)

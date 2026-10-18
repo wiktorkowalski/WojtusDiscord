@@ -131,6 +131,20 @@ public sealed class MessageChunkerTests
         Assert.All(chunks.Skip(1), chunk => Assert.StartsWith("słowo", chunk));
     }
 
+    // PR #477 review: the whole opener line used to be the reopen, so a long one-line block
+    // shrank the budget to 2 chars and posted hundreds of messages.
+    [Fact]
+    public void Chunk_LongOpenerLine_ReopensWithTagOnly()
+    {
+        var content = "```json {" + string.Join(", ", Enumerable.Range(1, 400).Select(i => $"\"k{i}\": {i}")) + "}```";
+
+        var chunks = MessageChunker.Chunk(content, 1950);
+
+        Assert.True(chunks.Count <= 5);
+        Assert.All(chunks.Skip(1), chunk => Assert.StartsWith("```json\n", chunk));
+        Assert.All(chunks, chunk => Assert.True(chunk.Length <= 1950));
+    }
+
     private static int CountFences(string chunk) =>
         chunk.Split('\n').Count(line => line.Trim().StartsWith("```", StringComparison.Ordinal));
 }
