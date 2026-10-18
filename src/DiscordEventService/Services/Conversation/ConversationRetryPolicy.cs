@@ -33,8 +33,8 @@ internal static class ConversationRetryPolicy
 
     // Exponential backoff with full jitter: random(0, base·2^(attempt-1)) capped at
     // RetryMaxDelayMs. The Retry-After the API sent (captured by AnthropicAttemptLogHandler)
-    // wins when it asks for longer — the turn's RequestTimeoutSeconds budget still bounds the
-    // wait (Task.Delay runs under the turn token).
+    // wins when it asks for longer. A wait past the turn's RequestTimeoutSeconds budget is not
+    // taken: the round loop ends the round as failed instead (#445).
     public static TimeSpan ComputeDelay(
         int attempt, ConversationOptions options, Random random, TimeSpan? retryAfter = null)
     {

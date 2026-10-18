@@ -62,15 +62,19 @@ internal sealed class ConversationOptions
     public int RequestTimeoutSeconds { get; set; } = 120;
 
     // §2 per-round model-call retry (#268): attempts per round (1 initial + retries),
-    // exponential backoff with full jitter between transient failures. Worst case
-    // (3 attempts, ≤1s+2s backoff) stays well under RequestTimeoutSeconds.
+    // exponential backoff with full jitter between transient failures. Fast failures fit
+    // all 3 attempts under RequestTimeoutSeconds; hung attempts (AttemptTimeout, 60 s) fit
+    // only one retry, and a retry wait that would pass the budget ends the round (#445).
     public int RetryMaxAttempts { get; set; } = 3;
     public int RetryBaseDelayMs { get; set; } = 1000;
     public int RetryMaxDelayMs { get; set; } = 8000;
 
-    // The visible localized failure line posted when a round's retries exhaust (or the
-    // failure is terminal) — never fail a turn silently (#268).
+    // The visible localized failure line posted when a round's retries exhaust, the
+    // failure is terminal, or the turn throws — never fail a turn silently (#268, #445).
     public string FailureMessage { get; set; } = "-# 💥 Coś się wysypało — spróbuj jeszcze raz.";
+
+    // The line posted after a turn runs out of RequestTimeoutSeconds (#445).
+    public string TimeoutMessage { get; set; } = "-# ⏱️ Nie zdążyłem odpowiedzieć na czas — spróbuj jeszcze raz.";
 
     // Conversation memory replay window (#267). The budget is summed over locally
     // estimated message sizes (chars/4, a zero-dependency proxy; the per-request usage of

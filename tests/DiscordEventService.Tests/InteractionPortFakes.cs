@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using DiscordEventService.Services.Conversation;
 using DiscordEventService.Services.Conversation.Interaction;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DiscordEventService.Tests;
 
@@ -14,7 +15,7 @@ internal static class TurnRendering
     public static async Task<List<string>> RenderAsync(IEnumerable<ConversationUpdate> events)
     {
         var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface);
+        var renderer = new TurnRenderer(surface, NullLogger.Instance);
         foreach (var update in events)
             await renderer.ApplyAsync(update);
         await renderer.CompleteTurnAsync();
@@ -34,8 +35,16 @@ internal sealed class FakeTurnSurface(ulong channelId = 100UL) : ITurnSurface
 
     public int TypingCount { get; private set; }
 
+    // Thrown by every typing POST.
+    public Exception? TypingFailure { get; set; }
+
+    // Thrown by the send of a message equal to this text (the message is not recorded).
+    public string? FailingSend { get; set; }
+
     public Task SendAsync(string content)
     {
+        if (content == FailingSend)
+            throw new InvalidOperationException("Discord 500");
         Sent.Add(content);
         return Task.CompletedTask;
     }
@@ -43,7 +52,7 @@ internal sealed class FakeTurnSurface(ulong channelId = 100UL) : ITurnSurface
     public Task TriggerTypingAsync()
     {
         TypingCount++;
-        return Task.CompletedTask;
+        return TypingFailure is null ? Task.CompletedTask : Task.FromException(TypingFailure);
     }
 }
 
@@ -70,8 +79,12 @@ internal sealed class FakeConversationGateway(FakeTurnSurface origin) : IConvers
             : Task.FromResult(ThreadCreatorId);
     }
 
+    public Exception? CreateThreadFailure { get; set; }
+
     public Task<ITurnSurface> CreateThreadAsync(string name)
     {
+        if (CreateThreadFailure is not null)
+            return Task.FromException<ITurnSurface>(CreateThreadFailure);
         CreatedThreadName = name;
         CreatedThread = new FakeTurnSurface(999UL);
         return Task.FromResult<ITurnSurface>(CreatedThread);

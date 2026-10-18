@@ -62,4 +62,16 @@ public sealed class MessageChunkerTests
         // Word boundaries preserved: reassembling with single spaces restores the text.
         Assert.Equal(content, string.Join(' ', chunks));
     }
+
+    // #445: a leading newline used to break at 1 and emit an empty chunk, which Discord rejects.
+    [Fact]
+    public void Chunk_LeadingNewlines_EmitNoEmptyChunk_AndDropNothing()
+    {
+        var body = new string('a', 2000);
+
+        var chunks = MessageChunker.Chunk("\n\n" + body, 1950);
+
+        Assert.All(chunks, chunk => Assert.False(string.IsNullOrWhiteSpace(chunk)));
+        Assert.Equal(body, string.Concat(chunks));
+    }
 }

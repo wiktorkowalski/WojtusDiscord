@@ -21,7 +21,10 @@ internal static class MessageChunker
             if (breakAt <= 0)
                 breakAt = limit;
 
-            chunks.Add(content.Substring(start, breakAt).TrimEnd());
+            // A leading newline breaks at 1 and leaves a blank chunk: Discord rejects an empty message.
+            var chunk = content.Substring(start, breakAt).TrimEnd();
+            if (chunk.Length > 0)
+                chunks.Add(chunk);
             start += breakAt;
             while (start < content.Length && char.IsWhiteSpace(content[start]))
                 start++;

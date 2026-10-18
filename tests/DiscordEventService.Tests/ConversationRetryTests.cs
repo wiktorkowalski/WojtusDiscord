@@ -163,6 +163,41 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
             $"expected the 1s retry-after-ms to be honored, waited only {stopwatch.ElapsedMilliseconds}ms");
     }
 
+    // #445: a wait past the turn budget would be cut by the turn token after RoundReset emptied
+    // the buffer, leaving silence. The round gives up at once and posts the failure line.
+    [Fact]
+    public async Task RateLimited_RetryAfterPastTheTurnBudget_FailsAtOnceWithTheFailureLine()
+    {
+        var handler = new ScriptedClaudeHandler(_ => ScriptedClaudeHandler.Status(429, retryAfterMs: 300_000));
+
+        var stopwatch = Stopwatch.StartNew();
+        var events = await CollectAsync(BuildService(handler, out var options)
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+        stopwatch.Stop();
+
+        Assert.Equal(1, handler.CallCount);
+        Assert.Equal(options.Value.FailureMessage, await TurnRendering.FinalAnswerAsync(events));
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(10), $"waited {stopwatch.ElapsedMilliseconds}ms");
+        Assert.True((await _db.ConversationUsage.SingleAsync()).Failed);
+    }
+
+    // #445: the paused round's text waits in the buffer; the failure line goes on its own line,
+    // or Discord renders the `-#` literally.
+    [Fact]
+    public async Task FailureAfterAPausedRound_PutsTheFailureLineOnItsOwnLine()
+    {
+        var handler = new ScriptedClaudeHandler(call => call switch
+        {
+            0 => ScriptedClaudeHandler.Sse(ClaudeSse.Start().Text("Szukam dalej…").End("pause_turn")),
+            _ => ScriptedClaudeHandler.Status(401),
+        });
+
+        var events = await CollectAsync(BuildService(handler, out var options)
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        Assert.Equal([$"Szukam dalej…\n{options.Value.FailureMessage}"], await TurnRendering.RenderAsync(events));
+    }
+
     // The SDK attempt timeout (ClientOptions.Timeout) is a linked CancellationTokenSource over
     // the send; the SDK rethrows its expiry as TaskCanceledException wrapping TimeoutException.
     // Pinned here on the real SDK + MEAI adapter, so an SDK change of shape shows up.
