@@ -310,6 +310,87 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         Assert.DoesNotContain(next.Window, m => m.Contents.OfType<FunctionResultContent>().Any());
     }
 
+    // #446: an oversized tool result inside the newest turn used to cut the turn's user row
+    // off, and the edge trim then emptied the window.
+    [Fact]
+    public async Task Window_OversizedToolGroupInsideATurn_KeepsTheQuestionAndAnswer()
+    {
+        var memory = BuildMemory(windowTokenBudget: 100);
+        var older = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        await memory.PersistUserMessageAsync(older, new string('s', 400), InvokerId, "Vicio", CancellationToken.None);
+        var turn = older with { TurnIndex = 1 };
+
+        await memory.PersistUserMessageAsync(turn, "pytanie", InvokerId, "Vicio", CancellationToken.None);
+        foreach (var (callId, resultLength) in new[] { ("call_1", 1000), ("call_2", 10) })
+        {
+            await memory.PersistAssistantMessagesAsync(turn,
+                [new ChatMessage(ChatRole.Assistant,
+                    [new FunctionCallContent(callId, "query_database", new Dictionary<string, object?> { ["sql"] = "x" })])],
+                null, null, CancellationToken.None);
+            await memory.PersistToolResultAsync(turn, "query_database",
+                new FunctionResultContent(callId, new string('r', resultLength)), CancellationToken.None);
+        }
+        await memory.PersistAssistantMessagesAsync(turn,
+            [new ChatMessage(ChatRole.Assistant, "odpowiedź")], null, null, CancellationToken.None);
+
+        var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        // Both tool groups go, also the small one that fit: keeping it would replay a broken chain.
+        Assert.Equal([Said("pytanie"), "odpowiedź"], next.Window.Select(m => m.Text));
+        Assert.DoesNotContain(next.Window, m => m.Contents.OfType<FunctionCallContent>().Any());
+        Assert.DoesNotContain(next.Window, m => m.Contents.OfType<FunctionResultContent>().Any());
+    }
+
+    // #446: one turn longer than the row cap lost its user row the same way.
+    [Fact]
+    public async Task Window_TurnLongerThanTheRowCap_KeepsTheQuestionAndAnswer()
+    {
+        var memory = BuildMemory(windowMaxMessages: 4);
+        var turn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        await memory.PersistUserMessageAsync(turn, "pytanie", InvokerId, "Vicio", CancellationToken.None);
+        foreach (var callId in new[] { "call_1", "call_2" })
+        {
+            await memory.PersistAssistantMessagesAsync(turn,
+                [new ChatMessage(ChatRole.Assistant,
+                    [new FunctionCallContent(callId, "meme_search", new Dictionary<string, object?> { ["query"] = "x" })])],
+                null, null, CancellationToken.None);
+            await memory.PersistToolResultAsync(turn, "meme_search",
+                new FunctionResultContent(callId, "wynik"), CancellationToken.None);
+        }
+        await memory.PersistAssistantMessagesAsync(turn,
+            [new ChatMessage(ChatRole.Assistant, "odpowiedź")], null, null, CancellationToken.None);
+
+        var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        Assert.Equal([Said("pytanie"), "odpowiedź"], next.Window.Select(m => m.Text));
+        Assert.DoesNotContain(next.Window, m => m.Contents.OfType<FunctionCallContent>().Any());
+    }
+
+    [Fact]
+    public async Task Window_MaxMessagesCutsAToolGroup_StartsWithAUserRow_NoDanglingToolMessage()
+    {
+        var memory = BuildMemory(windowMaxMessages: 3);
+        var turn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        await memory.PersistUserMessageAsync(turn, "pierwsze", InvokerId, "Vicio", CancellationToken.None);
+        await memory.PersistAssistantMessagesAsync(turn,
+            [new ChatMessage(ChatRole.Assistant,
+                [new FunctionCallContent("call_1", "meme_search", new Dictionary<string, object?> { ["query"] = "x" })])],
+            null, null, CancellationToken.None);
+        await memory.PersistToolResultAsync(turn, "meme_search",
+            new FunctionResultContent("call_1", "wynik"), CancellationToken.None);
+        var second = turn with { TurnIndex = 1 };
+        await memory.PersistUserMessageAsync(second, "drugie", InvokerId, "Vicio", CancellationToken.None);
+        await memory.PersistAssistantMessagesAsync(second,
+            [new ChatMessage(ChatRole.Assistant, "odpowiedź")], null, null, CancellationToken.None);
+
+        var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        // The cap cut turn 0 inside its tool group: its question comes back, its tool rows do not.
+        Assert.Equal([Said("pierwsze"), Said("drugie"), "odpowiedź"], next.Window.Select(m => m.Text));
+        Assert.Equal(ChatRole.User, next.Window[0].Role);
+        Assert.DoesNotContain(next.Window, m => m.Role == ChatRole.Tool);
+    }
+
     [Fact]
     public async Task Window_IncompleteToolGroup_CrashBeforeToolResult_IsNotReplayed()
     {
