@@ -1,11 +1,11 @@
-using DiscordEventService.Services.EventHandlers;
+using DiscordEventService.Services.Conversation.Interaction;
 using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// The streaming renderer (#241) spills a long answer into several Discord messages; the
-// chunker is the load-bearing boundary logic, so pin its behaviour: nothing dropped, no
-// chunk over the limit, and a clean break preferred over a mid-word cut.
+// TurnRenderer spills a long answer into several Discord messages; the chunker is the
+// load-bearing boundary logic, so pin its behaviour: nothing dropped, no chunk over the
+// limit, a clean break preferred over a mid-word cut, and code blocks kept whole (#447).
 public sealed class MessageChunkerTests
 {
     [Fact]
@@ -74,4 +74,81 @@ public sealed class MessageChunkerTests
         Assert.All(chunks, chunk => Assert.False(string.IsNullOrWhiteSpace(chunk)));
         Assert.Equal(body, string.Concat(chunks));
     }
+
+    // #447: a cut inside a ``` block closes and reopens the fence, language tag included.
+    [Fact]
+    public void Chunk_FencedBlockAcrossLimit_KeepsEveryChunkFenced()
+    {
+        var lines = Enumerable.Range(1, 120).Select(i => $"    SELECT count(*) FROM t{i} WHERE x = {i};");
+        var content = "Zapytanie:\n```sql\n" + string.Join('\n', lines) + "\n```\nKoniec.";
+
+        var chunks = MessageChunker.Chunk(content, 1950);
+
+        Assert.True(chunks.Count > 1);
+        Assert.All(chunks, chunk =>
+        {
+            Assert.True(chunk.Length <= 1950);
+            Assert.Equal(0, CountFences(chunk) % 2);
+        });
+        Assert.All(chunks.Skip(1), chunk => Assert.StartsWith("```sql\n", chunk));
+        // Indentation inside the fence survives every split.
+        Assert.All(chunks.Skip(1), chunk => Assert.StartsWith("    SELECT", chunk.Split('\n')[1]));
+        var code = chunks.SelectMany(chunk => chunk.Split('\n')).Where(line => line.StartsWith("    SELECT"));
+        Assert.Equal(lines, code);
+    }
+
+    [Fact]
+    public void Chunk_EmojiAtLimit_NeverEndsInHighSurrogate()
+    {
+        var content = string.Concat(Enumerable.Repeat("😀", 100));
+
+        var chunks = MessageChunker.Chunk(content, 51);
+
+        Assert.All(chunks, chunk => Assert.False(char.IsHighSurrogate(chunk[^1])));
+        Assert.Equal(content, string.Concat(chunks));
+    }
+
+    [Fact]
+    public void Chunk_EarlyNewline_DoesNotEmitTinyFirstChunk()
+    {
+        var paragraph = string.Join(' ', Enumerable.Repeat("słowo", 400));
+
+        var chunks = MessageChunker.Chunk("Header\n" + paragraph, 1950);
+
+        Assert.StartsWith("Header\nsłowo", chunks[0]);
+        Assert.All(chunks, chunk => Assert.True(chunk.Length <= 1950));
+    }
+
+    [Fact]
+    public void Chunk_OneLineBlock_DoesNotFlipFenceParity()
+    {
+        var paragraph = string.Join(' ', Enumerable.Repeat("słowo", 600));
+
+        var chunks = MessageChunker.Chunk("```json {\"a\":1}```\n" + paragraph, 1950);
+
+        Assert.True(chunks.Count > 1);
+        Assert.All(chunks, chunk => Assert.DoesNotContain("\n```", chunk));
+        Assert.All(chunks.Skip(1), chunk => Assert.StartsWith("słowo", chunk));
+    }
+
+    // PR #477 review: the whole opener line used to be the reopen, so a long one-line block
+    // shrank the budget to 2 chars and posted hundreds of messages.
+    [Fact]
+    public void Chunk_LongOpenerLine_ReopensWithTagOnly()
+    {
+        var block = "```json {" + string.Join(", ", Enumerable.Range(1, 400).Select(i => $"\"k{i}\": {i}")) + "}```";
+        var prose = string.Join(' ', Enumerable.Repeat("słowo", 600));
+
+        var chunks = MessageChunker.Chunk(block + "\n" + prose, 1950);
+
+        Assert.True(chunks.Count <= 8);
+        Assert.StartsWith("```json\n", chunks[1]);
+        // The "}```" tail closes the block: the prose after it is never wrapped in a fence.
+        Assert.StartsWith("słowo", chunks[^1]);
+        Assert.DoesNotContain(chunks, chunk => chunk.StartsWith("```json\nsłowo", StringComparison.Ordinal));
+        Assert.All(chunks, chunk => Assert.True(chunk.Length <= 1950));
+    }
+
+    private static int CountFences(string chunk) =>
+        chunk.Split('\n').Count(line => line.Trim().StartsWith("```", StringComparison.Ordinal));
 }
