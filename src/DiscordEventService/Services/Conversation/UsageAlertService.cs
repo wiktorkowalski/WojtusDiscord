@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Linq.Expressions;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Conversations;
@@ -92,12 +93,22 @@ internal sealed class UsageAlertService(
             if (spentUsd < limitUsd * level / 100)
                 continue;
 
-            // Insert-if-absent on the (cap, window, level, user) unique index is the
-            // dedup: only the writer that actually created the row sends the DM, so
-            // each crossing alerts exactly once per window — restart-proof.
+            // The limit is part of the key (#453): raising a cap re-arms its levels for the
+            // window. Exact double equality is safe — both sides come from the same config value.
+            Expression<Func<UsageAlertEntity, bool>> match = a => a.Cap == cap
+                && a.WindowStartUtc == windowStartUtc && a.Level == level
+                && a.UserDiscordId == userDiscordId && a.LimitUsd == limitUsd;
+
+            // Every turn after a crossing lands here: read first, so the insert below (and its
+            // 23505 + EF Warning lines) runs only on the first crossing or a real race (#453).
+            if (await db.UsageAlerts.AnyAsync(match, cancellationToken))
+                continue;
+
+            // Insert-if-absent on the unique index is the dedup: only the writer that actually
+            // created the row sends the DM, so each crossing alerts exactly once per window —
+            // restart-proof.
             var (_, inserted) = await db.UsageAlerts.GetOrInsertAsync(
-                a => a.Cap == cap && a.WindowStartUtc == windowStartUtc
-                    && a.Level == level && a.UserDiscordId == userDiscordId,
+                match,
                 () => new UsageAlertEntity
                 {
                     Cap = cap,
@@ -120,7 +131,14 @@ internal sealed class UsageAlertService(
 
             var message = await BuildMessageAsync(
                 cap, level, spentUsd, limitUsd, windowStartUtc, userDiscordId, cancellationToken);
-            await notifier.NotifyAdminsAsync(message, cancellationToken);
+            // At-most-once by design: the row is committed, so a crossing no admin received
+            // is never retried. Loud, not silent (#453).
+            if (await notifier.NotifyAdminsAsync(message, cancellationToken) == 0)
+            {
+                logger.LogError(
+                    "Cost cap {Cap} {Level}% alert reached no admin and will not be retried: {Message}",
+                    cap, level, message);
+            }
         }
     }
 
