@@ -25,6 +25,7 @@ public sealed class ConversationFlowTests
     private readonly RecordingLogger _logger = new();
     private readonly FakeTurnSource _turns = new();
     private readonly FakeUsageAlertService _usageAlerts = new();
+    private readonly ConversationTurnGate _turnGate = new();
     private readonly FakeTurnSurface _origin = new(AllowedChannelId);
     private readonly FakeConversationGateway _gateway;
 
@@ -306,8 +307,41 @@ public sealed class ConversationFlowTests
         Assert.Equal(90, name.Length);
     }
 
+    [Fact]
+    public async Task TwoMessagesInOneChannel_RunOneTurnAfterTheOther()
+    {
+        _turns.HoldFirstTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Two scoped flows over one gate, as DSharpPlus dispatches two events (#449). The fakes
+        // complete synchronously, so without the gate the second turn would start right here.
+        var first = BuildFlow().HandleAsync(Message(guildId: null, content: "pierwsza"), BotId, _gateway);
+        var second = BuildFlow().HandleAsync(Message(guildId: null, content: "druga"), BotId, _gateway);
+
+        Assert.Equal(["pierwsza"], _turns.Turns.Select(t => t.Message));
+
+        _turns.HoldFirstTurn.SetResult();
+        await Task.WhenAll(first, second);
+
+        Assert.Equal(["pierwsza", "druga"], _turns.Turns.Select(t => t.Message));
+    }
+
+    [Fact]
+    public async Task ATurnInAnotherChannel_DoesNotWait()
+    {
+        _turns.HoldFirstTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var otherGateway = new FakeConversationGateway(new FakeTurnSurface(OtherChannelId));
+
+        var first = BuildFlow().HandleAsync(Message(guildId: null), BotId, _gateway);
+        await BuildFlow().HandleAsync(Message(guildId: null, channelId: OtherChannelId), BotId, otherGateway)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, _turns.Turns.Count);
+        _turns.HoldFirstTurn.SetResult();
+        await first;
+    }
+
     private ConversationFlow BuildFlow(int timeoutSeconds = 30) =>
-        new(_turns, _usageAlerts, Options.Create(new ConversationOptions
+        new(_turns, _usageAlerts, _turnGate, Options.Create(new ConversationOptions
         {
             AdminUserIds = [AdminId],
             ChannelAllowList = [AllowedChannelId],

@@ -13,6 +13,7 @@ namespace DiscordEventService.Services.Conversation.Interaction;
 internal sealed class ConversationFlow(
     IConversationTurnSource conversation,
     IUsageAlertService usageAlerts,
+    ConversationTurnGate turnGate,
     IOptions<ConversationOptions> options,
     ILogger<ConversationFlow> logger)
 {
@@ -130,6 +131,10 @@ internal sealed class ConversationFlow(
 
     private async Task DriveTurnAsync(ITurnSurface target, string content, ConversationContext context)
     {
+        // Queue behind a running turn in this channel (#449) — before the timeout starts,
+        // so the wait does not eat this turn's budget. No deadlock: a staged action's
+        // StageAsync returns without waiting for the click that drives the feedback turn.
+        using var turn = await turnGate.EnterAsync(target.ChannelId);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(options.Value.RequestTimeoutSeconds));
 
         // Render the agentic loop's events as discrete messages (#274): deltas are

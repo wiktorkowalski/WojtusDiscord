@@ -107,6 +107,9 @@ internal sealed class FakeTurnSource : IConversationTurnSource
     // Hangs after Updates have been yielded, so the flow's own timeout fires.
     public bool HangUntilCancelled { get; set; }
 
+    // When set, the first turn waits for it after Updates — a turn still running (#449).
+    public TaskCompletionSource? HoldFirstTurn { get; set; }
+
     public async IAsyncEnumerable<ConversationUpdate> GenerateReplyAsync(
         string? userMessage, ConversationContext context,
         [EnumeratorCancellation] CancellationToken cancellationToken)
@@ -118,6 +121,9 @@ internal sealed class FakeTurnSource : IConversationTurnSource
 
         if (HangUntilCancelled)
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+
+        if (HoldFirstTurn is not null && Turns.Count == 1)
+            await HoldFirstTurn.Task.WaitAsync(cancellationToken);
 
         if (Failure is not null)
             throw Failure;

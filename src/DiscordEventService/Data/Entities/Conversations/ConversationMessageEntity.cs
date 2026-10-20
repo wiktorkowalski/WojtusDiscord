@@ -10,7 +10,8 @@ public enum ConversationMessageRole
 
 // One row per ChatMessage the agentic loop appended (#267) — NOT one row per tool
 // call: an assistant message bundles N FunctionCallContent (its ToolCallsJson array),
-// while each tool result is already its own ChatMessage and gets its own row.
+// and each tool result gets its own row — the live loop sends a round's results as one
+// Tool ChatMessage, and replay merges a group's tool rows back into one (#426).
 // Append-only; the uuidv7 PK doubles as insertion order within a conversation.
 public class ConversationMessageEntity
 {
@@ -18,8 +19,9 @@ public class ConversationMessageEntity
 
     public Guid ConversationId { get; set; }
 
-    // Monotonic per conversation: every message persisted during one
-    // GenerateReplyAsync turn (user + assistant rounds + tool results) shares it.
+    // Monotonic per conversation because ConversationTurnGate runs one turn at a time per
+    // channel (#449): every message persisted during one GenerateReplyAsync turn
+    // (user + assistant rounds + tool results) shares it.
     public int TurnIndex { get; set; }
 
     public ConversationMessageRole Role { get; set; }
