@@ -133,6 +133,7 @@ public sealed class TurnRendererTests
 
     // #456 at test scale (refresh 80 ms for 8 s): a round that streams no text — thinking,
     // a slow tool, retry backoff — still refreshes the indicator, and it stops with the turn.
+    // Waits on the count, not a fixed delay, so a slow runner only makes it take longer.
     [Fact]
     public async Task SilentRound_KeepsTypingAlive_UntilTheTurnCompletes()
     {
@@ -140,13 +141,12 @@ public sealed class TurnRendererTests
         await using var renderer = new TurnRenderer(surface, NullLogger.Instance, TimeSpan.FromMilliseconds(80));
 
         renderer.StartTyping();
-        await Task.Delay(TimeSpan.FromMilliseconds(250));
+        // The first typing at once, then two refreshes with no post in between.
+        await WaitUntilAsync(() => surface.TypingCount >= 3);
         await renderer.CompleteTurnAsync();
 
-        // The first typing at once, then at least two refreshes in a ~3-window silence.
         var typingAtEnd = surface.TypingCount;
-        Assert.InRange(typingAtEnd, 3, 5);
-        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        await Task.Delay(TimeSpan.FromMilliseconds(300));
         Assert.Equal(typingAtEnd, surface.TypingCount);
     }
 
@@ -154,18 +154,25 @@ public sealed class TurnRendererTests
     public async Task ToolRoundBurst_RetriggersTypingOnce_AfterTheLastLine()
     {
         var surface = new FakeTurnSurface();
-        // Ticks every 50 ms; the 400 ms keep-alive never fires inside this test.
-        await using var renderer = new TurnRenderer(surface, NullLogger.Instance, TimeSpan.FromMilliseconds(400));
+        // Ticks every 1 s; the 8 s keep-alive stays far outside this test.
+        await using var renderer = new TurnRenderer(surface, NullLogger.Instance, TimeSpan.FromSeconds(8));
         renderer.StartTyping();
         renderer.AppendDelta("Sprawdzam.");
 
         await renderer.PostToolCallAsync("-# 🔧 meme_search");
         await renderer.PostToolCallAsync("-# 🔧 guild_stats");
-        await Task.Delay(TimeSpan.FromMilliseconds(150));
+        await WaitUntilAsync(() => surface.TypingCount >= 2);
         await renderer.CompleteTurnAsync();
 
         Assert.Equal(["Sprawdzam.", "-# 🔧 meme_search", "-# 🔧 guild_stats"], surface.Sent);
         // The start, then one typing for the whole burst of three sends.
         Assert.Equal(2, surface.TypingCount);
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (!condition())
+            await Task.Delay(TimeSpan.FromMilliseconds(10), timeout.Token);
     }
 }

@@ -22,6 +22,8 @@ internal sealed partial class ConversationFlow(
     // Discord caps a thread name at 100 characters; trim with margin.
     private const int MaxThreadNameLength = 90;
 
+    private const string DefaultThreadName = "Chat with Wojtuś";
+
     public async Task HandleAsync(IncomingConversationMessage message, ulong botId, IConversationGateway gateway)
     {
         // Skip our own and other bots' messages — otherwise the bot's own in-thread reply
@@ -266,7 +268,7 @@ internal sealed partial class ConversationFlow(
         text = Whitespace().Replace(text, " ").Trim();
 
         if (text.Length == 0)
-            return "Chat with Wojtuś";
+            return DefaultThreadName;
 
         var cut = 0;
         while (cut < text.Length)
@@ -276,7 +278,9 @@ internal sealed partial class ConversationFlow(
                 break;
             cut += next;
         }
-        return text[..cut].TrimEnd();
+        // One text element past the cap (a base char with 100+ combining marks) leaves nothing.
+        var name = text[..cut].TrimEnd();
+        return name.Length > 0 ? name : DefaultThreadName;
     }
 
     [GeneratedRegex(@"<a?:(?<emoji>\w+):\d+>|<(?:@[!&]?|#)\d+>|<t:-?\d+(?::\w)?>|</[^:<>]+:\d+>")]

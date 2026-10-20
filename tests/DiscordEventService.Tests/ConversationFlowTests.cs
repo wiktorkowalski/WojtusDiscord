@@ -353,6 +353,14 @@ public sealed class ConversationFlowTests
     }
 
     [Fact]
+    public void ThreadName_FirstTextElementPastTheCap_FallsBack()
+    {
+        var name = ConversationFlow.BuildThreadName("a" + new string('\u0301', 120));
+
+        Assert.Equal("Chat with Wojtuś", name);
+    }
+
+    [Fact]
     public void ThreadName_IsTrimmedUnderDiscordsCap()
     {
         var name = ConversationFlow.BuildThreadName(new string('x', 200));
