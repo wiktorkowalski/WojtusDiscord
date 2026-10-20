@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Anthropic;
 using Anthropic.Core;
+using Anthropic.Models.Messages;
 using DiscordEventService.Configuration;
 using DiscordEventService.Infrastructure;
 using DiscordEventService.Services.Conversation.Interaction;
@@ -164,7 +165,29 @@ internal static class ConversationRegistration
                 sourceName: ConversationTelemetry.SourceName,
                 configure: telemetry => telemetry.EnableSensitiveData = enableSensitiveData)
             .Use(inner => new CacheUsageTagChatClient(inner, conversation))
+            .Use(inner => new MessageStopRequiredChatClient(inner))
             .Build();
+}
+
+// The SDK ends the enumeration when the body ends, message_stop or not (#451): a connection
+// closed cleanly mid-answer would pass as a whole answer. It throws instead, a transient fault
+// the round loop retries.
+internal sealed class MessageStopRequiredChatClient(IChatClient innerClient) : DelegatingChatClient(innerClient)
+{
+    public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var stopped = false;
+        await foreach (var update in base.GetStreamingResponseAsync(messages, options, cancellationToken))
+        {
+            stopped |= update.RawRepresentation is RawMessageStreamEvent raw && raw.TryPickStop(out _);
+            yield return update;
+        }
+
+        if (!stopped)
+            throw new IOException("The stream ended before message_stop");
+    }
 }
 
 // Usage tags on the generation span (#426):

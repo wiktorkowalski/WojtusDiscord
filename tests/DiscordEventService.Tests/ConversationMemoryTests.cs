@@ -498,6 +498,92 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         Assert.DoesNotContain(next.Window, m => m.Contents.OfType<FunctionCallContent>().Any());
     }
 
+    // #451: a final round that streamed only whitespace is no answer. It is not stored, and a
+    // row stored before the fix does not hide the unanswered tool group in front of it.
+    [Fact]
+    public async Task Window_ToolGroupFollowedByWhitespaceAnswerRow_IsNotReplayed()
+    {
+        var memory = BuildMemory();
+        var turn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        await memory.PersistUserMessageAsync(turn, "pierwsze", InvokerId, "Vicio", CancellationToken.None);
+        await memory.PersistAssistantMessagesAsync(turn,
+            [new ChatMessage(ChatRole.Assistant, "odpowiedź")], null, null, CancellationToken.None);
+        var second = turn with { TurnIndex = 1 };
+        await memory.PersistUserMessageAsync(second, "drugie", InvokerId, "Vicio", CancellationToken.None);
+        await memory.PersistAssistantMessagesAsync(second,
+            [new ChatMessage(ChatRole.Assistant,
+                [new FunctionCallContent("call_1", "meme_search", new Dictionary<string, object?> { ["query"] = "x" })])],
+            null, null, CancellationToken.None);
+        await memory.PersistToolResultAsync(second, "meme_search",
+            new FunctionResultContent("call_1", "wynik"), CancellationToken.None);
+        var rowsBefore = await _db.ConversationMessages.CountAsync();
+        await memory.PersistAssistantMessagesAsync(second,
+            [new ChatMessage(ChatRole.Assistant, "\n\n")], null, null, CancellationToken.None);
+        Assert.Equal(rowsBefore, await _db.ConversationMessages.CountAsync());
+
+        _db.ConversationMessages.Add(AssistantRow(second, text: "\n\n"));
+        await _db.SaveChangesAsync();
+
+        var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        Assert.Equal([Said("pierwsze"), "odpowiedź", Said("drugie")], next.Window.Select(m => m.Text));
+        Assert.DoesNotContain(next.Window, m => m.Role == ChatRole.Tool);
+    }
+
+    // #451: one unreadable stored row (a future record shape, a manual edit) must not fail
+    // every later turn of its conversation. The columns are json, so "unreadable" is valid JSON
+    // of the wrong shape.
+    [Fact]
+    public async Task UnreadableStoredJson_BeginTurnStillReturns()
+    {
+        var memory = BuildMemory();
+        var turn = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+        await memory.PersistUserMessageAsync(turn, "pytanie", InvokerId, "Vicio", CancellationToken.None);
+        // One save per row: the uuidv7 PK is the replay order.
+        foreach (var row in new[]
+        {
+            AssistantRow(turn, toolCallsJson: "{}"),
+            AssistantRow(turn, toolCallsJson: """[{"id":"call_1","name":"meme_search","argumentsJson":"{"}]"""),
+            new ConversationMessageEntity
+            {
+                ConversationId = turn.ConversationId,
+                TurnIndex = turn.TurnIndex,
+                Role = ConversationMessageRole.Tool,
+                ToolCallId = "call_1",
+                ToolName = "meme_search",
+                ToolResult = "wynik",
+                EstTokens = 1,
+                CreatedAtUtc = DateTime.UtcNow,
+            },
+            AssistantRow(turn, text: "odpowiedź", webSearchesJson: "{}"),
+        })
+        {
+            _db.ConversationMessages.Add(row);
+            await _db.SaveChangesAsync();
+        }
+
+        var next = await memory.BeginTurnAsync(ThreadChannelId, GuildDiscordId, CancellationToken.None);
+
+        var call = Assert.Single(next.Window.SelectMany(m => m.Contents).OfType<FunctionCallContent>());
+        Assert.Equal("call_1", call.CallId);
+        Assert.Empty(call.Arguments!);
+        Assert.Equal("odpowiedź", next.Window[^1].Text);
+    }
+
+    private static ConversationMessageEntity AssistantRow(
+        ConversationTurnState turn, string? text = null, string? toolCallsJson = null, string? webSearchesJson = null) =>
+        new()
+        {
+            ConversationId = turn.ConversationId,
+            TurnIndex = turn.TurnIndex,
+            Role = ConversationMessageRole.Assistant,
+            Text = text,
+            ToolCallsJson = toolCallsJson,
+            WebSearchesJson = webSearchesJson,
+            EstTokens = 1,
+            CreatedAtUtc = DateTime.UtcNow,
+        };
+
     [Fact]
     public async Task ReasoningOnlyAssistantRow_IsNotReplayedAsAnEmptyMessage()
     {

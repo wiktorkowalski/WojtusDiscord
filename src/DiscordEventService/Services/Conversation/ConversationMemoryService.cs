@@ -180,13 +180,14 @@ internal sealed class ConversationMemoryService(
         var usageRecorded = false;
         foreach (var message in messages)
         {
-            var text = message.Text;
+            // Whitespace counts as no text, as in the live loop (#451): the API rejects a blank text block.
+            var text = string.IsNullOrWhiteSpace(message.Text) ? null : message.Text;
             var reasoning = string.Concat(
                 message.Contents.OfType<TextReasoningContent>().Select(content => content.Text));
             var toolCallsJson = SerializeToolCalls(message.Contents.OfType<FunctionCallContent>().ToList());
             var webSearches = ConversationHistory.WebSearchRecords(message, logger);
             var webSearchesJson = webSearches.Count == 0 ? null : JsonSerializer.Serialize(webSearches, ToolCallsSerializerOptions);
-            if (string.IsNullOrEmpty(text) && string.IsNullOrEmpty(reasoning) && toolCallsJson is null
+            if (text is null && string.IsNullOrEmpty(reasoning) && toolCallsJson is null
                 && webSearchesJson is null)
                 continue;
 
@@ -195,7 +196,7 @@ internal sealed class ConversationMemoryService(
                 ConversationId = turn.ConversationId,
                 TurnIndex = turn.TurnIndex,
                 Role = ConversationMessageRole.Assistant,
-                Text = string.IsNullOrEmpty(text) ? null : text,
+                Text = text,
                 ToolCallsJson = toolCallsJson,
                 WebSearchesJson = webSearchesJson,
                 Reasoning = string.IsNullOrEmpty(reasoning) ? null : reasoning,
@@ -254,7 +255,7 @@ internal sealed class ConversationMemoryService(
             Failed = usage.Failed,
             CreatedAtUtc = DateTime.UtcNow,
         });
-        await db.SaveChangesAsync(cancellationToken);
+        await SaveOrDiscardAsync(cancellationToken);
 
         // After the save, so the metric and the ledger count the same rows.
         BotMetrics.ConversationRoundRecorded(
@@ -377,7 +378,7 @@ internal sealed class ConversationMemoryService(
     // Rendered per turn over all loaded rows, before the grouping: a search's call and result
     // pair across rows (#440), and a row whose only search moved to its result's row renders
     // nothing.
-    private static Dictionary<Guid, string> WebSearchMarkers(List<ConversationMessageEntity> rows)
+    private Dictionary<Guid, string> WebSearchMarkers(List<ConversationMessageEntity> rows)
     {
         Dictionary<Guid, string> markers = [];
         foreach (var turn in rows.Where(row => row.WebSearchesJson is not null).GroupBy(row => row.TurnIndex))
@@ -391,8 +392,19 @@ internal sealed class ConversationMemoryService(
         return markers;
     }
 
-    private static List<ConversationHistory.WebSearchRecord> ParseWebSearches(string webSearchesJson) =>
-        JsonSerializer.Deserialize<List<ConversationHistory.WebSearchRecord>>(webSearchesJson, ToolCallsSerializerOptions) ?? [];
+    // An unreadable row must not fail every later turn of its conversation (#451): it replays without markers.
+    private List<ConversationHistory.WebSearchRecord> ParseWebSearches(string webSearchesJson)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<ConversationHistory.WebSearchRecord>>(webSearchesJson, ToolCallsSerializerOptions) ?? [];
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Unparseable web_searches_json in the conversation store; replaying the row without search markers");
+            return [];
+        }
+    }
 
     // Two shapes the Claude API rejects with thinking on (#426), trimmed from the window:
     // - a window that starts with an assistant row (the budget cut off its user row): the
@@ -461,7 +473,7 @@ internal sealed class ConversationMemoryService(
             // edges are checked on the rows the request carries — counted as the answer, it
             // would hide an unanswered tool group in front of it (#426).
             if (row.Role == ConversationMessageRole.Assistant
-                && string.IsNullOrEmpty(row.Text) && row.ToolCallsJson is null
+                && string.IsNullOrWhiteSpace(row.Text) && row.ToolCallsJson is null
                 && string.IsNullOrEmpty(markers.GetValueOrDefault(row.Id)))
                 continue;
 
@@ -533,7 +545,7 @@ internal sealed class ConversationMemoryService(
                 // search behind an answer and does not retract it as invented.
                 if (!string.IsNullOrEmpty(webSearchMarkers))
                     contents.Add(new TextContent(webSearchMarkers));
-                if (!string.IsNullOrEmpty(row.Text))
+                if (!string.IsNullOrWhiteSpace(row.Text))
                     contents.Add(new TextContent(row.Text));
                 if (row.ToolCallsJson is not null)
                     contents.AddRange(RehydrateToolCalls(row.ToolCallsJson));
@@ -545,10 +557,21 @@ internal sealed class ConversationMemoryService(
     {
         var calls = JsonSerializer.Deserialize<List<StoredToolCall>>(toolCallsJson, ToolCallsSerializerOptions) ?? [];
         foreach (var call in calls)
+            yield return new FunctionCallContent(call.Id, call.Name, ParseArguments(call));
+    }
+
+    // The call stays, with no arguments: dropping it would leave its tool result dangling (#451).
+    private Dictionary<string, object?> ParseArguments(StoredToolCall call)
+    {
+        try
         {
-            var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(
-                call.ArgumentsJson, AIJsonUtilities.DefaultOptions) ?? [];
-            yield return new FunctionCallContent(call.Id, call.Name, arguments);
+            return JsonSerializer.Deserialize<Dictionary<string, object?>>(call.ArgumentsJson, AIJsonUtilities.DefaultOptions) ?? [];
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Unparseable arguments of tool call {CallId} in the conversation store; replaying it without arguments",
+                call.Id);
+            return [];
         }
     }
 
@@ -562,7 +585,23 @@ internal sealed class ConversationMemoryService(
             .Where(entry => entry.State == EntityState.Added)
             .Select(entry => entry.Entity)
             .ToList();
-        await db.SaveChangesAsync(cancellationToken);
+        await SaveOrDiscardAsync(cancellationToken);
         turn.RowIds.AddRange(added.Select(row => row.Id));
+    }
+
+    // A failed save leaves its rows Added in the scoped DbContext that UsageAlertService shares:
+    // its next save would flush them, a duplicate if the cancelled insert had committed (#451).
+    private async Task SaveOrDiscardAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        catch
+        {
+            foreach (var entry in db.ChangeTracker.Entries().Where(entry => entry.State == EntityState.Added).ToList())
+                entry.State = EntityState.Detached;
+            throw;
+        }
     }
 }
