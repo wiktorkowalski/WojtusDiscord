@@ -168,6 +168,20 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         Assert.Contains(transcript, m => m.Role == ChatRole.Assistant && m.Text == "Pierwsza odpowiedź.");
     }
 
+    // #454: the bot-owned-thread signal when the gateway cache can't vouch for the thread.
+    // A turn creates the channel's conversation row; a channel the bot never answered in has none.
+    [Fact]
+    public async Task HasConversation_IsTrueOnlyForAChannelTheBotConversedIn()
+    {
+        var service = BuildScriptedService(new RecordingChatClient(_ => Stream("Odpowiedź.")));
+        Assert.False(await service.HasConversationAsync(ThreadChannelId, CancellationToken.None));
+
+        await CollectAsync(service.GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        Assert.True(await BuildMemory().HasConversationAsync(ThreadChannelId, CancellationToken.None));
+        Assert.False(await BuildMemory().HasConversationAsync(ChannelDiscordId, CancellationToken.None));
+    }
+
     // #461: two people in one thread replay under their own author lines; a row from before
     // #461 has no author and replays as plain text. The current turn gets the same bytes as
     // its later replay, and a crafted name cannot break out of its line.

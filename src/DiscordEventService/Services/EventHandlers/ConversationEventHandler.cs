@@ -19,6 +19,7 @@ internal sealed class ConversationEventHandler(ConversationFlow flow) : IEventHa
 
         var message = new IncomingConversationMessage(
             e.Message.Id,
+            e.Message.MessageType is DiscordMessageType.Default or DiscordMessageType.Reply,
             e.Channel.Id,
             e.Guild?.Id,
             e.Author.Id,
@@ -27,11 +28,11 @@ internal sealed class ConversationEventHandler(ConversationFlow flow) : IEventHa
             e.Message.Content ?? string.Empty,
             IsThread(e.Channel),
             // 0 means the cached channel carried no creator metadata — the flow then asks
-            // the gateway to resolve it from the API.
+            // the conversation store.
             (e.Channel as DiscordThreadChannel)?.CreatorId,
             [.. e.Message.MentionedUsers.Select(user => user.Id)]);
 
-        return flow.HandleAsync(message, sender.CurrentUser.Id, new DiscordConversationGateway(sender, e));
+        return flow.HandleAsync(message, sender.CurrentUser.Id, new DiscordConversationGateway(e));
     }
 
     private static bool IsThread(DiscordChannel channel) =>

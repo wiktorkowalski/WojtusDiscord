@@ -27,6 +27,11 @@ internal sealed class ConversationFlow(
         if (message.AuthorId == botId || message.AuthorIsBot)
             return;
 
+        // A system message (thread rename, pin notice, member added) is not addressed to
+        // the bot, even in a bot-owned thread or a DM (#454).
+        if (!message.IsUserMessage)
+            return;
+
         // Stay inert (no thread, no reply) when the bot has no usable Claude API key.
         if (!conversation.IsConfigured)
             return;
@@ -41,13 +46,16 @@ internal sealed class ConversationFlow(
             }
 
             // A follow-up inside a thread the bot started — no re-mention required.
-            if (await IsBotOwnedThreadAsync(message, botId, gateway))
+            if (await IsBotOwnedThreadAsync(message, botId))
             {
                 await RespondAsync(gateway.Origin, message);
                 return;
             }
 
             // A fresh @mention in an allow-listed channel — spawn a thread, converse there.
+            // Deliberately not in a human's thread or forum post under such a channel (#454):
+            // the conversation row a reply there would create makes the store call that
+            // thread bot-owned, so every later message in it would start a turn.
             if (message.MentionedUserIds.Contains(botId)
                 && options.Value.ChannelAllowList.Contains(message.ChannelId))
             {
@@ -225,30 +233,24 @@ internal sealed class ConversationFlow(
         }
     }
 
-    // Recognize a thread the bot started via its creator == the bot (live lookup; there
-    // is no conversation store until §5).
-    private async Task<bool> IsBotOwnedThreadAsync(
-        IncomingConversationMessage message, ulong botId, IConversationGateway gateway)
+    // A thread the bot started: its cached creator is the bot, or — when the cache can't say
+    // (an uncached thread arrives as a stub Text channel, an unhydrated one with creator 0) —
+    // the bot already conversed in it (#454). DSharpPlus 5's GetChannelAsync reads the same
+    // cache, so the API is no fallback. Only bot-created threads and DMs get a conversation row.
+    private async Task<bool> IsBotOwnedThreadAsync(IncomingConversationMessage message, ulong botId)
     {
-        if (!message.ChannelIsThread)
-            return false;
+        if (message.ChannelIsThread && message.CachedThreadCreatorId is > 0)
+            return message.CachedThreadCreatorId == botId;
 
-        var creatorId = message.CachedThreadCreatorId;
-        if (creatorId is null or 0)
+        try
         {
-            // Cached channel lacked creator metadata — resolve it from the API.
-            try
-            {
-                creatorId = await gateway.ResolveThreadCreatorAsync();
-            }
-            catch (Exception ex)
-            {
-                logger.LogDebug(ex, "Could not resolve creator of thread {ChannelId}", message.ChannelId);
-                return false;
-            }
+            return await conversation.HasConversationAsync(message.ChannelId, CancellationToken.None);
         }
-
-        return creatorId == botId;
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not look up the conversation of channel {ChannelId}", message.ChannelId);
+            return false;
+        }
     }
 
     internal static string BuildThreadName(string? content, ulong botId)

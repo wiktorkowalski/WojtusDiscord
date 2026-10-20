@@ -8,10 +8,13 @@ namespace DiscordEventService.Services.Conversation.Interaction;
 // (DiscordInteractionAdapters.cs) and hold translation only, never a decision.
 
 // One inbound Discord message, flattened to the fields the routing rules actually read.
-// CachedThreadCreatorId is what the gateway's cached channel already knew (null when the
-// cache lacked the metadata — the flow then asks the gateway to resolve it).
+// IsUserMessage is false for Discord system messages (thread rename, pin notice, member
+// added, thread starter): they carry a human author but nothing addressed to the bot (#454).
+// CachedThreadCreatorId is what the gateway's cached channel already knew; null or 0 when
+// the cache lacked the metadata — the flow then asks the conversation store.
 internal sealed record IncomingConversationMessage(
     ulong MessageId,
+    bool IsUserMessage,
     ulong ChannelId,
     ulong? GuildId,
     ulong AuthorId,
@@ -34,16 +37,12 @@ internal interface ITurnSurface
     Task TriggerTypingAsync();
 }
 
-// The per-event Discord reach the conversation flow needs beyond posting: resolving a
-// thread's creator when the cached channel didn't carry it, and spawning the thread a
-// fresh @mention converses in.
+// The per-event Discord reach the conversation flow needs beyond posting: spawning the
+// thread a fresh @mention converses in.
 internal interface IConversationGateway
 {
     // The channel the triggering message arrived in.
     ITurnSurface Origin { get; }
-
-    // Null when the creator can't be determined.
-    Task<ulong?> ResolveThreadCreatorAsync();
 
     Task<ITurnSurface> CreateThreadAsync(string name);
 }

@@ -53,6 +53,8 @@ internal sealed class ConversationMemoryService(
 
     private static readonly JsonSerializerOptions ToolCallsSerializerOptions = new(JsonSerializerDefaults.Web);
 
+    public Task<bool> HasConversationAsync(ulong channelDiscordId, CancellationToken cancellationToken) =>
+        db.Conversations.AnyAsync(c => c.ChannelDiscordId == channelDiscordId, cancellationToken);
 
     // Loads (or creates) the channel's conversation and builds the replay window for a
     // new turn. The window walks stored messages newest->oldest summing est_tokens until
