@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
+using DiscordEventService.Data.Entities.Conversations;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services.Conversation;
 using DiscordEventService.Services.MemeIndexing;
@@ -17,8 +18,8 @@ namespace DiscordEventService.Tests;
 // Exercises the §3 streaming contract end-to-end against a real Postgres + real
 // MemeSearchService, with the model itself faked by a scripted streaming IChatClient.
 // Proves the model->tool->model loop AND its render events: text deltas yielded as they
-// stream, a tool-batch summary closing each tool round (with no injected canned cue —
-// the model's own narration is the progress note, #274), the tool result fed back into
+// stream, one tool-call line per call yielded before that tool runs (#439, #456; no injected
+// canned cue — the model's own narration is the progress note, #274), the tool result fed back into
 // the next model call, a final answer accumulated from deltas, and the round cap
 // terminating the loop with tool calls forbidden; plus the Claude API loop shapes (#426):
 // grouped tool results, pause_turn continuation, a refusal.
@@ -130,6 +131,32 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
     }
 
     [Fact]
+    public async Task GenerateReplyAsync_ToolCallLine_IsYieldedBeforeTheToolRuns()
+    {
+        // #456: the renderer posts the narration on the ToolCall event, so the event must
+        // arrive while the tool has not run yet — else a slow query shows its note after it.
+        var service = BuildService(ScriptToolThenAnswer("gotowe"));
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester", IsAdmin: false, ChannelId: 7UL);
+
+        var toolRowsAtToolCall = -1;
+        await foreach (var update in service.GenerateReplyAsync("memy?", context, CancellationToken.None))
+        {
+            if (update is ConversationUpdate.ToolCall)
+                toolRowsAtToolCall = await CountToolRowsAsync();
+        }
+
+        // The tool's persisted result row is written only after the tool ran.
+        Assert.Equal(0, toolRowsAtToolCall);
+        Assert.Equal(1, await CountToolRowsAsync());
+
+        async Task<int> CountToolRowsAsync()
+        {
+            await using var db = NewContext();
+            return await db.ConversationMessages.CountAsync(m => m.Role == ConversationMessageRole.Tool);
+        }
+    }
+
+    [Fact]
     public async Task GenerateReplyAsync_ModelNarratesBeforeTool_StreamsNarrationThenSummaryThenAnswer()
     {
         // A single round emits narration text AND a tool call (the realistic shape); the
@@ -206,6 +233,48 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         Assert.Equal(cap + 1, client.Calls.Count);
         Assert.Equal([true, true, true, true], client.CallHadTools);
         Assert.Equal([false, false, false, true], client.CallForbadeTools);
+    }
+
+    [Fact]
+    public async Task GenerateReplyAsync_CappedTurn_NestsEveryDbSpanUnderTheTurn_AndTagsItsRounds()
+    {
+        // #458: Tempo drops a DB span with no parent, so every write of the turn — the user
+        // message before round 1, each round's ledger and transcript rows — must sit under the
+        // turn span. Only this class's database counts: other test classes run in parallel.
+        var database = new Npgsql.NpgsqlConnectionStringBuilder(fixture.ConnectionString).Database;
+        Activity? turn = null;
+        List<Activity> dbSpans = [];
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name is "Npgsql" || source.Name == ConversationTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            // Read on stop: Npgsql sets its connection tags after the start, and the turn's
+            // channel tells this test's turn from a parallel class's one.
+            ActivityStopped = activity =>
+            {
+                if (activity.OperationName == "conversation.turn" && (string?)activity.GetTagItem("session.id") == "456")
+                    turn = activity;
+                else if (activity.Source.Name == "Npgsql" && activity.TagObjects.Any(tag => tag.Value?.ToString() == database))
+                    lock (dbSpans)
+                        dbSpans.Add(activity);
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        var client = new ScriptedChatClient((callIndex, _, options) =>
+            options?.ToolMode is not NoneChatToolMode
+                ? StreamToolCall($"call_{callIndex}", "meme_search",
+                    new Dictionary<string, object?> { ["query"] = "x", ["limit"] = 1 })
+                : StreamText("Stop."));
+        var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester", IsAdmin: false, ChannelId: 456UL);
+
+        await CollectAsync(BuildService(client, maxToolRounds: 1).GenerateReplyAsync("loop", context, CancellationToken.None));
+
+        Assert.NotNull(turn);
+        Assert.Equal(2, turn.GetTagItem("conversation.rounds"));
+        Assert.NotEmpty(dbSpans);
+        lock (dbSpans)
+            Assert.All(dbSpans, span => Assert.Equal(turn.TraceId, span.TraceId));
     }
 
     [Fact]

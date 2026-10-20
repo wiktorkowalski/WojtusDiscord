@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using DiscordEventService.Configuration;
 using DiscordEventService.Infrastructure;
 using Microsoft.Extensions.Options;
@@ -10,7 +12,7 @@ namespace DiscordEventService.Services.Conversation.Interaction;
 // replies inline, and follow-ups inside a bot-owned thread continue without a re-mention —
 // plus how one turn is driven and rendered. Deliberately BYPASSES EventPipeline: a
 // conversation turn is not an ingested event (no raw_event row) and a DM has no guild id.
-internal sealed class ConversationFlow(
+internal sealed partial class ConversationFlow(
     IConversationTurnSource conversation,
     IUsageAlertService usageAlerts,
     ConversationTurnGate turnGate,
@@ -62,7 +64,7 @@ internal sealed class ConversationFlow(
                 ITurnSurface thread;
                 try
                 {
-                    thread = await gateway.CreateThreadAsync(BuildThreadName(message.Content, botId));
+                    thread = await gateway.CreateThreadAsync(BuildThreadName(message.Content));
                 }
                 catch (Exception ex)
                 {
@@ -146,9 +148,10 @@ internal sealed class ConversationFlow(
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(options.Value.RequestTimeoutSeconds));
 
         // Render the agentic loop's events as discrete messages (#274): deltas are
-        // buffered, each tool round posts one standalone cue+summary message, and the
-        // final answer is posted complete when the round finishes — no edit-in-place.
-        var renderer = new TurnRenderer(target, logger);
+        // buffered, the narration and each tool call post as their own message before the
+        // tool runs (#439, #456), and the final answer is posted complete — no edit-in-place.
+        // Disposal stops the typing timer on every exit path.
+        await using var renderer = new TurnRenderer(target, logger);
         var startedAt = Stopwatch.GetTimestamp();
 
         // "failed" unless the turn ends on one of the two paths below: an exception that
@@ -192,7 +195,7 @@ internal sealed class ConversationFlow(
         TurnRenderer renderer, string content, ConversationContext context, CancellationToken cancellationToken)
     {
         // Show the bot working before the first model token arrives.
-        await renderer.TriggerTypingAsync();
+        renderer.StartTyping();
 
         await foreach (var update in conversation.GenerateReplyAsync(content, context, cancellationToken))
             await renderer.ApplyAsync(update);
@@ -253,16 +256,32 @@ internal sealed class ConversationFlow(
         }
     }
 
-    internal static string BuildThreadName(string? content, ulong botId)
+    // The name is plain text, so Discord's markup tokens would show raw (#456): mentions,
+    // channels, roles, timestamps and slash-command links go, a custom emoji keeps its
+    // :name:, whitespace collapses, and the cut never splits a surrogate pair or a grapheme.
+    internal static string BuildThreadName(string? content)
     {
-        var text = (content ?? string.Empty)
-            .Replace($"<@{botId}>", string.Empty)
-            .Replace($"<@!{botId}>", string.Empty)
-            .Trim();
+        var text = DiscordToken().Replace(content ?? string.Empty, match =>
+            match.Groups["emoji"].Success ? $":{match.Groups["emoji"].Value}:" : " ");
+        text = Whitespace().Replace(text, " ").Trim();
 
-        if (string.IsNullOrWhiteSpace(text))
+        if (text.Length == 0)
             return "Chat with Wojtuś";
 
-        return text.Length <= MaxThreadNameLength ? text : text[..MaxThreadNameLength];
+        var cut = 0;
+        while (cut < text.Length)
+        {
+            var next = StringInfo.GetNextTextElementLength(text, cut);
+            if (cut + next > MaxThreadNameLength)
+                break;
+            cut += next;
+        }
+        return text[..cut].TrimEnd();
     }
+
+    [GeneratedRegex(@"<a?:(?<emoji>\w+):\d+>|<(?:@[!&]?|#)\d+>|<t:-?\d+(?::\w)?>|</[^:<>]+:\d+>")]
+    private static partial Regex DiscordToken();
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex Whitespace();
 }

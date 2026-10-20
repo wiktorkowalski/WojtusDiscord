@@ -17,6 +17,6 @@ public class ConversationEntity
 
     public DateTime CreatedAtUtc { get; set; }
 
-    // Bumped on every persisted message; pruning/ordering handle.
+    // Set when a turn persists its user message. Read nowhere yet: kept for pruning/ordering.
     public DateTime LastActivityAtUtc { get; set; }
 }

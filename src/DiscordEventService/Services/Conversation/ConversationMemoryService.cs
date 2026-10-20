@@ -19,8 +19,8 @@ internal sealed record ConversationTurnState(
     public List<Guid> RowIds { get; } = [];
 }
 
-// One model-call attempt's ledger row content (#267, #426). §1 always writes Attempt=1 and
-// Failed=false; the §2 retry policy adds attempt>1 and failed rows (which may still bill).
+// One model-call attempt's ledger row content (#267, #426). The §2 retry policy writes one
+// row per attempt: attempt>1 for a retry, Failed for an attempt that failed (it may still bill).
 // PromptTokens is the whole input (uncached + cache read + cache write); CostUsd is computed
 // from the price table and includes the search fee; UpstreamInferenceCostUsd is the same
 // cost without the search fee.
@@ -148,7 +148,10 @@ internal sealed class ConversationMemoryService(
         };
         row.EstTokens = EstimateTokens(UserText(row));
         db.ConversationMessages.Add(row);
-        await TouchAndSaveAsync(turn, cancellationToken);
+        // Once per turn, on its first write (ConversationEntity.LastActivityAtUtc).
+        if (await db.Conversations.FindAsync([turn.ConversationId], cancellationToken) is { } conversation)
+            conversation.LastActivityAtUtc = DateTime.UtcNow;
+        await SaveTurnRowsAsync(turn, cancellationToken);
         return Rehydrate(row, webSearchMarkers: null);
     }
 
@@ -212,7 +215,7 @@ internal sealed class ConversationMemoryService(
             usageRecorded = true;
         }
 
-        await TouchAndSaveAsync(turn, cancellationToken);
+        await SaveTurnRowsAsync(turn, cancellationToken);
     }
 
     public async Task PersistToolResultAsync(
@@ -231,7 +234,7 @@ internal sealed class ConversationMemoryService(
             EstTokens = EstimateTokens(wireText),
             CreatedAtUtc = DateTime.UtcNow,
         });
-        await TouchAndSaveAsync(turn, cancellationToken);
+        await SaveTurnRowsAsync(turn, cancellationToken);
     }
 
     public async Task RecordUsageAsync(
@@ -531,13 +534,11 @@ internal sealed class ConversationMemoryService(
 
     private ChatMessage Rehydrate(ConversationMessageEntity row, string? webSearchMarkers)
     {
+        // Never a Tool row: RehydrateGroup replays those as one Tool message per group.
         switch (row.Role)
         {
             case ConversationMessageRole.User:
                 return new ChatMessage(ChatRole.User, UserText(row));
-
-            case ConversationMessageRole.Tool:
-                return new ChatMessage(ChatRole.Tool, [RehydrateToolResult(row)]);
 
             default:
                 List<AIContent> contents = [];
@@ -578,11 +579,8 @@ internal sealed class ConversationMemoryService(
     }
 
     // Also records which rows the turn wrote: MarkTurnRefusedAsync flags exactly those.
-    private async Task TouchAndSaveAsync(ConversationTurnState turn, CancellationToken cancellationToken)
+    private async Task SaveTurnRowsAsync(ConversationTurnState turn, CancellationToken cancellationToken)
     {
-        var conversation = await db.Conversations.FindAsync([turn.ConversationId], cancellationToken);
-        if (conversation is not null)
-            conversation.LastActivityAtUtc = DateTime.UtcNow;
         var added = db.ChangeTracker.Entries<ConversationMessageEntity>()
             .Where(entry => entry.State == EntityState.Added)
             .Select(entry => entry.Entity)

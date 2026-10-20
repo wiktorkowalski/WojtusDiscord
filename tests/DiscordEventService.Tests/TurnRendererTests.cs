@@ -16,8 +16,8 @@ public sealed class TurnRendererTests
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
-        await renderer.AppendDeltaAsync("Jasne, ");
-        await renderer.AppendDeltaAsync("już patrzę.");
+        renderer.AppendDelta("Jasne, ");
+        renderer.AppendDelta("już patrzę.");
         Assert.Empty(surface.Sent);
 
         await renderer.CompleteTurnAsync();
@@ -27,20 +27,19 @@ public sealed class TurnRendererTests
     }
 
     [Fact]
-    public async Task ToolCalls_PostNarrationThenEachCall_AndRetriggersTypingAfterEach()
+    public async Task ToolCalls_PostNarrationThenEachCall_WithNoTypingPostPerMessage()
     {
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface, NullLogger.Instance);
-        await renderer.AppendDeltaAsync("Zaraz sprawdzę.");
+        renderer.AppendDelta("Zaraz sprawdzę.");
 
         await renderer.PostToolCallAsync("-# 🔧 meme_search");
         await renderer.PostToolCallAsync("-# 🔧 meme_search");
 
         // Two calls of one tool are two messages: no Distinct by name.
         Assert.Equal(["Zaraz sprawdzę.", "-# 🔧 meme_search", "-# 🔧 meme_search"], surface.Sent);
-        // Every post cleared Discord's typing indicator, so it is re-triggered after each:
-        // once for the first delta, then once per message.
-        Assert.Equal(4, surface.TypingCount);
+        // #456: no typing POST per message; the timer brings it back after the burst.
+        Assert.Equal(0, surface.TypingCount);
     }
 
     [Theory]
@@ -50,7 +49,7 @@ public sealed class TurnRendererTests
     {
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface, NullLogger.Instance);
-        await renderer.AppendDeltaAsync(narration);
+        renderer.AppendDelta(narration);
 
         await renderer.PostToolCallAsync("-# 🔧 guild_stats");
 
@@ -63,9 +62,9 @@ public sealed class TurnRendererTests
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
-        await renderer.AppendDeltaAsync("Sprawdzam.");
+        renderer.AppendDelta("Sprawdzam.");
         await renderer.PostToolCallAsync("-# 🔧 meme_search");
-        await renderer.AppendDeltaAsync("Znalazłem trzy.");
+        renderer.AppendDelta("Znalazłem trzy.");
         await renderer.CompleteTurnAsync();
 
         Assert.Equal(["Sprawdzam.", "-# 🔧 meme_search", "Znalazłem trzy."], surface.Sent);
@@ -78,13 +77,12 @@ public sealed class TurnRendererTests
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
-        await renderer.AppendDeltaAsync("Okej, szukam kursu…");
+        renderer.AppendDelta("Okej, szukam kursu…");
         await renderer.PostToolCallAsync("-# 🔎 web_search: kurs EUR/PLN");
-        await renderer.AppendDeltaAsync("Dziś 4,25 zł.");
+        renderer.AppendDelta("Dziś 4,25 zł.");
         await renderer.CompleteTurnAsync();
 
         Assert.Equal(["Okej, szukam kursu…", "-# 🔎 web_search: kurs EUR/PLN", "Dziś 4,25 zł."], surface.Sent);
-        Assert.Equal(3, surface.TypingCount);
     }
 
     [Fact]
@@ -93,10 +91,10 @@ public sealed class TurnRendererTests
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
-        await renderer.AppendDeltaAsync("Szukam… ");
-        await renderer.AppendDeltaAsync("Zna");
+        renderer.AppendDelta("Szukam… ");
+        renderer.AppendDelta("Zna");
         renderer.ResetRound("Zna".Length);
-        await renderer.AppendDeltaAsync("Znalazłem trzy.");
+        renderer.AppendDelta("Znalazłem trzy.");
         await renderer.CompleteTurnAsync();
 
         // Only the failed attempt's text goes; the paused text before it stays.
@@ -111,7 +109,7 @@ public sealed class TurnRendererTests
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
-        await renderer.AppendDeltaAsync(content);
+        renderer.AppendDelta(content);
         await renderer.CompleteTurnAsync();
 
         Assert.Empty(surface.Sent);
@@ -124,7 +122,7 @@ public sealed class TurnRendererTests
         var surface = new FakeTurnSurface();
         var renderer = new TurnRenderer(surface, NullLogger.Instance);
 
-        await renderer.AppendDeltaAsync(new string('x', 4000));
+        renderer.AppendDelta(new string('x', 4000));
         await renderer.CompleteTurnAsync();
 
         Assert.Equal(3, surface.Sent.Count);
@@ -133,16 +131,41 @@ public sealed class TurnRendererTests
         Assert.Equal(4000, surface.Sent.Sum(chunk => chunk.Length));
     }
 
+    // #456 at test scale (refresh 80 ms for 8 s): a round that streams no text — thinking,
+    // a slow tool, retry backoff — still refreshes the indicator, and it stops with the turn.
     [Fact]
-    public async Task TypingRefresh_IsThrottled_WhileDeltasStream()
+    public async Task SilentRound_KeepsTypingAlive_UntilTheTurnCompletes()
     {
         var surface = new FakeTurnSurface();
-        var renderer = new TurnRenderer(surface, NullLogger.Instance);
+        await using var renderer = new TurnRenderer(surface, NullLogger.Instance, TimeSpan.FromMilliseconds(80));
 
-        // The first delta triggers typing; the rest fall inside the ~8s refresh window.
-        for (var i = 0; i < 20; i++)
-            await renderer.AppendDeltaAsync("x");
+        renderer.StartTyping();
+        await Task.Delay(TimeSpan.FromMilliseconds(250));
+        await renderer.CompleteTurnAsync();
 
-        Assert.Equal(1, surface.TypingCount);
+        // The first typing at once, then at least two refreshes in a ~3-window silence.
+        var typingAtEnd = surface.TypingCount;
+        Assert.InRange(typingAtEnd, 3, 5);
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        Assert.Equal(typingAtEnd, surface.TypingCount);
+    }
+
+    [Fact]
+    public async Task ToolRoundBurst_RetriggersTypingOnce_AfterTheLastLine()
+    {
+        var surface = new FakeTurnSurface();
+        // Ticks every 50 ms; the 400 ms keep-alive never fires inside this test.
+        await using var renderer = new TurnRenderer(surface, NullLogger.Instance, TimeSpan.FromMilliseconds(400));
+        renderer.StartTyping();
+        renderer.AppendDelta("Sprawdzam.");
+
+        await renderer.PostToolCallAsync("-# 🔧 meme_search");
+        await renderer.PostToolCallAsync("-# 🔧 guild_stats");
+        await Task.Delay(TimeSpan.FromMilliseconds(150));
+        await renderer.CompleteTurnAsync();
+
+        Assert.Equal(["Sprawdzam.", "-# 🔧 meme_search", "-# 🔧 guild_stats"], surface.Sent);
+        // The start, then one typing for the whole burst of three sends.
+        Assert.Equal(2, surface.TypingCount);
     }
 }

@@ -14,7 +14,7 @@ namespace DiscordEventService.Services.Conversation;
 // so the tools it bakes can close over scoped services (MemeSearchService -> the
 // request DbContext) — AIFunctionFactory's IServiceProvider binding resolves from the
 // wrong scope and [FromKeyedServices] is not honoured, so per-conversation context and
-// scoped dependencies are captured in the closure instead. §4+ add more tools here.
+// scoped dependencies are captured in the closure instead.
 internal sealed class ConversationToolRegistry(
     MemeSearchService memeSearch,
     GuildStatsService guildStats,
@@ -83,7 +83,8 @@ internal sealed class ConversationToolRegistry(
                 BuildBanMemberTool(context),
                 BuildDeleteMessageTool(context),
             ],
-            logger);
+            logger,
+            options.Value.EnableSensitiveData);
 
     private AIFunction BuildTopPostersTool(ConversationContext context) =>
         AIFunctionFactory.Create(
@@ -127,8 +128,9 @@ internal sealed class ConversationToolRegistry(
             scope.Add($"channels matching \"{channel}\"");
         var suffix = scope.Count > 0 ? $" ({string.Join(", ", scope)})" : string.Empty;
 
+        // The id lets the model pass a poster straight to member_info.
         var lines = posters.Select((poster, index) =>
-            $"{index + 1}. {poster.Username} — {poster.MessageCount} message(s)");
+            $"{index + 1}. {poster.Username} (id {poster.UserDiscordId}) — {poster.MessageCount} message(s)");
         return $"Top {posters.Count} poster(s){suffix}:\n{string.Join("\n", lines)}";
     }
 
@@ -675,11 +677,15 @@ internal sealed class ConversationToolset
 
     private readonly Dictionary<string, AIFunction> _functions;
     private readonly ILogger _logger;
+    private readonly bool _captureSensitiveData;
 
-    public ConversationToolset(IEnumerable<AIFunction> functions, ILogger logger)
+    // captureSensitiveData: Conversation:EnableSensitiveData — the tool span carries the call's
+    // arguments only when it is on, like the prompts on the MEAI span; the result is never on it.
+    public ConversationToolset(IEnumerable<AIFunction> functions, ILogger logger, bool captureSensitiveData = false)
     {
         _functions = functions.ToDictionary(function => function.Name);
         _logger = logger;
+        _captureSensitiveData = captureSensitiveData;
         Tools = [.. _functions.Values];
     }
 
@@ -692,7 +698,8 @@ internal sealed class ConversationToolset
         using var activity = ConversationTelemetry.ActivitySource.StartActivity($"tool {call.Name}");
         var argsText = DescribeArguments(call.Arguments);
         activity?.SetTag("tool.name", call.Name);
-        activity?.SetTag("tool.arguments", argsText);
+        if (_captureSensitiveData)
+            activity?.SetTag("tool.arguments", argsText);
 
         var stopwatch = Stopwatch.StartNew();
 
