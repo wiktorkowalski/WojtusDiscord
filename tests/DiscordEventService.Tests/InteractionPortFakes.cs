@@ -60,24 +60,9 @@ internal sealed class FakeConversationGateway(FakeTurnSurface origin) : IConvers
 {
     public ITurnSurface Origin { get; } = origin;
 
-    // What ResolveThreadCreatorAsync answers (null = creator unknown).
-    public ulong? ThreadCreatorId { get; set; }
-
-    public Exception? ResolveFailure { get; set; }
-
-    public int ResolveCalls { get; private set; }
-
     public string? CreatedThreadName { get; private set; }
 
     public FakeTurnSurface? CreatedThread { get; private set; }
-
-    public Task<ulong?> ResolveThreadCreatorAsync()
-    {
-        ResolveCalls++;
-        return ResolveFailure is not null
-            ? Task.FromException<ulong?>(ResolveFailure)
-            : Task.FromResult(ThreadCreatorId);
-    }
 
     public Exception? CreateThreadFailure { get; set; }
 
@@ -97,7 +82,23 @@ internal sealed class FakeTurnSource : IConversationTurnSource
 {
     public bool IsConfigured { get; set; } = true;
 
+    // The channels the store holds a conversation for.
+    public HashSet<ulong> Conversations { get; } = [];
+
+    // Thrown by every store lookup.
+    public Exception? StoreFailure { get; set; }
+
+    public int StoreLookups { get; private set; }
+
     public List<(string? Message, ConversationContext Context)> Turns { get; } = [];
+
+    public Task<bool> HasConversationAsync(ulong channelId, CancellationToken cancellationToken)
+    {
+        StoreLookups++;
+        return StoreFailure is not null
+            ? Task.FromException<bool>(StoreFailure)
+            : Task.FromResult(Conversations.Contains(channelId));
+    }
 
     public List<ConversationUpdate> Updates { get; } = [];
 

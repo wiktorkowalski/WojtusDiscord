@@ -25,6 +25,10 @@ internal interface IConversationTurnSource
     // doing anything visible (e.g. spawning a thread) so an unconfigured bot stays inert.
     bool IsConfigured { get; }
 
+    // Whether the bot already conversed in this channel — how the flow recognizes a bot-owned
+    // thread the gateway cache can't vouch for (#454).
+    Task<bool> HasConversationAsync(ulong channelId, CancellationToken cancellationToken);
+
     IAsyncEnumerable<ConversationUpdate> GenerateReplyAsync(
         string? userMessage, ConversationContext context, CancellationToken cancellationToken);
 }
@@ -57,6 +61,9 @@ internal sealed class ConversationService(
     internal const string PauseTurnReason = "pause_turn";
 
     public bool IsConfigured => anthropicOptions.Value.IsConfigured;
+
+    public Task<bool> HasConversationAsync(ulong channelId, CancellationToken cancellationToken) =>
+        memory.HasConversationAsync(channelId, cancellationToken);
 
     public async IAsyncEnumerable<ConversationUpdate> GenerateReplyAsync(
         string? userMessage, ConversationContext context,

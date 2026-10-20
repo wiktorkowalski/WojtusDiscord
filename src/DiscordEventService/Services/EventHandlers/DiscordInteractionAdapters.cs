@@ -21,18 +21,11 @@ internal sealed class DiscordTurnSurface(DiscordChannel channel) : ITurnSurface
     public Task TriggerTypingAsync() => channel.TriggerTypingAsync();
 }
 
-// The per-event Discord reach for one incoming message: the channel it arrived in, the
-// thread-creator lookup for a cache miss, and thread creation off the triggering message.
-internal sealed class DiscordConversationGateway(DiscordClient client, MessageCreatedEventArgs e)
-    : IConversationGateway
+// The per-event Discord reach for one incoming message: the channel it arrived in and
+// thread creation off the triggering message.
+internal sealed class DiscordConversationGateway(MessageCreatedEventArgs e) : IConversationGateway
 {
     public ITurnSurface Origin { get; } = new DiscordTurnSurface(e.Channel);
-
-    public async Task<ulong?> ResolveThreadCreatorAsync()
-    {
-        var fetched = await client.GetChannelAsync(e.Channel.Id);
-        return (fetched as DiscordThreadChannel)?.CreatorId;
-    }
 
     public async Task<ITurnSurface> CreateThreadAsync(string name) =>
         new DiscordTurnSurface(await e.Message.CreateThreadAsync(name, DiscordAutoArchiveDuration.Day));

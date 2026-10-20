@@ -113,8 +113,8 @@ public sealed class ConversationFlowTests
             Message(isThread: true, threadCreatorId: BotId, channelId: OtherChannelId), BotId, _gateway);
 
         Assert.Equal(["jasne"], _origin.Sent);
-        // The creator came off the cached channel — no API round-trip needed.
-        Assert.Equal(0, _gateway.ResolveCalls);
+        // The creator came off the cached channel — no store lookup needed.
+        Assert.Equal(0, _turns.StoreLookups);
         Assert.Null(_gateway.CreatedThreadName);
     }
 
@@ -127,29 +127,64 @@ public sealed class ConversationFlowTests
         AssertNoTurn();
     }
 
-    [Fact]
-    public async Task AThreadWithoutCachedCreatorMetadata_IsResolvedFromTheApi()
+    // #454: DSharpPlus hands an uncached thread over as a stub Text channel, so neither the
+    // thread flag nor the creator can be trusted — the conversation store decides.
+    [Theory]
+    [InlineData(false, null)]
+    [InlineData(true, 0UL)]
+    public async Task AThreadTheCacheCantVouchFor_IsOurs_WhenTheStoreHoldsItsConversation(bool isThread, ulong? creatorId)
     {
-        _gateway.ThreadCreatorId = BotId;
+        _turns.Conversations.Add(OtherChannelId);
         _turns.Updates.Add(new ConversationUpdate.AssistantTextDelta("jasne"));
 
         await BuildFlow().HandleAsync(
-            Message(isThread: true, threadCreatorId: null, channelId: OtherChannelId), BotId, _gateway);
+            Message(isThread: isThread, threadCreatorId: creatorId, channelId: OtherChannelId), BotId, _gateway);
 
-        Assert.Equal(1, _gateway.ResolveCalls);
         Assert.Equal(["jasne"], _origin.Sent);
+        Assert.Null(_gateway.CreatedThreadName);
     }
 
     [Fact]
-    public async Task AnUnresolvableThreadCreator_IsTreatedAsNotOurs_NotAsACrash()
+    public async Task AThreadTheCacheCantVouchFor_IsIgnored_WhenTheStoreDoesNotKnowIt()
     {
-        _gateway.ResolveFailure = new InvalidOperationException("404 unknown channel");
+        await BuildFlow().HandleAsync(
+            Message(isThread: true, threadCreatorId: 0UL, channelId: OtherChannelId), BotId, _gateway);
+
+        Assert.Equal(1, _turns.StoreLookups);
+        AssertNoTurn();
+    }
+
+    [Fact]
+    public async Task AnUnreadableStore_IsTreatedAsNotOurs_NotAsACrash()
+    {
+        _turns.StoreFailure = new InvalidOperationException("db down");
 
         await BuildFlow().HandleAsync(
             Message(isThread: true, threadCreatorId: null, channelId: OtherChannelId), BotId, _gateway);
 
         AssertNoTurn();
         Assert.Contains(_logger.Entries, entry => entry.Level == LogLevel.Debug);
+    }
+
+    // #454: a human's rename of a bot-owned thread, a pin notice or "added to thread" carries
+    // a human author — before the fix the rename started a turn with the new name as prompt.
+    [Fact]
+    public async Task ASystemMessage_InABotOwnedThread_StartsNoTurn()
+    {
+        await BuildFlow().HandleAsync(
+            Message(isUserMessage: false, isThread: true, threadCreatorId: BotId, channelId: OtherChannelId,
+                content: "ile jest emoji na serwerze"),
+            BotId, _gateway);
+
+        AssertNoTurn();
+    }
+
+    [Fact]
+    public async Task ASystemMessage_InADirectMessage_StartsNoTurn()
+    {
+        await BuildFlow().HandleAsync(Message(isUserMessage: false, guildId: null, content: ""), BotId, _gateway);
+
+        AssertNoTurn();
     }
 
     [Fact]
@@ -351,6 +386,7 @@ public sealed class ConversationFlowTests
     private static IncomingConversationMessage Message(
         ulong authorId = HumanId,
         bool authorIsBot = false,
+        bool isUserMessage = true,
         ulong? guildId = GuildId,
         ulong channelId = AllowedChannelId,
         bool mentionsBot = false,
@@ -359,6 +395,7 @@ public sealed class ConversationFlowTests
         string content = "cześć") =>
         new(
             MessageId: 7000UL,
+            IsUserMessage: isUserMessage,
             ChannelId: channelId,
             GuildId: guildId,
             AuthorId: authorId,
