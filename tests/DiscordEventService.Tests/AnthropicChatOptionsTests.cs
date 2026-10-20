@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using DiscordEventService.Configuration;
 using DiscordEventService.Services.Conversation;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
 namespace DiscordEventService.Tests;
@@ -147,6 +148,84 @@ public sealed class AnthropicChatOptionsTests
         Assert.Contains(request["tools"]!.AsArray(), t => t!["name"]!.GetValue<string>() == "a");
         Assert.Null(ClaudeRequest.Messages(request)[^1]!["content"]!.AsArray()[^1]!["cache_control"]);
         Assert.Equal(2, ClaudeRequest.CountCacheBreakpoints(request));
+    }
+
+    // #452: a paused round ends in a rebuilt search block. The adapter sends its param as it
+    // is, so the breakpoint goes on the param itself; text-only marking left the round uncached.
+    [Fact]
+    public async Task PausedSearchTail_CarriesTheLastMessageBreakpoint()
+    {
+        var options = new ConversationOptions();
+        var chatOptions = AnthropicChatOptions.Create(options, Tools("a"));
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start()
+                .WebSearch("srvtoolu_1", "pogoda", ("https://weather.example/krk", "Weather"))
+                .End("pause_turn", webSearches: 1),
+            _ => ClaudeSse.TextAnswer("ok"),
+        });
+        var client = handler.CreateChatClient(options);
+        List<ChatMessage> messages = [new(ChatRole.System, "system"), new(ChatRole.User, "q")];
+
+        List<ChatResponseUpdate> updates = [];
+        await foreach (var update in client.GetStreamingResponseAsync(
+            AnthropicChatOptions.ShapeMessages(messages, offersTools: true), chatOptions))
+            updates.Add(update);
+        messages.AddRange(ConversationHistory.ForReplay(updates.ToChatResponse().Messages, NullLogger.Instance));
+        await DrainAsync(client, AnthropicChatOptions.ShapeMessages(messages, offersTools: true), chatOptions);
+
+        var request = handler.Requests[1];
+        Assert.Equal(3, ClaudeRequest.CountCacheBreakpoints(request));
+        var last = ClaudeRequest.Messages(request)[^1]!;
+        Assert.Equal(["server_tool_use", "web_search_tool_result"], ClaudeRequest.BlockTypes(last));
+        Assert.NotNull(last["content"]![1]!["cache_control"]);
+        // encrypted_content still goes back byte for byte.
+        Assert.Equal("ENC_Weather", last["content"]![1]!["content"]![0]!["encrypted_content"]!.GetValue<string>());
+    }
+
+    // #452: a whitespace-only last text is dropped by the adapter; the mark goes on the block before it.
+    [Fact]
+    public async Task WhitespaceTail_MarksTheBlockBeforeIt()
+    {
+        var options = new ConversationOptions();
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.TextAnswer("ok"));
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.System, "system"),
+            new(ChatRole.User, "q"),
+            new(ChatRole.Assistant, [new TextContent("szukam"), new TextContent(" ")]),
+        ];
+
+        await DrainAsync(handler.CreateChatClient(options),
+            AnthropicChatOptions.ShapeMessages(messages, offersTools: true), AnthropicChatOptions.Create(options, Tools("a")));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(3, ClaudeRequest.CountCacheBreakpoints(request));
+        Assert.NotNull(ClaudeRequest.Messages(request)[^1]!["content"]![0]!["cache_control"]);
+    }
+
+    // #452: round 2+ also marks the previous request's tail, so a long round cannot push the
+    // cache hit out of the API's lookback window. Four marks: the API limit.
+    [Fact]
+    public async Task PreviousRequestTail_GetsTheFourthBreakpoint()
+    {
+        var options = new ConversationOptions();
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.TextAnswer("ok"));
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.System, "system"),
+            new(ChatRole.User, "q"),
+            new(ChatRole.Assistant, "narration"),
+            new(ChatRole.User, "more"),
+        ];
+
+        await DrainAsync(handler.CreateChatClient(options),
+            AnthropicChatOptions.ShapeMessages(messages, offersTools: true, previousRequestCount: 2),
+            AnthropicChatOptions.Create(options, Tools("a")));
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(AnthropicChatOptions.MaxCacheBreakpoints, ClaudeRequest.CountCacheBreakpoints(request));
+        Assert.NotNull(ClaudeRequest.Messages(request)[0]!["content"]!.AsArray()[^1]!["cache_control"]);
     }
 
     private static List<AITool> Tools(params string[] names) =>

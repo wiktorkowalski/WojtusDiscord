@@ -191,6 +191,9 @@ internal sealed class ClaudeSse
         return _sse.ToString();
     }
 
+    // The events so far, with no end: a stream cut off here.
+    public override string ToString() => _sse.ToString();
+
     // The usual one-block answer.
     public static string TextAnswer(string text, int input = 100, int output = 20) =>
         Start(input).Text(text).End(output: output);
@@ -259,6 +262,11 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 
     public static HttpResponseMessage Sse(string sse) =>
         new(HttpStatusCode.OK) { Content = new StringContent(sse, Encoding.UTF8, "text/event-stream") };
+
+    // The body streams the scripted events, then hangs until the token is cancelled: a
+    // stream that billed its input (message_start) and then stalled.
+    public static HttpResponseMessage SseThenHang(string sse, CancellationToken hangUntil) =>
+        new(HttpStatusCode.OK) { Content = new HangingContent(Encoding.UTF8.GetBytes(sse), hangUntil) };
 
     public static HttpResponseMessage Status(int status, int? retryAfterMs = null)
     {
@@ -341,5 +349,57 @@ internal static class ClaudeRequest
                     break;
             }
         }
+    }
+}
+
+// A response body that serves its bytes, then blocks the next read until the token is
+// cancelled. CreateContentReadStreamAsync hands the stream out at once; the default would
+// buffer the whole body first and hang before the reader saw a byte.
+internal sealed class HangingContent(byte[] head, CancellationToken hangUntil) : HttpContent
+{
+    protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult<Stream>(new HangingStream(head, hangUntil));
+
+    protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context) =>
+        throw new NotSupportedException();
+
+    protected override bool TryComputeLength(out long length)
+    {
+        length = 0;
+        return false;
+    }
+
+    private sealed class HangingStream(byte[] head, CancellationToken hangUntil) : Stream
+    {
+        private int _position;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_position < head.Length)
+            {
+                var count = Math.Min(buffer.Length, head.Length - _position);
+                head.AsMemory(_position, count).CopyTo(buffer);
+                _position += count;
+                return count;
+            }
+
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(hangUntil, cancellationToken);
+            await Task.Delay(Timeout.InfiniteTimeSpan, linked.Token);
+            return 0;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override int Read(byte[] buffer, int offset, int count) => ReadAsync(buffer, offset, count, default).GetAwaiter().GetResult();
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

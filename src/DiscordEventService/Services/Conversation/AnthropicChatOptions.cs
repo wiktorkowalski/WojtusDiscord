@@ -55,18 +55,27 @@ internal static class AnthropicChatOptions
     };
 
     // The render order of a request is tools, system, messages; a breakpoint caches everything
-    // before it. Three breakpoints, at most:
+    // before it. Four breakpoints, at most:
     // - the last function tool (OrderTools): the tool schemas;
     // - the system prompt: tools + system, the same for every round and every turn in the TTL;
     // - the last message, only when tools are offered: the next round of the same turn reads
     //   this round's whole prefix. A round with no tools is the last one, so its 1.25× write
-    //   would buy nothing.
-    public static List<ChatMessage> ShapeMessages(IEnumerable<ChatMessage> messages, bool offersTools)
+    //   would buy nothing;
+    // - the previous request's last message (previousRequestCount), with the one above: the
+    //   API looks back only ~20 blocks from a breakpoint for a hit, and one mixed round can
+    //   add more. Its prefix is the one the previous round wrote, so this mark only reads.
+    public static List<ChatMessage> ShapeMessages(
+        IEnumerable<ChatMessage> messages, bool offersTools, int previousRequestCount = 0)
     {
         var shaped = messages.ToList();
         MarkLastContent(shaped, shaped.FindLastIndex(message => message.Role == ChatRole.System));
-        if (offersTools && shaped.Count > 0 && shaped[^1].Role != ChatRole.System)
-            MarkLastContent(shaped, shaped.Count - 1);
+        if (!offersTools || shaped.Count == 0 || shaped[^1].Role == ChatRole.System)
+            return shaped;
+
+        MarkLastContent(shaped, shaped.Count - 1);
+        if (previousRequestCount > 0 && previousRequestCount < shaped.Count
+            && shaped[previousRequestCount - 1].Role != ChatRole.System)
+            MarkLastContent(shaped, previousRequestCount - 1);
         return shaped;
     }
 
@@ -127,32 +136,43 @@ internal static class AnthropicChatOptions
         return userLocation;
     }
 
-    // Replaces the message with a copy whose last block carries the breakpoint. Only text and
-    // tool-result blocks are copied; any other block type (a server-tool block, thinking) is
-    // left unmarked.
+    // Replaces the message with a copy whose last markable block carries the breakpoint. Text,
+    // tool-result and the rebuilt web search blocks are markable; thinking is not, and the
+    // adapter drops whitespace-only text with any mark on it. The walk goes back past those.
     private static void MarkLastContent(List<ChatMessage> messages, int index)
     {
-        if (index < 0 || messages[index].Contents.Count == 0)
+        if (index < 0)
             return;
 
         var message = messages[index];
-        AIContent? marked = message.Contents[^1] switch
+        for (var i = message.Contents.Count - 1; i >= 0; i--)
         {
-            TextContent text => new TextContent(text.Text) { Annotations = text.Annotations },
-            FunctionResultContent result =>
-                new FunctionResultContent(result.CallId, result.Result) { Exception = result.Exception },
-            _ => null,
-        };
-        if (marked is null)
-            return;
+            if (WithBreakpoint(message.Contents[i]) is not { } marked)
+                continue;
 
-        // Default 5-minute TTL: the rounds of one turn start seconds apart.
-        marked.WithCacheControl(new CacheControlEphemeral());
-        messages[index] = new ChatMessage(message.Role, [.. message.Contents.Take(message.Contents.Count - 1), marked])
-        {
-            AuthorName = message.AuthorName,
-        };
+            List<AIContent> contents = [.. message.Contents];
+            contents[i] = marked;
+            messages[index] = new ChatMessage(message.Role, contents) { AuthorName = message.AuthorName };
+            return;
+        }
     }
+
+    // Default 5-minute TTL: the rounds of one turn start seconds apart. The adapter sends a
+    // ContentBlockParam RawRepresentation as it is, so the mark goes on the param itself.
+    private static AIContent? WithBreakpoint(AIContent content) => content switch
+    {
+        TextContent text when string.IsNullOrWhiteSpace(text.Text) => null,
+        TextContent text =>
+            new TextContent(text.Text) { Annotations = text.Annotations }.WithCacheControl(new CacheControlEphemeral()),
+        FunctionResultContent result =>
+            new FunctionResultContent(result.CallId, result.Result) { Exception = result.Exception }
+                .WithCacheControl(new CacheControlEphemeral()),
+        { RawRepresentation: ContentBlockParam block } when block.TryPickWebSearchToolResult(out var searchResult) =>
+            new AIContent { RawRepresentation = (ContentBlockParam)(searchResult with { CacheControl = new CacheControlEphemeral() }) },
+        { RawRepresentation: ContentBlockParam block } when block.TryPickServerToolUse(out var serverToolUse) =>
+            new AIContent { RawRepresentation = (ContentBlockParam)(serverToolUse with { CacheControl = new CacheControlEphemeral() }) },
+        _ => null,
+    };
 
     // A copy of a shared AIFunction with the tool breakpoint added; the adapter reads
     // AdditionalProperties["CacheControl"] into the tool definition.

@@ -44,6 +44,9 @@ internal sealed class ConversationService(
     private const string CapReachedFallback =
         "I hit my step limit before I could finish — try narrowing the question.";
 
+    // The ledger write of a cut-short attempt runs after the turn token is cancelled.
+    private static readonly TimeSpan AbandonedAttemptWriteTimeout = TimeSpan.FromSeconds(5);
+
     // The API stopped the model (stop_reason "refusal"): say so instead of a cut-off answer.
     internal const string RefusalMessage = "-# 🚫 Nie mogę pomóc w tej sprawie.";
 
@@ -157,6 +160,9 @@ internal sealed class ConversationService(
         var turnStartedAt = Stopwatch.GetTimestamp();
         var turnBudget = TimeSpan.FromSeconds(options.RequestTimeoutSeconds);
 
+        // The message count of the last request that succeeded: its tail gets a breakpoint too.
+        var previousRequestCount = 0;
+
         // Streams one round into the transcript sink under the §2 retry policy (#268):
         // up to RetryMaxAttempts calls over the same intact `messages` prefix (a failed
         // attempt appended nothing and dispatched no tools), full-jitter backoff between
@@ -170,6 +176,9 @@ internal sealed class ConversationService(
             for (var attempt = 1; ; attempt++)
             {
                 sink.Clear();
+                // False while the attempt may still end by an exception or a consumer that
+                // stops reading; then the finally writes its ledger row (#452).
+                var attemptSettled = false;
                 var streamedVisibleText = false;
                 // The text this attempt has in the handler's buffer: a search line posts it.
                 var bufferedLength = 0;
@@ -186,7 +195,8 @@ internal sealed class ConversationService(
                 var attemptScope = AnthropicAttemptScope.Begin(round, attempt);
                 var updates = chatClient
                     .GetStreamingResponseAsync(
-                        AnthropicChatOptions.ShapeMessages(messages, offersToolCalls), roundOptions, cancellationToken)
+                        AnthropicChatOptions.ShapeMessages(messages, offersToolCalls, previousRequestCount),
+                        roundOptions, cancellationToken)
                     .GetAsyncEnumerator(cancellationToken);
                 try
                 {
@@ -238,10 +248,14 @@ internal sealed class ConversationService(
                             yield return new ConversationUpdate.ToolCall($"-# 🔎 web_search: {query}");
                         }
                     }
+
+                    attemptSettled = true;
                 }
                 finally
                 {
                     await updates.DisposeAsync();
+                    if (!attemptSettled)
+                        await RecordAbandonedAttemptAsync(sink, round, attempt, stopwatch, outcome);
                 }
                 stopwatch.Stop();
 
@@ -249,6 +263,7 @@ internal sealed class ConversationService(
                 {
                     outcome.Succeeded = true;
                     outcome.Attempt = attempt;
+                    previousRequestCount = messages.Count;
                     outcome.LatencyMs = stopwatch.ElapsedMilliseconds;
                     yield break;
                 }
@@ -288,6 +303,29 @@ internal sealed class ConversationService(
                     "Round {Round} attempt {Attempt} failed transiently; retrying in {DelayMs}ms",
                     round, attempt, (int)delay.TotalMilliseconds);
                 await Task.Delay(delay, cancellationToken);
+            }
+        }
+
+        // An attempt the turn timeout or the consumer cut short may have billed its input. Its
+        // ledger row is written with its own short token: the turn's token is cancelled by now.
+        // A failed write only logs, so it never replaces the exception in flight.
+        async Task RecordAbandonedAttemptAsync(
+            List<ChatResponseUpdate> sink, int round, int attempt, Stopwatch stopwatch, RoundOutcome outcome)
+        {
+            var usage = ExtractRoundUsage(sink, round, attempt, options, stopwatch.ElapsedMilliseconds, failed: true);
+            if (usage.PromptTokens is null)
+                return;
+
+            turnLog.CostUsd += RecordRoundCost(usage, round, turn, outcome);
+            using var timeout = new CancellationTokenSource(AbandonedAttemptWriteTimeout);
+            try
+            {
+                await memory.RecordUsageAsync(memoryTurn, context.InvokerId, usage, timeout.Token);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Round {Round} attempt {Attempt}: the ledger row of the cut-short attempt was not written",
+                    round, attempt);
             }
         }
 
