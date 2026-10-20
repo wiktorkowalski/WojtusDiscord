@@ -1,3 +1,4 @@
+using DiscordEventService.Infrastructure;
 using DSharpPlus.Entities;
 
 namespace DiscordEventService.Services.MemeIndexing;
@@ -77,7 +78,7 @@ internal sealed record MemePageView(string Content, IReadOnlyList<DiscordButtonC
         var text = !string.IsNullOrWhiteSpace(hit.DescriptionPl) ? hit.DescriptionPl
             : !string.IsNullOrWhiteSpace(hit.DescriptionEn) ? hit.DescriptionEn
             : hit.FileName;
-        return Truncate(FirstSentence(text.ReplaceLineEndings(" ").Trim()), MaxLabelLength);
+        return FirstSentence(text.ReplaceLineEndings(" ").Trim()).Truncate(MaxLabelLength);
     }
 
     // A sentence end counts only from MinSentenceLength: an abbreviation early in the text
@@ -90,7 +91,4 @@ internal sealed record MemePageView(string Content, IReadOnlyList<DiscordButtonC
         var end = text.IndexOf(". ", MinSentenceLength - 1, StringComparison.Ordinal);
         return end < 0 ? text : text[..(end + 1)];
     }
-
-    private static string Truncate(string text, int maxLength) =>
-        text.Length <= maxLength ? text : text[..(maxLength - 1)] + "…";
 }

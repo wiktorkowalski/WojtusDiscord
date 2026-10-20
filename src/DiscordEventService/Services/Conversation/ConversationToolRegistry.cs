@@ -42,6 +42,9 @@ internal sealed class ConversationToolRegistry(
     // the executed action agree (and the API never rejects an over-long request).
     private const int MaxTimeoutMinutes = 28 * 24 * 60;
 
+    private const int MaxAuditLogReasonLength = 512;
+    private const int MaxShownReasonLength = 1000;
+
     // All-required + no-additional-properties => a clean schema the model can't drift
     // past with junk keys. Every tool has this schema, so every tool also sets `strict: true`
     // (StrictTool, #426): the Claude API then guarantees the call input matches the schema,
@@ -246,14 +249,11 @@ internal sealed class ConversationToolRegistry(
 
         var description = hit.DescriptionPl ?? hit.DescriptionEn;
         if (!string.IsNullOrWhiteSpace(description))
-            parts.Add(Truncate(description.ReplaceLineEndings(" "), MaxHitDescriptionLength));
+            parts.Add(description.ReplaceLineEndings(" ").Truncate(MaxHitDescriptionLength));
 
         parts.Add("posted " + hit.MessageCreatedAtUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         return string.Join(" | ", parts);
     }
-
-    private static string Truncate(string text, int maxLength) =>
-        text.Length <= maxLength ? text : text[..(maxLength - 1)] + "…";
 
     // ─────────────────────── Live-state read tools (#270 §4) ───────────────────────
     // Open to everyone incl. DMs (a DM resolves the guild via PrimaryGuildId, like the other
@@ -386,11 +386,7 @@ internal sealed class ConversationToolRegistry(
         if (!TryParseId(messageId, out var mid))
             return $"\"{messageId}\" isn't a valid message id.";
 
-        var result = await guildActions.AddReactionAsync(cid, mid, emoji, ct);
-        logger.LogInformation(
-            "Reversible action add_reaction by {InvokerId} ({Invoker}) on {ChannelId}/{MessageId}: {Outcome}",
-            context.InvokerId, context.InvokerDisplayName, cid, mid, result);
-        return result;
+        return await RunReversibleAsync(context, "add_reaction", cid, mid, guildActions.AddReactionAsync(cid, mid, emoji, ct));
     }
 
     private AIFunction BuildPinMessageTool(ConversationContext context) =>
@@ -418,11 +414,7 @@ internal sealed class ConversationToolRegistry(
         if (!TryParseId(messageId, out var mid))
             return $"\"{messageId}\" isn't a valid message id.";
 
-        var result = await guildActions.PinMessageAsync(cid, mid, ct);
-        logger.LogInformation(
-            "Reversible action pin_message by {InvokerId} ({Invoker}) on {ChannelId}/{MessageId}: {Outcome}",
-            context.InvokerId, context.InvokerDisplayName, cid, mid, result);
-        return result;
+        return await RunReversibleAsync(context, "pin_message", cid, mid, guildActions.PinMessageAsync(cid, mid, ct));
     }
 
     private AIFunction BuildGrantRoleTool(ConversationContext context) =>
@@ -614,6 +606,28 @@ internal sealed class ConversationToolRegistry(
             token => guildActions.DeleteMessageAsync(cid, mid, ReasonFor(context), token), ct);
     }
 
+    // The audit line names the invoker for a failed action too: the failure is thrown, not returned (#455).
+    private async Task<string> RunReversibleAsync(
+        ConversationContext context, string tool, ulong channelId, ulong messageId, Task<string> action)
+    {
+        var outcome = "threw";
+        try
+        {
+            return outcome = await action;
+        }
+        catch (ToolSoftFailureException ex)
+        {
+            outcome = ex.Message;
+            throw;
+        }
+        finally
+        {
+            logger.LogInformation(
+                "Reversible action {Tool} by {InvokerId} ({Invoker}) on {ChannelId}/{MessageId}: {Outcome}",
+                tool, context.InvokerId, context.InvokerDisplayName, channelId, messageId, outcome);
+        }
+    }
+
     // Stage an irreversible action behind a confirm button posted in the conversation surface.
     private Task<string> StageAsync(
         ConversationContext context, string description,
@@ -636,11 +650,19 @@ internal sealed class ConversationToolRegistry(
     private static string ReasonFor(ConversationContext context) =>
         $"Requested via Wojtuś by {context.InvokerDisplayName} ({context.InvokerId})";
 
-    private static string FullReason(ConversationContext context, string reason) =>
-        string.IsNullOrWhiteSpace(reason) ? ReasonFor(context) : $"{reason.Trim()} — {ReasonFor(context)}";
+    // Discord caps an audit-log reason at 512 chars: cut the model's reason, never the requester.
+    private static string FullReason(ConversationContext context, string reason)
+    {
+        var requester = ReasonFor(context);
+        if (string.IsNullOrWhiteSpace(reason))
+            return requester;
+        var suffix = $" — {requester}";
+        return reason.Trim().Truncate(MaxAuditLogReasonLength - suffix.Length) + suffix;
+    }
 
+    // Capped so the card's embed (4096) can always be posted, whatever the model wrote.
     private static string ReasonSuffix(string reason) =>
-        string.IsNullOrWhiteSpace(reason) ? string.Empty : $" — reason: {reason.Trim()}";
+        string.IsNullOrWhiteSpace(reason) ? string.Empty : $" — reason: {reason.Trim().Truncate(MaxShownReasonLength)}";
 }
 
 // The dispatch seam for one turn: the single place every tool call is invoked, timed,
@@ -690,15 +712,16 @@ internal sealed class ConversationToolset
                 result = $"Error: unknown tool \"{call.Name}\".";
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // The whole turn was cancelled (timeout / shutdown) — let it unwind.
+            // The whole turn was cancelled (timeout / shutdown) — let it unwind. Any other OCE
+            // (a REST call's own timeout) is a tool failure and falls to the generic catch.
             outcome = "cancelled";
             throw;
         }
         catch (ToolSoftFailureException ex)
         {
-            // The tool says in its own words that it failed (query_database): the model gets
+            // The tool says in its own words that it failed (query_database, a Discord action): the model gets
             // that text unchanged and the metric counts an error. No Warning: the tool logged it.
             outcome = "error";
             result = ex.Message;

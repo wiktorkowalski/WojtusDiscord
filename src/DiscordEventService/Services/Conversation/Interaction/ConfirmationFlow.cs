@@ -1,3 +1,4 @@
+using DiscordEventService.Infrastructure;
 using DiscordEventService.Configuration;
 using Microsoft.Extensions.Options;
 
@@ -14,6 +15,11 @@ internal sealed class ConfirmationFlow(
     IOptions<ConversationOptions> options,
     ILogger<ConfirmationFlow> logger)
 {
+    // Discord caps message content at 2000 chars; this leaves room for the mark and the clicker line.
+    private const int MaxDescriptionInContent = 1800;
+
+    private const string AlreadyHandledText = "That action was already handled or has expired.";
+
     // feedbackSurface is the channel the card lives in — where the outcome feedback turn
     // (#310) posts, and the same channel the staging turn conversed in.
     public async Task HandleAsync(ConfirmationClick click, IConfirmationSurface surface, ITurnSurface feedbackSurface)
@@ -59,14 +65,26 @@ internal sealed class ConfirmationFlow(
         // The loser already acked, so it answers with a follow-up (the response slot is spent).
         if (!confirmations.TryClaim(token, out var action))
         {
-            await surface.FollowupEphemeralAsync("That action was already handled or has expired.");
+            // An unknown token is a card this process never staged or let expire (a restart):
+            // retire its buttons instead of leaving them live forever (#455).
+            if (confirmations.WasHandled(token))
+                await surface.FollowupEphemeralAsync(AlreadyHandledText);
+            else
+                await surface.EditPromptAsync(ConfirmationService.ExpiredText);
             return;
         }
 
         string outcome;
+        var failed = true;
         try
         {
             outcome = await action.ExecuteAsync(CancellationToken.None);
+            failed = false;
+        }
+        catch (ToolSoftFailureException ex)
+        {
+            // The action's own failure line (no permission, target gone): already logged there.
+            outcome = ex.Message;
         }
         catch (Exception ex)
         {
@@ -76,25 +94,8 @@ internal sealed class ConfirmationFlow(
 
         logger.LogInformation("Action {Token} confirmed by {ClickerId}: {Outcome}", token, click.ClickerId, outcome);
 
-        // The action already ran; a failed feedback edit must not hide that — fall back to a channel
-        // message so the admin always sees the outcome.
-        var feedback = $"✅ {outcome}\n-# confirmed by {click.ClickerName}";
-        try
-        {
-            await surface.EditPromptAsync(feedback);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Action {Token} ran but editing the confirm prompt failed; sending a fallback", token);
-            try
-            {
-                await surface.SendChannelFallbackAsync(feedback);
-            }
-            catch (Exception fallbackEx)
-            {
-                logger.LogWarning(fallbackEx, "Fallback outcome message for {Token} also failed", token);
-            }
-        }
+        var feedback = $"{(failed ? "❌" : "✅")} {outcome}\n-# confirmed by {click.ClickerName}";
+        await ShowOrFallbackAsync(surface.EditPromptAsync, surface, feedback, token);
 
         await FeedOutcomeBackAsync(
             new StagedActionOutcome(action.Description, outcome, click.ClickerId, click.ClickerName, click.GuildId),
@@ -106,17 +107,46 @@ internal sealed class ConfirmationFlow(
     {
         if (!confirmations.TryClaim(token, out var action))
         {
-            await surface.RespondEphemeralAsync("That action was already handled or has expired.");
+            if (confirmations.WasHandled(token))
+                await surface.RespondEphemeralAsync(AlreadyHandledText);
+            else
+                await surface.ReplacePromptAsync(ConfirmationService.ExpiredText);
             return;
         }
 
         logger.LogInformation("Action {Token} cancelled by {ClickerId}", token, click.ClickerId);
-        await surface.ReplacePromptAsync(
-            $"❌ Cancelled: {action.Description}\n-# cancelled by {click.ClickerName}");
+        // The description moves from the embed (4096) into content (2000). The claim is already
+        // spent, so a failed edit falls back to a channel message and the feedback still runs.
+        var cancelled = $"❌ Cancelled: {action.Description.Truncate(MaxDescriptionInContent)}"
+            + $"\n-# cancelled by {click.ClickerName}";
+        await ShowOrFallbackAsync(surface.ReplacePromptAsync, surface, cancelled, token);
 
         await FeedOutcomeBackAsync(
             new StagedActionOutcome(action.Description, Result: null, click.ClickerId, click.ClickerName, click.GuildId),
             feedbackSurface, token);
+    }
+
+    // The click is already handled; a failed card edit must not hide that — fall back to a
+    // channel message so the admin always sees the result.
+    private async Task ShowOrFallbackAsync(
+        Func<string, Task> show, IConfirmationSurface surface, string content, string token)
+    {
+        try
+        {
+            await show(content);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Editing the confirm prompt for {Token} failed; sending a fallback", token);
+            try
+            {
+                await surface.SendChannelFallbackAsync(content);
+            }
+            catch (Exception fallbackEx)
+            {
+                logger.LogWarning(fallbackEx, "Fallback message for {Token} also failed", token);
+            }
+        }
     }
 
     // #310: the click carries the thread forward — hand the outcome to the conversation as

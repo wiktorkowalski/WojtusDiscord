@@ -48,6 +48,39 @@ public sealed class ConversationToolsetTests
         Assert.DoesNotContain(log.Entries, e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Warning);
     }
 
+    // A REST call's own timeout throws TaskCanceledException while the turn is fine (#455): that
+    // is a tool failure for the model, not the end of the turn.
+    [Fact]
+    public async Task InvokeAsync_ToolThrowsOce_WithTheTurnTokenLive_ReturnsErrorString()
+    {
+        var tool = AIFunctionFactory.Create(
+            (Func<string>)(() => throw new TaskCanceledException("REST timeout")),
+            new AIFunctionFactoryOptions { Name = "slow", Description = "times out" });
+        var toolset = new ConversationToolset([tool], NullLogger.Instance);
+
+        var result = await toolset.InvokeAsync(
+            new FunctionCallContent("call_1", "slow", new Dictionary<string, object?>()), CancellationToken.None);
+
+        Assert.Contains("Error running tool", result.Result?.ToString());
+    }
+
+    [Fact]
+    public async Task InvokeAsync_TurnCancelled_Unwinds()
+    {
+        using var cts = new CancellationTokenSource();
+        var tool = AIFunctionFactory.Create(
+            (Func<string>)(() =>
+            {
+                cts.Cancel();
+                throw new OperationCanceledException(cts.Token);
+            }),
+            new AIFunctionFactoryOptions { Name = "cancelled", Description = "the turn ends" });
+        var toolset = new ConversationToolset([tool], NullLogger.Instance);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => toolset.InvokeAsync(
+            new FunctionCallContent("call_1", "cancelled", new Dictionary<string, object?>()), cts.Token));
+    }
+
     [Fact]
     public async Task InvokeAsync_UnknownTool_ReturnsErrorString()
     {

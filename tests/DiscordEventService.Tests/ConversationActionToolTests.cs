@@ -132,6 +132,25 @@ public sealed class ConversationActionToolTests
         Assert.Equal((ulong)maxMinutes, call.C);
     }
 
+    // Discord caps the audit-log reason at 512 chars (#455): the model's reason is cut, the
+    // requester suffix never is.
+    [Fact]
+    public async Task Admin_LongReason_IsCappedAt512_KeepingTheRequester()
+    {
+        var actions = new FakeGuildActionService();
+        var confirmations = new FakeConfirmationService();
+        var toolset = BuildToolset(Context(isAdmin: true), actions, confirmations);
+
+        await InvokeAsync(toolset, "kick_member",
+            new() { ["userId"] = "5", ["reason"] = new string('x', 3000) });
+        await Assert.Single(confirmations.Staged).Execute(CancellationToken.None);
+
+        Assert.NotNull(actions.LastReason);
+        Assert.True(actions.LastReason.Length <= 512, $"reason is {actions.LastReason.Length} chars");
+        Assert.EndsWith($" — Requested via Wojtuś by tester ({InvokerId})", actions.LastReason);
+        Assert.StartsWith("xxx", actions.LastReason);
+    }
+
     [Fact]
     public async Task Admin_InvalidSnowflake_IsRejectedBeforeStaging()
     {
@@ -184,6 +203,7 @@ internal sealed class FakeGuildActionService : IGuildActionService
 
     public List<Call> Calls { get; } = [];
     public string Result { get; set; } = "done";
+    public string? LastReason { get; private set; }
 
     public Task<string> AddReactionAsync(ulong channelId, ulong messageId, string emoji, CancellationToken ct)
     {
@@ -218,6 +238,7 @@ internal sealed class FakeGuildActionService : IGuildActionService
     public Task<string> KickMemberAsync(ulong guildId, ulong userId, string reason, CancellationToken ct)
     {
         Calls.Add(new Call("Kick", guildId, userId, 0));
+        LastReason = reason;
         return Task.FromResult(Result);
     }
 
@@ -262,4 +283,6 @@ internal sealed class FakeConfirmationService : IConfirmationService
         action = null!;
         return false;
     }
+
+    public bool WasHandled(string token) => false;
 }
