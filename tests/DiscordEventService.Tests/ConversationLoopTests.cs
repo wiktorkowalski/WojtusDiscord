@@ -277,6 +277,137 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             Assert.All(dbSpans, span => Assert.Equal(turn.TraceId, span.TraceId));
     }
 
+    // #459: a post-cap round that answers with no text still ends the turn with a line.
+    [Fact]
+    public async Task GenerateReplyAsync_PostCapRoundWithNoText_PostsTheCapFallback()
+    {
+        var client = new ScriptedChatClient((callIndex, _, options) =>
+            options?.ToolMode is not NoneChatToolMode
+                ? StreamToolCall($"call_{callIndex}", "server_info", [])
+                : [new ChatResponseUpdate(ChatRole.Assistant, [new TextReasoningContent("nic nie wymyślę")])]);
+        var log = new RecordingLogger();
+
+        var events = await CollectAsync(BuildService(client, maxToolRounds: 1, logger: log.For<ConversationService>())
+            .GenerateReplyAsync("loop", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: false, ChannelId: 7UL),
+                CancellationToken.None));
+
+        Assert.Equal("Skończył mi się limit kroków, zanim zdążyłem odpowiedzieć — spróbuj zawęzić pytanie.",
+            await TurnRendering.FinalAnswerAsync(events));
+        Assert.StartsWith("Conversation turn round_cap: ",
+            Assert.Single(log.Entries, e => e.Level == LogLevel.Information).Message);
+    }
+
+    // #459: a post-cap round that fails posts the failure line and ledgers its attempt.
+    [Fact]
+    public async Task GenerateReplyAsync_PostCapRoundFails_PostsTheFailureLineAndLedgersTheFailedAttempt()
+    {
+        var client = new ScriptedChatClient((callIndex, _, options) =>
+            options?.ToolMode is not NoneChatToolMode
+                ? StreamToolCall($"call_{callIndex}", "server_info", [])
+                : throw new InvalidOperationException("scripted terminal failure"));
+        var log = new RecordingLogger();
+
+        var events = await CollectAsync(BuildService(client, maxToolRounds: 1, logger: log.For<ConversationService>())
+            .GenerateReplyAsync("loop", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: false, ChannelId: 7UL),
+                CancellationToken.None));
+
+        Assert.Equal(new ConversationOptions().FailureMessage, await TurnRendering.FinalAnswerAsync(events));
+        var line = Assert.Single(log.Entries, e => e.Level == LogLevel.Information).Message;
+        Assert.StartsWith("Conversation turn failed: ", line);
+        Assert.Contains("rounds 2,", line);
+        await using var db = NewContext();
+        var rows = await db.ConversationUsage.OrderBy(u => u.Round).ThenBy(u => u.Attempt)
+            .Select(u => new { u.Round, u.Attempt, u.Failed }).ToListAsync();
+        Assert.Equal([(1, 1, false), (2, 1, true)], rows.Select(r => (r.Round, r.Attempt, r.Failed)));
+    }
+
+    // #459: the turn span carries the outcome the trace is filtered by, and its cost is the
+    // ledger's. Each case has its own channel: the listener sees the turns of every class.
+    [Theory]
+    [InlineData("answered", 4591UL)]
+    [InlineData("failed", 4592UL)]
+    [InlineData("refused", 4593UL)]
+    [InlineData("round_cap", 4594UL)]
+    public async Task GenerateReplyAsync_TurnSpan_TagsTheOutcomeRoundsAndCost(string outcome, ulong channelId)
+    {
+        using var spans = new TurnSpanListener(channelId);
+        var client = new ScriptedChatClient((callIndex, _, options) => outcome switch
+        {
+            "failed" => throw new InvalidOperationException("scripted terminal failure"),
+            "refused" => [Billed(new ChatResponseUpdate(ChatRole.Assistant, []) { FinishReason = ChatFinishReason.ContentFilter })],
+            "round_cap" when options?.ToolMode is not NoneChatToolMode =>
+                [.. StreamToolCall($"call_{callIndex}", "server_info", []), Billed()],
+            _ => [.. StreamText("Odpowiedź."), Billed()],
+        });
+
+        var events = await CollectAsync(BuildService(client, maxToolRounds: 1, enableSensitiveData: true)
+            .GenerateReplyAsync("pytanie", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: false, channelId),
+                CancellationToken.None));
+
+        var turn = spans.Turn;
+        Assert.NotNull(turn);
+        Assert.Equal(outcome == "failed" ? true : null, turn.GetTagItem("conversation.failed"));
+        Assert.Equal(outcome == "refused" ? true : null, turn.GetTagItem("conversation.refused"));
+        Assert.Equal(outcome == "round_cap" ? true : null, turn.GetTagItem("conversation.hit_round_cap"));
+        Assert.Equal(outcome == "round_cap" ? 2 : 1, turn.GetTagItem("conversation.rounds"));
+        Assert.Equal("pytanie", turn.GetTagItem("langfuse.trace.input"));
+        Assert.Equal(await TurnRendering.FinalAnswerAsync(events), turn.GetTagItem("langfuse.trace.output"));
+
+        await using var db = NewContext();
+        var ledgerCost = (await db.ConversationUsage.Select(u => u.CostUsd).ToListAsync()).Sum(cost => cost ?? 0);
+        Assert.Equal(ledgerCost, (double)turn.GetTagItem("conversation.cost_usd")!, precision: 9);
+        Assert.Equal(outcome != "failed", ledgerCost > 0);
+    }
+
+    // #459: the privacy gate — with sensitive data off the trace holds no question or answer.
+    [Fact]
+    public async Task GenerateReplyAsync_SensitiveDataOff_TurnSpanHasNoTraceInputOrOutput()
+    {
+        using var spans = new TurnSpanListener(4595UL);
+
+        await CollectAsync(BuildService(new ScriptedChatClient((_, _, _) => StreamText("Odpowiedź.")))
+            .GenerateReplyAsync("pytanie", new ConversationContext(GuildDiscordId, 42UL, "tester", IsAdmin: false, ChannelId: 4595UL),
+                CancellationToken.None));
+
+        Assert.NotNull(spans.Turn);
+        Assert.Null(spans.Turn.GetTagItem("langfuse.trace.input"));
+        Assert.Null(spans.Turn.GetTagItem("langfuse.trace.output"));
+    }
+
+    // The usage update a real stream ends with: what the ledger and the cost tag are computed from.
+    private static ChatResponseUpdate Billed(ChatResponseUpdate? update = null)
+    {
+        update ??= new ChatResponseUpdate(ChatRole.Assistant, []);
+        update.Contents.Add(new UsageContent(new UsageDetails { InputTokenCount = 1000, OutputTokenCount = 100 }));
+        return update;
+    }
+
+    // The turn span of one channel, read on stop when its tags are final.
+    private sealed class TurnSpanListener : IDisposable
+    {
+        private readonly ActivityListener _listener;
+
+        public TurnSpanListener(ulong channelId)
+        {
+            _listener = new ActivityListener
+            {
+                ShouldListenTo = source => source.Name == ConversationTelemetry.SourceName,
+                Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+                ActivityStopped = activity =>
+                {
+                    if (activity.OperationName == "conversation.turn"
+                        && (string?)activity.GetTagItem("session.id") == channelId.ToString())
+                        Turn = activity;
+                },
+            };
+            ActivitySource.AddActivityListener(_listener);
+        }
+
+        public Activity? Turn { get; private set; }
+
+        public void Dispose() => _listener.Dispose();
+    }
+
     [Fact]
     public async Task GenerateReplyAsync_TwoToolCallsInOneRound_ResultsGoBackInOneMessage()
     {

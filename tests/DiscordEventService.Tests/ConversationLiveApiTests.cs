@@ -11,11 +11,12 @@ using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// Calls the real Claude API (#426) and costs a few cents per run, so it is skipped unless a
-// key is set: ANTHROPIC_API_KEY in the process environment, or ANTHROPIC_API_KEY /
-// Anthropic__ApiKey in the repo .env file (found by walking up from the test output
-// directory; read without setting environment variables, so the other secrets stay out):
-//   ANTHROPIC_API_KEY=sk-ant-... dotnet test --filter "FullyQualifiedName~ConversationLiveApiTests"
+// Calls the real Claude API (#426) and costs a few cents per run, so it is skipped unless
+// RUN_LIVE_TESTS=1 opts in (#459: the repo .env holds a key, so a plain `dotnet test` paid for
+// every run). Once opted in, the key comes from ANTHROPIC_API_KEY in the process environment, or
+// ANTHROPIC_API_KEY / Anthropic__ApiKey in the repo .env file (found by walking up from the test
+// output directory; read without setting environment variables, so the other secrets stay out):
+//   RUN_LIVE_TESTS=1 dotnet test --filter "FullyQualifiedName~ConversationLiveApiTests"
 // In CI it runs only in the manual workflow .github/workflows/live-tests.yml.
 // It checks what a scripted transport cannot: that the API accepts what this bot sends —
 // thinking blocks and server-tool blocks sent back, strict tools, tool_choice none with tool
@@ -281,7 +282,10 @@ public sealed class ConversationLiveApiTests(PostgresFixture fixture)
     {
         public LiveFactAttribute()
         {
-            if (string.IsNullOrEmpty(ApiKey))
+            // The opt-in first: without it the .env is never read.
+            if (Environment.GetEnvironmentVariable("RUN_LIVE_TESTS") != "1")
+                Skip = "Set RUN_LIVE_TESTS=1 to run the tests against the real Claude API.";
+            else if (string.IsNullOrEmpty(ApiKey))
                 Skip = "Set ANTHROPIC_API_KEY to run the tests against the real Claude API.";
         }
     }

@@ -618,6 +618,57 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         Assert.Equal(Said("pytanie"), replayed.Text);
     }
 
+    // #459: an image or a sticker alone has no text. The substitute is what the model reads and
+    // what the store keeps, so the request never ends on an assistant turn (a 400 with thinking on).
+    [Fact]
+    public async Task MessageWithNoText_SendsAndStoresTheSubstitute()
+    {
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.TextAnswer("Ładny obrazek."));
+
+        await CollectAsync(BuildRealAdapterService(handler, out _)
+            .GenerateReplyAsync("", Context(), CancellationToken.None));
+
+        var last = ClaudeRequest.Messages(Assert.Single(handler.Requests))[^1]!;
+        Assert.Equal("user", last["role"]!.GetValue<string>());
+        Assert.Contains(ConversationService.EmptyUserMessage, last["content"]!.ToJsonString());
+        var stored = await _db.ConversationMessages.SingleAsync(m => m.Role == ConversationMessageRole.User);
+        Assert.Equal(ConversationService.EmptyUserMessage, stored.Text);
+    }
+
+    // #459, ADR-0007: history is append-only within a turn — the signed thinking blocks of an
+    // earlier round must go back byte for byte. Every request extends the previous one; the
+    // system prompt and the tools never change (tool_choice does, on the post-cap round).
+    [Fact]
+    public async Task TurnWithToolRounds_EachRequestExtendsThePrevious_WithTheSameSystemAndTools()
+    {
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start().Thinking("round one").Text("Sprawdzam. ")
+                .ToolUse("toolu_1", "server_info", "{}").End("tool_use"),
+            1 => ClaudeSse.Start().Thinking("round two").Text("Jeszcze raz. ")
+                .ToolUse("toolu_2", "voice_occupants", "{}").End("tool_use"),
+            _ => ClaudeSse.Start().Thinking("final").Text("Gotowe.").End(),
+        });
+
+        await CollectAsync(BuildRealAdapterService(handler, out _, maxToolRounds: 2)
+            .GenerateReplyAsync("jak serwer?", Context(), CancellationToken.None));
+
+        var requests = handler.Requests;
+        Assert.Equal(3, requests.Count);
+        for (var i = 0; i + 1 < requests.Count; i++)
+        {
+            var earlier = ClaudeRequest.Messages(requests[i]).Select(m => ClaudeRequest.WithoutCacheControl(m!)).ToList();
+            var later = ClaudeRequest.Messages(requests[i + 1]).Select(m => ClaudeRequest.WithoutCacheControl(m!)).ToList();
+            Assert.True(later.Count > earlier.Count, $"request {i + 1} adds no message");
+            Assert.Equal(earlier, later.Take(earlier.Count));
+            Assert.Equal(ClaudeRequest.WithoutCacheControl(requests[i]["system"]!),
+                ClaudeRequest.WithoutCacheControl(requests[i + 1]["system"]!));
+            Assert.Equal(ClaudeRequest.WithoutCacheControl(requests[i]["tools"]!),
+                ClaudeRequest.WithoutCacheControl(requests[i + 1]["tools"]!));
+        }
+        Assert.Contains("round one", ClaudeRequest.WithoutCacheControl(ClaudeRequest.Messages(requests[2])));
+    }
+
     private static ConversationContext Context() =>
         new(GuildDiscordId, InvokerId, "tester", IsAdmin: false, ChannelId: ThreadChannelId);
 

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
+using DiscordEventService.Data.Entities.Conversations;
 using DiscordEventService.Services.Conversation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
@@ -103,6 +104,32 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         Assert.NotNull(rows[1].CostUsd);
     }
 
+    // #459: a retried round never re-dispatches the tools of an earlier round, and its retry
+    // sends the intact prefix again — here on round 2, after a tool round.
+    [Fact]
+    public async Task MidStreamErrorOnRound2_RetriesTheSameRequest_WithoutRerunningTheTool()
+    {
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start().Thinking().ToolUse("toolu_1", "server_info", "{}").End("tool_use"),
+            1 => ClaudeSse.Start().Text("Czę").Error("overloaded_error"),
+            _ => ClaudeSse.TextAnswer("Serwer działa."),
+        });
+
+        var events = await CollectAsync(BuildService(handler, out _)
+            .GenerateReplyAsync("jak serwer?", Context(), CancellationToken.None));
+
+        Assert.Equal(3, handler.CallCount);
+        Assert.Equal("Serwer działa.", await TurnRendering.FinalAnswerAsync(events));
+        Assert.Equal(1, await _db.ConversationMessages.CountAsync(m => m.Role == ConversationMessageRole.Tool));
+        var requests = handler.Requests;
+        Assert.Equal(ClaudeRequest.WithoutCacheControl(requests[1]), ClaudeRequest.WithoutCacheControl(requests[2]));
+
+        var rows = await _db.ConversationUsage.OrderBy(u => u.Round).ThenBy(u => u.Attempt)
+            .Select(u => new { u.Round, u.Attempt, u.Failed }).ToListAsync();
+        Assert.Equal([(1, 1, false), (2, 1, true), (2, 2, false)], rows.Select(r => (r.Round, r.Attempt, r.Failed)));
+    }
+
     // #451: the SDK ends the enumeration when the body ends. A stream closed cleanly before
     // message_stop is a failed attempt: retried, never posted or persisted as the answer.
     [Fact]
@@ -165,6 +192,20 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         var row = await _db.ConversationUsage.SingleAsync();
         Assert.True(row.Failed);
         Assert.Equal(1, row.Attempt);
+    }
+
+    // #457: the SDK reads the type of an `error` event; one a retry cannot fix ends the round.
+    [Fact]
+    public async Task MidStreamInvalidRequestError_DoesNotRetry_SurfacesFailureLine()
+    {
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.Start().Text("Czę").Error("invalid_request_error"));
+
+        var events = await CollectAsync(BuildService(handler, out var options)
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        Assert.Equal(1, handler.CallCount);
+        Assert.Equal(options.Value.FailureMessage, await TurnRendering.FinalAnswerAsync(events));
+        Assert.True((await _db.ConversationUsage.SingleAsync()).Failed);
     }
 
     [Fact]

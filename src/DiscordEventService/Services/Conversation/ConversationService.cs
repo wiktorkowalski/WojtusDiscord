@@ -84,8 +84,8 @@ internal sealed class ConversationService(
         // round keeps them declared but forbids calls (AnthropicChatOptions.Create).
         var chatOptions = AnthropicChatOptions.Create(options, toolset.Tools);
 
-        // A message with no text (an image or a sticker alone): the adapter drops an empty text
-        // block, so the request would end on the last assistant turn — a 400 with thinking on.
+        // A message with no text (an image or a sticker alone): the model reads, and the store
+        // keeps, a stated placeholder instead of a bare author line (#461).
         if (string.IsNullOrWhiteSpace(userMessage))
             userMessage = EmptyUserMessage;
 

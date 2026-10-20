@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DiscordEventService.Configuration;
 using DiscordEventService.Services.Conversation;
 using Microsoft.Extensions.AI;
@@ -45,6 +46,31 @@ public sealed class ConversationActionToolTests
 
         Assert.Contains("admin", result, StringComparison.OrdinalIgnoreCase);
         Assert.Empty(actions.Calls);
+    }
+
+    // #459: every action tool owns its own gate. Valid arguments for each, so only the gate
+    // can stop it: without it the reversible ones run and the rest stage.
+    [Theory]
+    [InlineData("add_reaction", """{"channelId":"10","messageId":"11","emoji":"👍"}""")]
+    [InlineData("pin_message", """{"channelId":"10","messageId":"11"}""")]
+    [InlineData("grant_role", """{"userId":"5","roleId":"6"}""")]
+    [InlineData("remove_role", """{"userId":"5","roleId":"6"}""")]
+    [InlineData("timeout_member", """{"userId":"5","minutes":10,"reason":"spam"}""")]
+    [InlineData("kick_member", """{"userId":"5","reason":"spam"}""")]
+    [InlineData("ban_member", """{"userId":"5","reason":"spam"}""")]
+    [InlineData("delete_message", """{"channelId":"10","messageId":"11"}""")]
+    public async Task NonAdmin_EveryActionTool_IsRefusedAndNeitherRunsNorStages(string tool, string argumentsJson)
+    {
+        var actions = new FakeGuildActionService();
+        var confirmations = new FakeConfirmationService();
+        var toolset = BuildToolset(Context(isAdmin: false), actions, confirmations);
+        var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(argumentsJson)!;
+
+        var result = await InvokeAsync(toolset, tool, arguments);
+
+        Assert.Equal("That's an admin-only action and you're not on the admin list, so I can't do it.", result);
+        Assert.Empty(actions.Calls);
+        Assert.Empty(confirmations.Staged);
     }
 
     [Fact]

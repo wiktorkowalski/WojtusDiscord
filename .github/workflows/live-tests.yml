@@ -45,6 +45,8 @@ jobs:
       - name: Run the live tests
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The opt-in the live tests gate on (#459): without it a plain `dotnet test` stays free.
+          RUN_LIVE_TESTS: "1"
         run: >-
           dotnet test tests/DiscordEventService.Tests/DiscordEventService.Tests.csproj
           --configuration Release --no-build
