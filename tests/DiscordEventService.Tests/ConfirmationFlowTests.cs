@@ -42,7 +42,8 @@ public sealed class ConfirmationFlowTests
         _flow = new ConfirmationFlow(
             _confirmations,
             new ConversationFlow(
-                _feedbackTurns, _feedbackUsageAlerts, options, _logger.For<ConversationFlow>()),
+                _feedbackTurns, _feedbackUsageAlerts, new ConversationTurnGate(), options,
+                _logger.For<ConversationFlow>()),
             options,
             _logger.For<ConfirmationFlow>());
     }

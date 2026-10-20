@@ -97,6 +97,8 @@ internal static class ConversationRegistration
         // container only — they exist to serve event handlers, which the root never runs.
         // Scoped to match the handlers and the scoped seams they resolve.
         services.AddScoped<ConversationFlow>();
+        // #449: the per-channel turn gate must outlive the per-event flow scope.
+        services.AddSingleton<ConversationTurnGate>();
         services.AddScoped<ConfirmationFlow>();
     }
 
