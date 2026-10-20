@@ -650,6 +650,36 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             markers);
     }
 
+    // #451: the result block comes from FromRawUnchecked; an item without a title must not fail
+    // the persist of the turn.
+    [Fact]
+    public async Task SearchResultWithoutTitle_TurnPersists()
+    {
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.Start()
+            .WebSearch("srvtoolu_A", "pogoda", ("https://weather.example/krk", null))
+            .Text("Słonecznie.")
+            .End(webSearches: 1));
+
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: true)
+            .GenerateReplyAsync("jaka pogoda?", Context(), CancellationToken.None));
+
+        Assert.Equal("Słonecznie.", await TurnRendering.FinalAnswerAsync(events));
+        var row = await _db.ConversationMessages.AsNoTracking().SingleAsync(m => m.WebSearchesJson != null);
+        // The SDK does not pick the content as items then (no exception): the record says so.
+        Assert.Contains("\"error\": \"unreadable\"", row.WebSearchesJson);
+        Assert.Equal("Słonecznie.", row.Text);
+    }
+
+    // #451: a cut by UTF-16 code unit could leave a lone high surrogate, re-sent every turn.
+    [Fact]
+    public void Sanitize_EmojiAtTheCut_StaysValidUtf16()
+    {
+        var sanitized = ConversationHistory.Sanitize(new string('a', 9) + "😀b", maxLength: 10);
+
+        Assert.Equal(new string('a', 9) + "…", sanitized);
+        new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true).GetBytes(sanitized);
+    }
+
     private static ConversationContext Context() =>
         new(GuildDiscordId, InvokerId, "tester", IsAdmin: false, ChannelId: ThreadChannelId);
 

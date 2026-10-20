@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Anthropic.Exceptions;
 using Anthropic.Models.Messages;
 using Microsoft.Extensions.AI;
 
@@ -228,7 +229,8 @@ internal static class ConversationHistory
                     Error = error.RawData.TryGetValue("error_code", out var code) ? code.ToString() : "unknown",
                 };
         }
-        catch (Exception ex) when (ex is InvalidOperationException or JsonException or KeyNotFoundException)
+        catch (Exception ex) when (ex is InvalidOperationException or JsonException or KeyNotFoundException
+                                       or AnthropicInvalidDataException)
         {
             logger.LogWarning(ex, "Unreadable web search result {CallId}; storing it without sources", result.ToolUseID);
         }
@@ -297,7 +299,11 @@ internal static class ConversationHistory
             return string.Empty;
 
         var clean = new string([.. value.Select(c => char.IsControl(c) || c is '[' or ']' or '"' ? ' ' : c)]).Trim();
-        return clean.Length <= maxLength ? clean : clean[..maxLength] + "…";
+        if (clean.Length <= maxLength)
+            return clean;
+        // Never split a surrogate pair (#451): a lone half is invalid UTF-16 on the wire.
+        var cut = char.IsHighSurrogate(clean[maxLength - 1]) ? maxLength - 1 : maxLength;
+        return clean[..cut] + "…";
     }
 
     // Text of a response without the empty citation carriers: Claude splits an answer into

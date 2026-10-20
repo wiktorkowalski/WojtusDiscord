@@ -104,6 +104,33 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         Assert.NotNull(rows[1].CostUsd);
     }
 
+    // #451: the SDK ends the enumeration when the body ends. A stream closed cleanly before
+    // message_stop is a failed attempt: retried, never posted or persisted as the answer.
+    [Fact]
+    public async Task StreamEndsWithoutMessageStop_IsRetried_NotPostedAsFinal()
+    {
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start().Text("Ucięta odpo").ToString(),
+            _ => ClaudeSse.TextAnswer("Pełna odpowiedź."),
+        });
+
+        var events = await CollectAsync(BuildService(handler, out _)
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        Assert.Equal(2, handler.CallCount);
+        Assert.Contains(events, e => e is ConversationUpdate.RoundReset);
+        Assert.Equal("Pełna odpowiedź.", await TurnRendering.FinalAnswerAsync(events));
+
+        var rows = await _db.ConversationUsage.OrderBy(u => u.Attempt).ToListAsync();
+        Assert.Equal(2, rows.Count);
+        Assert.True(rows[0].Failed);
+        Assert.Equal(100, rows[0].PromptTokens);
+        Assert.False(rows[1].Failed);
+        Assert.Equal(["pytanie", "Pełna odpowiedź."],
+            await _db.ConversationMessages.OrderBy(m => m.Id).Select(m => m.Text).ToListAsync());
+    }
+
     [Fact]
     public async Task RetriesExhausted_PostsVisibleFailureLine_PersistsNoAssistantRows()
     {

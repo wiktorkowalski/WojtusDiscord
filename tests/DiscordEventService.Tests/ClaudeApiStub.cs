@@ -103,7 +103,7 @@ internal sealed class ClaudeSse
     }
 
     // A server-side web search: the server_tool_use block (query streamed) and its result block.
-    public ClaudeSse WebSearch(string id, string query, params (string Url, string Title)[] results) =>
+    public ClaudeSse WebSearch(string id, string query, params (string Url, string? Title)[] results) =>
         WebSearchCall(id, query).WebSearchResult(id, results);
 
     // The server_tool_use block alone: next to a client tool call the API does not run the
@@ -126,19 +126,22 @@ internal sealed class ClaudeSse
         return BlockStop(call);
     }
 
-    public ClaudeSse WebSearchResult(string id, params (string Url, string Title)[] results)
+    // A null title leaves the key out: an item the SDK reads only through FromRawUnchecked.
+    public ClaudeSse WebSearchResult(string id, params (string Url, string? Title)[] results)
     {
         var content = new JsonArray();
         foreach (var (url, title) in results)
         {
-            content.Add(new JsonObject
+            var item = new JsonObject
             {
                 ["type"] = "web_search_result",
                 ["url"] = url,
-                ["title"] = title,
                 ["encrypted_content"] = "ENC_" + title,
                 ["page_age"] = null,
-            });
+            };
+            if (title is not null)
+                item["title"] = title;
+            content.Add(item);
         }
 
         var result = BlockStart(new JsonObject
