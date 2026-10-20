@@ -53,6 +53,49 @@ public sealed class ConfirmationServiceTests
         Assert.False(service.TryClaim("never-registered", out _));
     }
 
+    // A failed post (here: no Discord client yet) drops the action, so nothing stays confirmable
+    // behind a card the model said it couldn't post (#455).
+    [Fact]
+    public async Task StageAsync_PostFails_ReturnsCouldNotPost_AndLeavesNothingPending()
+    {
+        var service = new ConfirmationService(
+            new DiscordClientAccessor(), Options.Create(new ConversationOptions()), NullLogger<ConfirmationService>.Instance);
+
+        var result = await service.StageAsync(
+            channelId: 1UL, requesterId: 2UL, "tester", "Kick someone", _ => Task.FromResult("kicked"),
+            CancellationToken.None);
+
+        Assert.Equal("I couldn't post the confirmation prompt, so I didn't do anything.", result);
+        Assert.Equal(0, service.PendingCount);
+    }
+
+    // ExpireAsync's store half: an expired action can't be claimed, and it reads as unknown —
+    // not handled — so a late click retires the card.
+    [Fact]
+    public void TryExpire_DropsAnUnclaimedAction_AsUnknown()
+    {
+        var service = NewService();
+        var pending = service.Register(requesterId: 99UL, "Ban someone", _ => Task.FromResult("banned"));
+
+        Assert.True(service.TryExpire(pending.Token));
+        Assert.False(service.TryClaim(pending.Token, out _));
+        Assert.False(service.WasHandled(pending.Token));
+        Assert.False(service.TryExpire(pending.Token));
+    }
+
+    [Fact]
+    public void TryExpire_AfterAClaim_FindsNothing_AndTheTokenReadsAsHandled()
+    {
+        var service = NewService();
+        var pending = service.Register(requesterId: 99UL, "Ban someone", _ => Task.FromResult("banned"));
+
+        Assert.True(service.TryClaim(pending.Token, out _));
+
+        Assert.False(service.TryExpire(pending.Token));
+        Assert.True(service.WasHandled(pending.Token));
+        Assert.False(service.WasHandled("never-registered"));
+    }
+
     private static ConfirmationService NewService() =>
         new(clientAccessor: null!, Options.Create(new ConversationOptions()), NullLogger<ConfirmationService>.Instance);
 }

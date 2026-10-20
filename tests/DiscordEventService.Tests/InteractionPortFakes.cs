@@ -148,6 +148,7 @@ internal sealed class FakeUsageAlertService : IUsageAlertService
 internal sealed class FakeStagedActionStore(List<string> trace) : IConfirmationService
 {
     private readonly Dictionary<string, PendingGuildAction> _pending = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _handled = new(StringComparer.Ordinal);
 
     public void Stage(string token, PendingGuildAction action) => _pending[token] = action;
 
@@ -161,8 +162,13 @@ internal sealed class FakeStagedActionStore(List<string> trace) : IConfirmationS
     public bool TryClaim(string token, out PendingGuildAction action)
     {
         trace.Add("claim");
-        return _pending.Remove(token, out action!);
+        if (!_pending.Remove(token, out action!))
+            return false;
+        _handled.Add(token);
+        return true;
     }
+
+    public bool WasHandled(string token) => _handled.Contains(token);
 }
 
 internal sealed class FakeConfirmationSurface(List<string> trace) : IConfirmationSurface
@@ -172,6 +178,8 @@ internal sealed class FakeConfirmationSurface(List<string> trace) : IConfirmatio
     public Exception? EditFailure { get; set; }
 
     public Exception? FallbackFailure { get; set; }
+
+    public Exception? ReplaceFailure { get; set; }
 
     public Task RespondEphemeralAsync(string content)
     {
@@ -200,7 +208,7 @@ internal sealed class FakeConfirmationSurface(List<string> trace) : IConfirmatio
     public Task ReplacePromptAsync(string content)
     {
         trace.Add($"replace:{content}");
-        return Task.CompletedTask;
+        return ReplaceFailure is not null ? Task.FromException(ReplaceFailure) : Task.CompletedTask;
     }
 
     public Task SendChannelFallbackAsync(string content)

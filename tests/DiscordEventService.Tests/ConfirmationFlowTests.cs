@@ -125,7 +125,7 @@ public sealed class ConfirmationFlowTests
 
         await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
 
-        Assert.Contains("edit:✅ The action failed to run.\n-# confirmed by admin", _trace);
+        Assert.Contains("edit:❌ The action failed to run.\n-# confirmed by admin", _trace);
         Assert.Contains(_logger.Entries, entry => entry.Level == LogLevel.Error);
     }
 
@@ -167,18 +167,80 @@ public sealed class ConfirmationFlowTests
     }
 
     [Fact]
-    public async Task Cancel_OnAnExpiredToken_SaysSo()
+    public async Task Cancel_OnAHandledToken_SaysSo()
     {
+        Stage();
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
+        _trace.Clear();
+
         await _flow.HandleAsync(Click(CancelId, AdminId), _surface, _feedbackSurface);
 
         Assert.Equal(["claim", "ephemeral:That action was already handled or has expired."], _trace);
     }
 
-    private void Stage(Func<CancellationToken, Task<string>>? execute = null) =>
+    // A card from before a restart: its token is unknown, so its buttons are retired (#455).
+    [Fact]
+    public async Task Cancel_OnAnUnknownToken_RetiresTheCard()
+    {
+        await _flow.HandleAsync(Click(CancelId, AdminId), _surface, _feedbackSurface);
+
+        Assert.Equal(["claim", "replace:⏱️ This confirmation expired before an admin confirmed it."], _trace);
+        Assert.Empty(_feedbackTurns.Turns);
+    }
+
+    [Fact]
+    public async Task Confirm_OnAnUnknownToken_RetiresTheCard()
+    {
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
+
+        Assert.Equal(["ack", "claim", "edit:⏱️ This confirmation expired before an admin confirmed it."], _trace);
+        Assert.Empty(_feedbackTurns.Turns);
+    }
+
+    // The description moves from the embed (4096) into content (2000): a long reason must fit.
+    [Fact]
+    public async Task Cancel_WithA3000CharDescription_FitsTheContentLimit_AndFeedsBack()
+    {
+        Stage(description: "Kick someone — reason: " + new string('x', 3000));
+
+        await _flow.HandleAsync(Click(CancelId, AdminId), _surface, _feedbackSurface);
+
+        var replaced = Assert.Single(_trace, entry => entry.StartsWith("replace:", StringComparison.Ordinal));
+        Assert.True(replaced.Length - "replace:".Length <= 2000, $"content is {replaced.Length} chars");
+        Assert.EndsWith("\n-# cancelled by admin", replaced);
+        Assert.Single(_feedbackTurns.Turns);
+    }
+
+    [Fact]
+    public async Task Cancel_FailedReplace_FallsBackToAChannelMessage_AndStillFeedsBack()
+    {
+        Stage();
+        _surface.ReplaceFailure = new InvalidOperationException("Discord 400");
+
+        await _flow.HandleAsync(Click(CancelId, AdminId), _surface, _feedbackSurface);
+
+        Assert.Contains("fallback:❌ Cancelled: ban someone\n-# cancelled by admin", _trace);
+        Assert.Single(_feedbackTurns.Turns);
+        Assert.Equal(0, _executions);
+    }
+
+    // GuildActionService throws its failure line (#455): the card must not show a green check.
+    [Fact]
+    public async Task ASoftFailedAction_ShowsAFailureMark_WithItsOwnLine()
+    {
+        Stage(_ => throw new ToolSoftFailureException("I couldn't find that user."));
+
+        await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
+
+        Assert.Contains("edit:❌ I couldn't find that user.\n-# confirmed by admin", _trace);
+        Assert.Contains("I couldn't find that user.", _feedbackTurns.Turns.Single().Message);
+    }
+
+    private void Stage(Func<CancellationToken, Task<string>>? execute = null, string description = "ban someone") =>
         _confirmations.Stage(Token, new PendingGuildAction(
             Token,
             OutsiderId,
-            "ban someone",
+            description,
             execute ?? (_ =>
             {
                 _executions++;
@@ -215,7 +277,7 @@ public sealed class ConfirmationFlowTests
     [Fact]
     public async Task AFailedAction_IsFedBackToo_SoTheModelCanProposeTheFix()
     {
-        Stage(_ => Task.FromResult("I don't have permission to do that."));
+        Stage(_ => throw new ToolSoftFailureException("I don't have permission to do that."));
 
         await _flow.HandleAsync(Click(ConfirmId, AdminId), _surface, _feedbackSurface);
 

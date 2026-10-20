@@ -32,6 +32,10 @@ internal interface IConfirmationService
     // Atomically take ownership of a staged action (TryRemove): the first caller wins, so a
     // double-click can never run it twice and a stale/expired token returns false.
     bool TryClaim(string token, out PendingGuildAction action);
+
+    // True when a click claimed this token. False for a token this process never
+    // staged or let expire — a card from before a restart (#455).
+    bool WasHandled(string token);
 }
 
 // Holds staged actions in memory (a ConcurrentDictionary) keyed by an opaque token carried in
@@ -47,7 +51,16 @@ internal sealed class ConfirmationService(
     private const string ConfirmPrefix = "conv6:confirm:";
     private const string CancelPrefix = "conv6:cancel:";
 
+    public const string ExpiredText = "⏱️ This confirmation expired before an admin confirmed it.";
+
     private readonly ConcurrentDictionary<string, PendingGuildAction> _pending = new(StringComparer.Ordinal);
+
+    // Claimed tokens, kept for the process lifetime: a card whose outcome edit failed keeps live
+    // buttons, and a late click on it must not read as expired — the action did run.
+    // shortcut: grows by one token per admin click, fine at that rate; restart clears it.
+    private readonly ConcurrentDictionary<string, byte> _handled = new(StringComparer.Ordinal);
+
+    internal int PendingCount => _pending.Count;
 
     // Split a button CustomId into its kind + token, and reject anything that isn't one of ours
     // (other components in the guild fire the same event). Pure, so the parsing is unit-tested.
@@ -87,8 +100,20 @@ internal sealed class ConfirmationService(
         return action;
     }
 
-    public bool TryClaim(string token, out PendingGuildAction action) =>
-        _pending.TryRemove(token, out action!);
+    public bool TryClaim(string token, out PendingGuildAction action)
+    {
+        if (!_pending.TryRemove(token, out action!))
+            return false;
+
+        _handled[token] = 0;
+        return true;
+    }
+
+    public bool WasHandled(string token) => _handled.ContainsKey(token);
+
+    // Drop an action no click claimed. Not TryClaim: a dropped token must read as unknown, so a
+    // late click turns its card to the expired text instead of "already handled".
+    internal bool TryExpire(string token) => _pending.TryRemove(token, out _);
 
     public async Task<string> StageAsync(
         ulong channelId, ulong requesterId, string requesterName, string description,
@@ -102,10 +127,14 @@ internal sealed class ConfirmationService(
         {
             message = await PostConfirmAsync(channelId, pending.Token, requesterName, description, expiry);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
             // Couldn't post the prompt — drop the orphaned action so it can't be confirmed blind.
-            TryClaim(pending.Token, out _);
+            // A REST timeout lands here too, and Discord may have posted the card anyway: a click
+            // on it finds an unknown token and turns the card to the expired text (#455).
+            TryExpire(pending.Token);
+            if (cancellationToken.IsCancellationRequested)
+                throw;
             logger.LogWarning(ex, "Failed to post the confirmation prompt to channel {ChannelId}", channelId);
             return "I couldn't post the confirmation prompt, so I didn't do anything.";
         }
@@ -145,17 +174,18 @@ internal sealed class ConfirmationService(
     private async Task ExpireAsync(string token, DiscordMessage message, TimeSpan expiry)
     {
         await Task.Delay(expiry);
-        if (!_pending.TryRemove(token, out _))
+        if (!TryExpire(token))
             return;
 
         try
         {
             await message.ModifyAsync(new DiscordMessageBuilder()
-                .WithContent("⏱️ This confirmation expired before an admin confirmed it.")
+                .WithContent(ExpiredText)
                 .WithAllowedMentions(Mentions.None));
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
+            // No token reaches the edit, so even an OCE is only a REST timeout.
             logger.LogDebug(ex, "Could not edit expired confirmation {Token}", token);
         }
     }
