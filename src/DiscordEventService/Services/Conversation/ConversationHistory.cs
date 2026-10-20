@@ -229,8 +229,9 @@ internal static class ConversationHistory
                     Error = error.RawData.TryGetValue("error_code", out var code) ? code.ToString() : "unknown",
                 };
         }
+        // NullReferenceException: the SDK's own Content converter throws it on "content":[null].
         catch (Exception ex) when (ex is InvalidOperationException or JsonException or KeyNotFoundException
-                                       or AnthropicInvalidDataException)
+                                       or AnthropicInvalidDataException or NullReferenceException)
         {
             logger.LogWarning(ex, "Unreadable web search result {CallId}; storing it without sources", result.ToolUseID);
         }

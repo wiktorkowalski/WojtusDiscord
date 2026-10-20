@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.Extensions.Options;
 
 namespace DiscordEventService.Configuration;
 
@@ -13,6 +14,7 @@ internal sealed class ConversationOptions
     public const string KnownReasoningEfforts = "low|medium|high|xhigh|max";
 
     // The Claude API model id. Its price must be in Prices, or the ledger cost stays null.
+    [Required]
     public string Model { get; set; } = "claude-sonnet-5-5";
 
     // `output_config.effort` of every call; adaptive thinking decides how much to think within it.
@@ -66,8 +68,13 @@ internal sealed class ConversationOptions
     // exponential backoff with full jitter between transient failures. Fast failures fit
     // all 3 attempts under RequestTimeoutSeconds; hung attempts (AttemptTimeout, 60 s) fit
     // only one retry, and a retry wait that would pass the budget ends the round (#445).
+    // The delay caps keep random.Next(0, ceiling + 1) in ConversationRetryPolicy from going
+    // negative or overflowing (#457); 10 minutes is also the cap on an API Retry-After.
+    [Range(1, int.MaxValue)]
     public int RetryMaxAttempts { get; set; } = 3;
+    [Range(0, 600_000)]
     public int RetryBaseDelayMs { get; set; } = 1000;
+    [Range(0, 600_000)]
     public int RetryMaxDelayMs { get; set; } = 8000;
 
     // The visible localized failure line posted when a round's retries exhaust, the
@@ -126,7 +133,8 @@ internal sealed class ConversationOptions
 
     // The native Claude web search server tool (#271, #426). Attached to every loop round
     // when enabled — safe because a search bills only when the model runs one, never per
-    // attached request.
+    // attached request. ValidateDataAnnotations checks its members only with [ValidateObjectMembers].
+    [ValidateObjectMembers]
     public WebSearchOptions WebSearch { get; set; } = new();
 
     // USD prices per model id (#426): the Claude API reports tokens, not money, so the
@@ -183,6 +191,7 @@ internal sealed class WebSearchOptions
 {
     public bool Enabled { get; set; } = true;
 
+    [Range(1, int.MaxValue)]
     public int MaxUses { get; set; } = 5;
 
     public string[] AllowedDomains { get; set; } = [];

@@ -22,11 +22,14 @@ internal sealed class ClaudeSse
 
     private readonly StringBuilder _sse = new();
     private int _index;
+    private int _input;
+    private int _cacheRead;
+    private int _cacheWrite;
 
     // message_start with the input usage: input_tokens is the UNCACHED part, as on the wire.
     public static ClaudeSse Start(int input = 100, int cacheRead = 0, int cacheWrite = 0)
     {
-        var sse = new ClaudeSse();
+        var sse = new ClaudeSse { _input = input, _cacheRead = cacheRead, _cacheWrite = cacheWrite };
         sse.Event("message_start", new JsonObject
         {
             ["type"] = "message_start",
@@ -58,6 +61,21 @@ internal sealed class ClaudeSse
         Delta(index, new JsonObject { ["type"] = "thinking_delta", ["thinking"] = text });
         Delta(index, new JsonObject { ["type"] = "signature_delta", ["signature"] = signature });
         return BlockStop(index);
+    }
+
+    // A thinking block the safety system encrypted: opaque data, no deltas. It must go back
+    // unchanged, like a signature.
+    public ClaudeSse RedactedThinking(string data)
+    {
+        var index = BlockStart(new JsonObject { ["type"] = "redacted_thinking", ["data"] = data });
+        return BlockStop(index);
+    }
+
+    // A keep-alive the API may send at any point of the stream.
+    public ClaudeSse Ping()
+    {
+        Event("ping", new JsonObject { ["type"] = "ping" });
+        return this;
     }
 
     // A text block, optionally followed by web-search citations (one citations_delta each).
@@ -154,11 +172,35 @@ internal sealed class ClaudeSse
         return BlockStop(result);
     }
 
-    // message_delta (stop reason + cumulative output usage) and message_stop.
-    public string End(
-        string stopReason = "end_turn", int output = 20, int webSearches = 0, string? refusalCategory = null)
+    // A search the API could not run (e.g. max_uses_exceeded): the result block holds an
+    // error object, not a list.
+    public ClaudeSse WebSearchError(string id, string code)
     {
-        var usage = new JsonObject { ["output_tokens"] = output };
+        var result = BlockStart(new JsonObject
+        {
+            ["type"] = "web_search_tool_result",
+            ["tool_use_id"] = id,
+            ["content"] = new JsonObject { ["type"] = "web_search_tool_result_error", ["error_code"] = code },
+            ["caller"] = new JsonObject { ["type"] = "direct" },
+        });
+        return BlockStop(result);
+    }
+
+    // message_delta (stop reason + cumulative usage) and message_stop. As on the wire, the
+    // usage repeats the input counts of message_start; the adapter prefers these, so an
+    // override (a value that differs from Start()) shows which one the ledger read (#459).
+    // stopReason takes any wire value: max_tokens, model_context_window_exceeded, …
+    public string End(
+        string stopReason = "end_turn", int output = 20, int webSearches = 0, string? refusalCategory = null,
+        int? input = null, int? cacheRead = null, int? cacheWrite = null)
+    {
+        var usage = new JsonObject
+        {
+            ["input_tokens"] = input ?? _input,
+            ["output_tokens"] = output,
+            ["cache_creation_input_tokens"] = cacheWrite ?? _cacheWrite,
+            ["cache_read_input_tokens"] = cacheRead ?? _cacheRead,
+        };
         if (webSearches > 0)
             usage["server_tool_use"] = new JsonObject { ["web_search_requests"] = webSearches, ["web_fetch_requests"] = 0 };
 
@@ -264,6 +306,9 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 
     public int CallCount => RequestBodies.Count;
 
+    // The requests themselves, for the URL and headers. Their content is already read above.
+    public List<HttpRequestMessage> Sent { get; } = [];
+
     public static HttpResponseMessage Sse(string sse) =>
         new(HttpStatusCode.OK) { Content = new StringContent(sse, Encoding.UTF8, "text/event-stream") };
 
@@ -309,6 +354,7 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
         HttpRequestMessage request, CancellationToken cancellationToken)
     {
         var index = RequestBodies.Count;
+        Sent.Add(request);
         RequestBodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
         return await _responder(index, cancellationToken);
     }

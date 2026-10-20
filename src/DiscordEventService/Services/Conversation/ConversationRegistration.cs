@@ -25,10 +25,13 @@ internal static class ConversationRegistration
     {
         // A ReasoningEffort the API does not know would be a 400 on every call: fail at boot.
         // An unpriced model writes null costs, which sum as $0 and silence every cost cap (#453).
+        // Both web search domain lists on one tool are a 400 on every call too (#457).
         services.AddOptions<ConversationOptions>()
             .Bind(configuration.GetSection(ConversationOptions.SectionName))
             .ValidateDataAnnotations()
             .Validate(o => o.Model is not null && o.Prices.ContainsKey(o.Model), "Conversation:Prices has no entry for Conversation:Model")
+            .Validate(o => o.WebSearch.AllowedDomains.Length == 0 || o.WebSearch.BlockedDomains.Length == 0,
+                "Conversation:WebSearch takes AllowedDomains or BlockedDomains, not both")
             .ValidateOnStart();
 
         AddAnthropicOptions(services, configuration);
@@ -119,6 +122,8 @@ internal static class ConversationRegistration
     // turn budget, so a hung attempt still leaves time for a retry.
     internal static readonly TimeSpan AttemptTimeout = TimeSpan.FromSeconds(60);
 
+    private const string CustomHeadersVariable = "ANTHROPIC_CUSTOM_HEADERS";
+
     private static IChatClient CreateChatClient(IServiceProvider sp)
     {
         var anthropic = sp.GetRequiredService<IOptions<AnthropicOptions>>().Value;
@@ -136,16 +141,26 @@ internal static class ConversationRegistration
 
     // The base URL is fixed: without it the SDK takes ANTHROPIC_BASE_URL from the process
     // environment, and one stray line in the server .env would send every request, key
-    // included, to another host. MaxRetries 0: the §2 per-round policy (#268) is the single
-    // owner of retries — it ledgers every attempt and honours Retry-After; the SDK's own
+    // included, to another host. AuthToken null for the same reason: unset, the SDK reads
+    // ANTHROPIC_AUTH_TOKEN and sends it as a second credential (#457). MaxRetries 0: the §2
+    // per-round policy (#268) is the single owner of retries — it ledgers every attempt and honours Retry-After; the SDK's own
     // silent retries would stack under it and under-count the ledger. The SDK keeps its own
     // HttpClient in production; tests pass a scripted one. A handler binds to one client, so
     // every call builds a new one.
     internal static IAnthropicClient CreateApiClient(string apiKey, ILogger logger, HttpClient? httpClient = null)
     {
+        // The SDK adds each line of ANTHROPIC_CUSTOM_HEADERS to every request, read once when its
+        // request type loads; no client option turns it off. Clearing it here would depend on
+        // that load not having happened yet, so the boot (StartupValidator builds this client)
+        // only names it (#457).
+        if (Environment.GetEnvironmentVariable(CustomHeadersVariable) is not null)
+            logger.LogWarning("{Variable} is set: the Anthropic SDK adds its headers to every Claude API request",
+                CustomHeadersVariable);
+
         IAnthropicClient client = new AnthropicClient
         {
             ApiKey = apiKey,
+            AuthToken = null,
             BaseUrl = EnvironmentUrl.Production,
             MaxRetries = 0,
             Timeout = AttemptTimeout,

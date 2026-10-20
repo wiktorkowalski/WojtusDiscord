@@ -1,5 +1,6 @@
 using System.Net;
 using Anthropic.Exceptions;
+using Anthropic.Models;
 using DiscordEventService.Configuration;
 using DiscordEventService.Services.Conversation;
 using Xunit;
@@ -32,7 +33,6 @@ public sealed class ConversationRetryPolicyTests
     [Fact]
     public void IsTransient_MidStreamAndTransportFaults_AreRetryable()
     {
-        Assert.True(ConversationRetryPolicy.IsTransient(new AnthropicSseException("SSE error returned from server")));
         Assert.True(ConversationRetryPolicy.IsTransient(new AnthropicIOException("I/O exception", new HttpRequestException("reset"))));
         Assert.True(ConversationRetryPolicy.IsTransient(new HttpRequestException("reset")));
         Assert.True(ConversationRetryPolicy.IsTransient(new IOException("broken pipe")));
@@ -43,6 +43,26 @@ public sealed class ConversationRetryPolicyTests
         Assert.True(ConversationRetryPolicy.IsTransient(new TaskCanceledException("linked cancel")));
         Assert.True(ConversationRetryPolicy.IsTransient(new OperationCanceledException()));
     }
+
+    // An `error` event in the stream retries only the types that can pass on their own (#457).
+    [Theory]
+    [InlineData(ErrorType.OverloadedError)]
+    [InlineData(ErrorType.ApiError)]
+    [InlineData(ErrorType.RateLimitError)]
+    [InlineData(ErrorType.TimeoutError)]
+    public void IsTransient_SseErrorOfTransientType_IsRetryable(ErrorType type) =>
+        Assert.True(ConversationRetryPolicy.IsTransient(new AnthropicSseException("SSE error") { ErrorType = type }));
+
+    // null: a type this SDK version does not know, e.g. request_too_large.
+    [Theory]
+    [InlineData(ErrorType.InvalidRequestError)]
+    [InlineData(ErrorType.AuthenticationError)]
+    [InlineData(ErrorType.PermissionError)]
+    [InlineData(ErrorType.NotFoundError)]
+    [InlineData(ErrorType.BillingError)]
+    [InlineData(null)]
+    public void IsTransient_SseErrorOfOtherType_IsTerminal(ErrorType? type) =>
+        Assert.False(ConversationRetryPolicy.IsTransient(new AnthropicSseException("SSE error") { ErrorType = type }));
 
     [Fact]
     public void IsTransient_UnexpectedExceptions_AreTerminal()

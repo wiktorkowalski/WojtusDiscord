@@ -1,4 +1,5 @@
 using Anthropic.Exceptions;
+using Anthropic.Models;
 using DiscordEventService.Configuration;
 
 namespace DiscordEventService.Services.Conversation;
@@ -10,7 +11,9 @@ internal static class ConversationRetryPolicy
 {
     // Transient = worth re-issuing the same round:
     // - an API status of 408, 429 or ≥500 (529 is "overloaded");
-    // - an `error` event in the middle of the stream (AnthropicSseException, e.g. overloaded_error);
+    // - an `error` event in the middle of the stream (AnthropicSseException) of a type that can
+    //   pass on its own: overloaded, api, rate limit or timeout. Any other type, or one this SDK
+    //   version does not know (null, e.g. request_too_large), fails the same way again (#457);
     // - a transport fault: the SDK wraps a pre-response one in AnthropicIOException; a fault
     //   while the body streams surfaces raw as HttpRequestException or IOException;
     // - any cancellation: the SDK attempt timeout (ClientOptions.Timeout, response headers
@@ -22,7 +25,9 @@ internal static class ConversationRetryPolicy
     public static bool IsTransient(Exception failure) => failure switch
     {
         AnthropicApiException api => IsTransientStatus((int)api.StatusCode),
-        AnthropicSseException or AnthropicIOException => true,
+        AnthropicSseException sse => sse.ErrorType
+            is ErrorType.OverloadedError or ErrorType.ApiError or ErrorType.RateLimitError or ErrorType.TimeoutError,
+        AnthropicIOException => true,
         HttpRequestException or IOException => true,
         OperationCanceledException => true,
         _ => false,

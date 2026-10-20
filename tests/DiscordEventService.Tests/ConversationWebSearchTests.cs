@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Anthropic.Models.Messages;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Services.Conversation;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -138,7 +140,11 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         Assert.Equal("srvtoolu_1", blocks[3]!["tool_use_id"]!.GetValue<string>());
         Assert.Equal("ENC_Article", blocks[3]!["content"]![0]!["encrypted_content"]!.GetValue<string>());
         Assert.Equal(["tool_result"], ClaudeRequest.BlockTypes(messages[^1]!));
-        Assert.InRange(ClaudeRequest.CountCacheBreakpoints(round2), 0, AnthropicChatOptions.MaxCacheBreakpoints);
+        // All four breakpoints (#459): the last tool, the system prompt, round 1's last message
+        // (the question) and round 2's last block, which the next round reads.
+        Assert.Equal(4, ClaudeRequest.CountCacheBreakpoints(round2));
+        Assert.NotNull(messages[^1]!["content"]!.AsArray()[^1]!["cache_control"]);
+        Assert.NotNull(messages[^3]!["content"]!.AsArray()[^1]!["cache_control"]);
 
         // The ledger: tokens with the cache split, the computed cost, and the token-only cost
         // in upstream_inference_cost_usd (cost − upstream = the search fee).
@@ -678,6 +684,144 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
 
         Assert.Equal(new string('a', 9) + "…", sanitized);
         new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true).GetBytes(sanitized);
+    }
+
+    // #459 stub fidelity: wire shapes the real Messages API sends and the stub once did not —
+    // the cumulative usage of message_delta, redacted_thinking, ping, the max_tokens stops, and
+    // a web search that ends in an error block.
+    // The adapter reads the usage of message_delta, not of message_start: a stub that sent
+    // only output_tokens there ran every cost test on the fallback branch.
+    [Fact]
+    public async Task MessageDeltaUsage_WinsOverMessageStart_InTheLedger()
+    {
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.Start(input: 100)
+            .Text("Gotowe.")
+            .End(output: 20, webSearches: 1, input: 300, cacheRead: 5000, cacheWrite: 400));
+
+        await CollectAsync(BuildService(handler, webSearchEnabled: false).GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        var row = await _db.ConversationUsage.SingleAsync();
+        Assert.Equal((5700, 5000, 400, 20, 1), (row.PromptTokens!.Value, row.CacheReadTokens!.Value,
+            row.CacheWriteTokens!.Value, row.CompletionTokens!.Value, row.WebSearchRequests!.Value));
+        // 300 × $2 + 5000 × $0.20 + 400 × $2.50 + 20 × $10 per MTok, plus one search at $0.01.
+        Assert.Equal(0.0028, row.UpstreamInferenceCostUsd!.Value, precision: 9);
+        Assert.Equal(0.0128, row.CostUsd!.Value, precision: 9);
+    }
+
+    // redacted_thinking carries encrypted reasoning: the next round of the turn must send it
+    // back byte for byte, in its place before the tool call, or the API answers 400.
+    [Fact]
+    public async Task RedactedThinking_RoundTwoSendsItBackUnchanged()
+    {
+        const string data = "EmwKAhgBEgy3va3pzix/LafPsn4aDFIT2Xlxh0L5L8rLVyIwxtE3rAFBa8cr3qpP";
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start()
+                .RedactedThinking(data)
+                .ToolUse("toolu_1", "meme_search", """{"query":"kot","limit":5}""")
+                .End("tool_use"),
+            _ => ClaudeSse.TextAnswer("Nie mam takiego mema."),
+        });
+
+        await CollectAsync(BuildService(handler, webSearchEnabled: false).GenerateReplyAsync("mem o kocie", Context(), CancellationToken.None));
+
+        Assert.Equal(2, handler.CallCount);
+        var assistant = ClaudeRequest.Messages(handler.Requests[1])[^2]!;
+        Assert.Equal(["redacted_thinking", "tool_use"], ClaudeRequest.BlockTypes(assistant));
+        Assert.Equal(data, assistant["content"]![0]!["data"]!.GetValue<string>());
+    }
+
+    // ping is a keep-alive: anywhere in the stream it changes neither the answer nor the ledger.
+    [Fact]
+    public async Task PingEvents_AreIgnored()
+    {
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.Start(input: 100)
+            .Ping()
+            .Text("Cześć.")
+            .Ping()
+            .End(output: 20));
+
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: false).GenerateReplyAsync("hej", Context(), CancellationToken.None));
+
+        Assert.Equal("Cześć.", await TurnRendering.FinalAnswerAsync(events));
+        var row = await _db.ConversationUsage.SingleAsync();
+        Assert.Equal((100, 20, false), (row.PromptTokens!.Value, row.CompletionTokens!.Value, row.Failed));
+    }
+
+    // A cut-off answer still posts, but the cut is logged: the only trace of a too-low
+    // MaxOutputTokens or a full context window.
+    [Theory]
+    [InlineData("max_tokens")]
+    [InlineData("model_context_window_exceeded")]
+    public async Task CutOffStop_LogsTheMaxTokensWarning(string stopReason)
+    {
+        var handler = ScriptedClaudeHandler.Streams(_ => ClaudeSse.Start().Text("Odpowiedź urwana w poł").End(stopReason));
+
+        var logs = new RecordingLogger();
+        var events = await CollectAsync(BuildService(handler, webSearchEnabled: false, logger: logs.For<ConversationService>())
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        Assert.StartsWith("Odpowiedź urwana w poł", await TurnRendering.FinalAnswerAsync(events));
+        Assert.Contains(logs.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("hit max_tokens"));
+    }
+
+    // MaxUses is 5, so max_uses_exceeded is a real result. The error block goes back to the
+    // next round as received, the store keeps its code, and the next turn reads it as a failed
+    // search — not as a search that found nothing.
+    [Fact]
+    public async Task WebSearchError_RoundTrips_StoresTheCode_AndRendersAsFailed()
+    {
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start()
+                .WebSearchCall("srvtoolu_A", "pogoda kraków")
+                .WebSearchError("srvtoolu_A", "max_uses_exceeded")
+                .ToolUse("toolu_1", "meme_search", """{"query":"pogoda","limit":5}""")
+                .End("tool_use"),
+            1 => ClaudeSse.TextAnswer("Nie mogę już szukać."),
+            _ => ClaudeSse.TextAnswer("Nie sprawdziłem."),
+        });
+
+        await CollectAsync(BuildService(handler, webSearchEnabled: true)
+            .GenerateReplyAsync("jaka pogoda?", Context(), CancellationToken.None));
+        await CollectAsync(BuildService(handler, webSearchEnabled: true)
+            .GenerateReplyAsync("sprawdziłeś?", Context(), CancellationToken.None));
+
+        var assistant = ClaudeRequest.Messages(handler.Requests[1])[^2]!;
+        Assert.Equal(["server_tool_use", "web_search_tool_result", "tool_use"], ClaudeRequest.BlockTypes(assistant));
+        var content = assistant["content"]![1]!["content"]!;
+        Assert.Equal("web_search_tool_result_error", content["type"]!.GetValue<string>());
+        Assert.Equal("max_uses_exceeded", content["error_code"]!.GetValue<string>());
+
+        var row = await _db.ConversationMessages.AsNoTracking().SingleAsync(m => m.WebSearchesJson != null);
+        Assert.Contains("\"error\": \"max_uses_exceeded\"", row.WebSearchesJson);
+
+        var history = ClaudeRequest.Messages(handler.Requests[2])
+            .Where(m => m!["role"]!.GetValue<string>() == "assistant").ToList();
+        Assert.Equal("[web_search \"pogoda kraków\" failed: max_uses_exceeded]",
+            history[0]!["content"]![0]!["text"]!.GetValue<string>());
+    }
+
+    // A result block the SDK throws on (content null) must not fail the persist of the turn:
+    // the catch keeps it as an "unreadable" record and logs it.
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[null]")]
+    public void UnreadableSearchResult_StoredAsUnreadable_AndLogged(string content)
+    {
+        var raw = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(
+            $$"""{"type":"web_search_tool_result","tool_use_id":"srvtoolu_A","content":{{content}}}""")!;
+        var message = new ChatMessage(ChatRole.Assistant,
+        [
+            new AIContent { RawRepresentation = (ContentBlockParam)WebSearchToolResultBlockParam.FromRawUnchecked(raw) },
+        ]);
+        var logs = new RecordingLogger();
+
+        var record = Assert.Single(ConversationHistory.WebSearchRecords(message, logs.For<ConversationService>()));
+
+        Assert.Equal(("srvtoolu_A", "unreadable"), (record.Id, record.Error));
+        Assert.Contains(logs.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("srvtoolu_A"));
+        Assert.Equal("[web_search failed: unreadable]", ConversationHistory.FormatMarkers([record]));
     }
 
     private static ConversationContext Context() =>
