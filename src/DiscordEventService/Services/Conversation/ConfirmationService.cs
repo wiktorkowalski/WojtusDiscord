@@ -33,7 +33,7 @@ internal interface IConfirmationService
     // double-click can never run it twice and a stale/expired token returns false.
     bool TryClaim(string token, out PendingGuildAction action);
 
-    // True when a click recently claimed this token. False for a token this process never
+    // True when a click claimed this token. False for a token this process never
     // staged or let expire — a card from before a restart (#455).
     bool WasHandled(string token);
 }
@@ -55,11 +55,10 @@ internal sealed class ConfirmationService(
 
     private readonly ConcurrentDictionary<string, PendingGuildAction> _pending = new(StringComparer.Ordinal);
 
-    // Claimed tokens with their claim time, pruned on each claim: only a double-click or a
-    // card whose edit failed asks about a claimed token, so a short memory is enough.
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _handled = new(StringComparer.Ordinal);
-
-    private TimeSpan Expiry => TimeSpan.FromSeconds(Math.Max(1, options.Value.ConfirmExpirySeconds));
+    // Claimed tokens, kept for the process lifetime: a card whose outcome edit failed keeps live
+    // buttons, and a late click on it must not read as expired — the action did run.
+    // shortcut: grows by one token per admin click, fine at that rate; restart clears it.
+    private readonly ConcurrentDictionary<string, byte> _handled = new(StringComparer.Ordinal);
 
     internal int PendingCount => _pending.Count;
 
@@ -106,15 +105,7 @@ internal sealed class ConfirmationService(
         if (!_pending.TryRemove(token, out action!))
             return false;
 
-        var now = DateTimeOffset.UtcNow;
-        var cutoff = now - 2 * Expiry;
-        foreach (var (claimed, at) in _handled)
-        {
-            if (at < cutoff)
-                _handled.TryRemove(claimed, out _);
-        }
-
-        _handled[token] = now;
+        _handled[token] = 0;
         return true;
     }
 
@@ -128,7 +119,7 @@ internal sealed class ConfirmationService(
         ulong channelId, ulong requesterId, string requesterName, string description,
         Func<CancellationToken, Task<string>> execute, CancellationToken cancellationToken)
     {
-        var expiry = Expiry;
+        var expiry = TimeSpan.FromSeconds(Math.Max(1, options.Value.ConfirmExpirySeconds));
         var pending = Register(requesterId, description, execute);
 
         DiscordMessage message;
