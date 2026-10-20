@@ -167,10 +167,7 @@ public sealed class AnthropicChatOptionsTests
         var client = handler.CreateChatClient(options);
         List<ChatMessage> messages = [new(ChatRole.System, "system"), new(ChatRole.User, "q")];
 
-        List<ChatResponseUpdate> updates = [];
-        await foreach (var update in client.GetStreamingResponseAsync(
-            AnthropicChatOptions.ShapeMessages(messages, offersTools: true), chatOptions))
-            updates.Add(update);
+        var updates = await DrainAsync(client, AnthropicChatOptions.ShapeMessages(messages, offersTools: true), chatOptions);
         messages.AddRange(ConversationHistory.ForReplay(updates.ToChatResponse().Messages, NullLogger.Instance));
         await DrainAsync(client, AnthropicChatOptions.ShapeMessages(messages, offersTools: true), chatOptions);
 
@@ -241,10 +238,12 @@ public sealed class AnthropicChatOptionsTests
         return Assert.Single(handler.Requests);
     }
 
-    private static async Task DrainAsync(IChatClient client, IEnumerable<ChatMessage> messages, ChatOptions options)
+    private static async Task<List<ChatResponseUpdate>> DrainAsync(
+        IChatClient client, IEnumerable<ChatMessage> messages, ChatOptions options)
     {
-        await foreach (var _ in client.GetStreamingResponseAsync(messages, options))
-        {
-        }
+        List<ChatResponseUpdate> updates = [];
+        await foreach (var update in client.GetStreamingResponseAsync(messages, options))
+            updates.Add(update);
+        return updates;
     }
 }

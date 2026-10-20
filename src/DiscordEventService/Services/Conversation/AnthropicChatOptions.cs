@@ -15,6 +15,9 @@ internal static class AnthropicChatOptions
     // The breakpoints a request may carry (API limit); see Shape for the three the loop uses.
     public const int MaxCacheBreakpoints = 4;
 
+    // Default 5-minute TTL: the rounds of one turn start seconds apart.
+    private static readonly CacheControlEphemeral Breakpoint = new();
+
     // tools: the turn's function tools, in any order. allowToolCalls false is the post-cap
     // round: the same tools stay declared (the API rejects tool_use history with no tool
     // definitions, and thinking blocks are bound to the tool list they were made with), and
@@ -73,8 +76,7 @@ internal static class AnthropicChatOptions
             return shaped;
 
         MarkLastContent(shaped, shaped.Count - 1);
-        if (previousRequestCount > 0 && previousRequestCount < shaped.Count
-            && shaped[previousRequestCount - 1].Role != ChatRole.System)
+        if (previousRequestCount > 0)
             MarkLastContent(shaped, previousRequestCount - 1);
         return shaped;
     }
@@ -157,20 +159,20 @@ internal static class AnthropicChatOptions
         }
     }
 
-    // Default 5-minute TTL: the rounds of one turn start seconds apart. The adapter sends a
-    // ContentBlockParam RawRepresentation as it is, so the mark goes on the param itself.
+    // The adapter sends a ContentBlockParam RawRepresentation as it is, so the mark goes on
+    // the param itself.
     private static AIContent? WithBreakpoint(AIContent content) => content switch
     {
         TextContent text when string.IsNullOrWhiteSpace(text.Text) => null,
         TextContent text =>
-            new TextContent(text.Text) { Annotations = text.Annotations }.WithCacheControl(new CacheControlEphemeral()),
+            new TextContent(text.Text) { Annotations = text.Annotations }.WithCacheControl(Breakpoint),
         FunctionResultContent result =>
             new FunctionResultContent(result.CallId, result.Result) { Exception = result.Exception }
-                .WithCacheControl(new CacheControlEphemeral()),
+                .WithCacheControl(Breakpoint),
         { RawRepresentation: ContentBlockParam block } when block.TryPickWebSearchToolResult(out var searchResult) =>
-            new AIContent { RawRepresentation = (ContentBlockParam)(searchResult with { CacheControl = new CacheControlEphemeral() }) },
+            new AIContent { RawRepresentation = (ContentBlockParam)(searchResult with { CacheControl = Breakpoint }) },
         { RawRepresentation: ContentBlockParam block } when block.TryPickServerToolUse(out var serverToolUse) =>
-            new AIContent { RawRepresentation = (ContentBlockParam)(serverToolUse with { CacheControl = new CacheControlEphemeral() }) },
+            new AIContent { RawRepresentation = (ContentBlockParam)(serverToolUse with { CacheControl = Breakpoint }) },
         _ => null,
     };
 
@@ -183,7 +185,7 @@ internal static class AnthropicChatOptions
         {
             AdditionalProperties = new Dictionary<string, object?>(innerFunction.AdditionalProperties)
             {
-                [nameof(Tool.CacheControl)] = new CacheControlEphemeral(),
+                [nameof(Tool.CacheControl)] = Breakpoint,
             };
         }
 

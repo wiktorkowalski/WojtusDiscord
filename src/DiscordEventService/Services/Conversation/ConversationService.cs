@@ -44,8 +44,8 @@ internal sealed class ConversationService(
     private const string CapReachedFallback =
         "I hit my step limit before I could finish — try narrowing the question.";
 
-    // The ledger write of a cut-short attempt runs after the turn token is cancelled.
-    private static readonly TimeSpan AbandonedAttemptWriteTimeout = TimeSpan.FromSeconds(5);
+    // The ledger write of a failed attempt may run after the turn token is cancelled.
+    private static readonly TimeSpan FailedAttemptWriteTimeout = TimeSpan.FromSeconds(5);
 
     // The API stopped the model (stop_reason "refusal"): say so instead of a cut-off answer.
     internal const string RefusalMessage = "-# 🚫 Nie mogę pomóc w tej sprawie.";
@@ -255,7 +255,7 @@ internal sealed class ConversationService(
                 {
                     await updates.DisposeAsync();
                     if (!attemptSettled)
-                        await RecordAbandonedAttemptAsync(sink, round, attempt, stopwatch, outcome);
+                        await RecordFailedAttemptAsync(sink, round, attempt, stopwatch, outcome, cutShort: true);
                 }
                 stopwatch.Stop();
 
@@ -271,10 +271,7 @@ internal sealed class ConversationService(
                 // A failed attempt may still bill: its own ledger row and its cost summed
                 // into the turn — but no conversation_message rows. A stream that died after
                 // message_start keeps its billed input (RoundTokens); its output is unknown.
-                var failedUsage = ExtractRoundUsage(sink, round, attempt, options,
-                    stopwatch.ElapsedMilliseconds, failed: true);
-                turnLog.CostUsd += RecordRoundCost(failedUsage, round, turn, outcome);
-                await memory.RecordUsageAsync(memoryTurn, context.InvokerId, failedUsage, cancellationToken);
+                await RecordFailedAttemptAsync(sink, round, attempt, stopwatch, outcome, cutShort: false);
 
                 // Partial deltas already reached the handler's buffer; drop them so the
                 // retried stream (or the failure line) renders exactly once. Only this
@@ -306,25 +303,27 @@ internal sealed class ConversationService(
             }
         }
 
-        // An attempt the turn timeout or the consumer cut short may have billed its input. Its
-        // ledger row is written with its own short token: the turn's token is cancelled by now.
-        // A failed write only logs, so it never replaces the exception in flight.
-        async Task RecordAbandonedAttemptAsync(
-            List<ChatResponseUpdate> sink, int round, int attempt, Stopwatch stopwatch, RoundOutcome outcome)
+        // The ledger row of a failed attempt. An attempt the turn timeout or the consumer cut
+        // short (#452) gets one only when message_start billed its input. The write has its own
+        // short token: the turn's token may be cancelled by now. A failed write only logs, so
+        // it never replaces the exception in flight.
+        async Task RecordFailedAttemptAsync(
+            List<ChatResponseUpdate> sink, int round, int attempt, Stopwatch stopwatch, RoundOutcome outcome,
+            bool cutShort)
         {
             var usage = ExtractRoundUsage(sink, round, attempt, options, stopwatch.ElapsedMilliseconds, failed: true);
-            if (usage.PromptTokens is null)
+            if (cutShort && usage.PromptTokens is null)
                 return;
 
             turnLog.CostUsd += RecordRoundCost(usage, round, turn, outcome);
-            using var timeout = new CancellationTokenSource(AbandonedAttemptWriteTimeout);
+            using var timeout = new CancellationTokenSource(FailedAttemptWriteTimeout);
             try
             {
                 await memory.RecordUsageAsync(memoryTurn, context.InvokerId, usage, timeout.Token);
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Round {Round} attempt {Attempt}: the ledger row of the cut-short attempt was not written",
+                logger.LogWarning(ex, "Round {Round} attempt {Attempt}: the ledger row of the failed attempt was not written",
                     round, attempt);
             }
         }
