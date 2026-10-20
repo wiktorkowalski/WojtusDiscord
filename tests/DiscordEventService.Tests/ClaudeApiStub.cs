@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO.Pipelines;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -191,6 +192,9 @@ internal sealed class ClaudeSse
         return _sse.ToString();
     }
 
+    // The events so far, with no end: a stream cut off here.
+    public override string ToString() => _sse.ToString();
+
     // The usual one-block answer.
     public static string TextAnswer(string text, int input = 100, int output = 20) =>
         Start(input).Text(text).End(output: output);
@@ -259,6 +263,16 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
 
     public static HttpResponseMessage Sse(string sse) =>
         new(HttpStatusCode.OK) { Content = new StringContent(sse, Encoding.UTF8, "text/event-stream") };
+
+    // The body streams the scripted events, then hangs until the token is cancelled: a
+    // stream that billed its input (message_start) and then stalled.
+    public static HttpResponseMessage SseThenHang(string sse, CancellationToken hangUntil)
+    {
+        var pipe = new Pipe();
+        _ = pipe.Writer.WriteAsync(Encoding.UTF8.GetBytes(sse));
+        hangUntil.Register(() => pipe.Writer.Complete(new OperationCanceledException(hangUntil)));
+        return new(HttpStatusCode.OK) { Content = new StreamContent(pipe.Reader.AsStream()) };
+    }
 
     public static HttpResponseMessage Status(int status, int? retryAfterMs = null)
     {
@@ -343,3 +357,4 @@ internal static class ClaudeRequest
         }
     }
 }
+

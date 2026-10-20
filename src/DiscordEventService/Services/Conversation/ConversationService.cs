@@ -44,6 +44,9 @@ internal sealed class ConversationService(
     private const string CapReachedFallback =
         "I hit my step limit before I could finish — try narrowing the question.";
 
+    // The ledger write of a failed attempt may run after the turn token is cancelled.
+    private static readonly TimeSpan FailedAttemptWriteTimeout = TimeSpan.FromSeconds(5);
+
     // The API stopped the model (stop_reason "refusal"): say so instead of a cut-off answer.
     internal const string RefusalMessage = "-# 🚫 Nie mogę pomóc w tej sprawie.";
 
@@ -157,6 +160,9 @@ internal sealed class ConversationService(
         var turnStartedAt = Stopwatch.GetTimestamp();
         var turnBudget = TimeSpan.FromSeconds(options.RequestTimeoutSeconds);
 
+        // The message count of the last request that succeeded: its tail gets a breakpoint too.
+        var previousRequestCount = 0;
+
         // Streams one round into the transcript sink under the §2 retry policy (#268):
         // up to RetryMaxAttempts calls over the same intact `messages` prefix (a failed
         // attempt appended nothing and dispatched no tools), full-jitter backoff between
@@ -170,6 +176,9 @@ internal sealed class ConversationService(
             for (var attempt = 1; ; attempt++)
             {
                 sink.Clear();
+                // False while the attempt may still end by an exception or a consumer that
+                // stops reading; then the finally writes its ledger row (#452).
+                var attemptSettled = false;
                 var streamedVisibleText = false;
                 // The text this attempt has in the handler's buffer: a search line posts it.
                 var bufferedLength = 0;
@@ -186,7 +195,8 @@ internal sealed class ConversationService(
                 var attemptScope = AnthropicAttemptScope.Begin(round, attempt);
                 var updates = chatClient
                     .GetStreamingResponseAsync(
-                        AnthropicChatOptions.ShapeMessages(messages, offersToolCalls), roundOptions, cancellationToken)
+                        AnthropicChatOptions.ShapeMessages(messages, offersToolCalls, previousRequestCount),
+                        roundOptions, cancellationToken)
                     .GetAsyncEnumerator(cancellationToken);
                 try
                 {
@@ -238,10 +248,14 @@ internal sealed class ConversationService(
                             yield return new ConversationUpdate.ToolCall($"-# 🔎 web_search: {query}");
                         }
                     }
+
+                    attemptSettled = true;
                 }
                 finally
                 {
                     await updates.DisposeAsync();
+                    if (!attemptSettled)
+                        await RecordFailedAttemptAsync(sink, round, attempt, stopwatch, outcome, cutShort: true);
                 }
                 stopwatch.Stop();
 
@@ -249,6 +263,7 @@ internal sealed class ConversationService(
                 {
                     outcome.Succeeded = true;
                     outcome.Attempt = attempt;
+                    previousRequestCount = messages.Count;
                     outcome.LatencyMs = stopwatch.ElapsedMilliseconds;
                     yield break;
                 }
@@ -256,10 +271,7 @@ internal sealed class ConversationService(
                 // A failed attempt may still bill: its own ledger row and its cost summed
                 // into the turn — but no conversation_message rows. A stream that died after
                 // message_start keeps its billed input (RoundTokens); its output is unknown.
-                var failedUsage = ExtractRoundUsage(sink, round, attempt, options,
-                    stopwatch.ElapsedMilliseconds, failed: true);
-                turnLog.CostUsd += RecordRoundCost(failedUsage, round, turn, outcome);
-                await memory.RecordUsageAsync(memoryTurn, context.InvokerId, failedUsage, cancellationToken);
+                await RecordFailedAttemptAsync(sink, round, attempt, stopwatch, outcome, cutShort: false);
 
                 // Partial deltas already reached the handler's buffer; drop them so the
                 // retried stream (or the failure line) renders exactly once. Only this
@@ -288,6 +300,31 @@ internal sealed class ConversationService(
                     "Round {Round} attempt {Attempt} failed transiently; retrying in {DelayMs}ms",
                     round, attempt, (int)delay.TotalMilliseconds);
                 await Task.Delay(delay, cancellationToken);
+            }
+        }
+
+        // The ledger row of a failed attempt. An attempt the turn timeout or the consumer cut
+        // short (#452) gets one only when message_start billed its input. The write has its own
+        // short token: the turn's token may be cancelled by now. A failed write only logs, so
+        // it never replaces the exception in flight.
+        async Task RecordFailedAttemptAsync(
+            List<ChatResponseUpdate> sink, int round, int attempt, Stopwatch stopwatch, RoundOutcome outcome,
+            bool cutShort)
+        {
+            var usage = ExtractRoundUsage(sink, round, attempt, options, stopwatch.ElapsedMilliseconds, failed: true);
+            if (cutShort && usage.PromptTokens is null)
+                return;
+
+            turnLog.CostUsd += RecordRoundCost(usage, round, turn, outcome);
+            using var timeout = new CancellationTokenSource(FailedAttemptWriteTimeout);
+            try
+            {
+                await memory.RecordUsageAsync(memoryTurn, context.InvokerId, usage, timeout.Token);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Round {Round} attempt {Attempt}: the ledger row of the failed attempt was not written",
+                    round, attempt);
             }
         }
 

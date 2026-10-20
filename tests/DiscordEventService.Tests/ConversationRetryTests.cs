@@ -256,6 +256,68 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         Assert.Empty(await _db.ConversationUsage.ToListAsync());
     }
 
+    // #452: a stream that billed its input and then stalled until the turn was cut. The
+    // cancelled attempt still gets its failed ledger row.
+    [Fact]
+    public async Task CallerCancel_AfterMessageStart_LedgersTheBilledInput()
+    {
+        using var caller = new CancellationTokenSource();
+        var handler = new ScriptedClaudeHandler((_, _) =>
+        {
+            caller.CancelAfter(TimeSpan.FromMilliseconds(200));
+            return Task.FromResult(ScriptedClaudeHandler.SseThenHang(ClaudeSse.Start().Text("Czę").ToString(), caller.Token));
+        });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CollectAsync(
+            BuildService(handler, out _).GenerateReplyAsync("pytanie", Context(), caller.Token)));
+
+        Assert.Equal(1, handler.CallCount);
+        var row = Assert.Single(await _db.ConversationUsage.ToListAsync());
+        Assert.True(row.Failed);
+        Assert.Equal(100, row.PromptTokens);
+        Assert.Null(row.CompletionTokens);
+        Assert.NotNull(row.CostUsd);
+    }
+
+    // #452: a consumer that stops reading (a failed send) ends the attempt the same way.
+    [Fact]
+    public async Task ConsumerStopsReading_MidStream_LedgersTheBilledInput()
+    {
+        var handler = new ScriptedClaudeHandler((_, token) =>
+            Task.FromResult(ScriptedClaudeHandler.SseThenHang(ClaudeSse.Start().Text("Czę").ToString(), token)));
+
+        await foreach (var update in BuildService(handler, out _)
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None))
+        {
+            if (update is ConversationUpdate.AssistantTextDelta)
+                break;
+        }
+
+        var row = Assert.Single(await _db.ConversationUsage.ToListAsync());
+        Assert.True(row.Failed);
+        Assert.Equal(100, row.PromptTokens);
+    }
+
+    // #452: an attempt that searched and then died billed the search; the failed row has its fee.
+    [Fact]
+    public async Task MidStreamError_AfterASearch_LedgersTheSearchFee()
+    {
+        var handler = ScriptedClaudeHandler.Streams(call => call switch
+        {
+            0 => ClaudeSse.Start()
+                .WebSearch("srvtoolu_1", "pogoda", ("https://weather.example/krk", "Weather"))
+                .Error("overloaded_error"),
+            _ => ClaudeSse.TextAnswer("Słonecznie."),
+        });
+
+        await CollectAsync(BuildService(handler, out var options)
+            .GenerateReplyAsync("pogoda?", Context(), CancellationToken.None));
+
+        var failed = await _db.ConversationUsage.SingleAsync(u => u.Failed);
+        Assert.Equal(1, failed.WebSearchRequests);
+        Assert.Equal(options.Value.WebSearchPerThousandUsd / 1000d, failed.CostUsd!.Value - failed.UpstreamInferenceCostUsd!.Value, precision: 9);
+    }
+
     private static ConversationContext Context() =>
         new(GuildDiscordId, InvokerId, "tester", IsAdmin: false, ChannelId: ThreadChannelId);
 

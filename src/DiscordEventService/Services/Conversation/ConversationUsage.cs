@@ -58,9 +58,19 @@ internal sealed record RoundTokens(int? Input, int? Output, int? CacheRead, int?
 
         var cacheRead = start.CacheReadInputTokens ?? 0;
         var cacheWrite = start.CacheCreationInputTokens ?? 0;
+        var searches = SearchesRun(updates);
         return new RoundTokens(
-            ToInt(start.InputTokens + cacheRead + cacheWrite), null, ToInt(cacheRead), ToInt(cacheWrite), null);
+            ToInt(start.InputTokens + cacheRead + cacheWrite), null, ToInt(cacheRead), ToInt(cacheWrite),
+            searches > 0 ? searches : null);
     }
+
+    // The searches a dead stream ran: each result block that is not an error was billed. The
+    // input the server-side search loop added stays unknown (ADR-0007).
+    private static int SearchesRun(IEnumerable<ChatResponseUpdate> updates) => updates
+        .SelectMany(update => update.Contents)
+        .OfType<WebSearchToolResultContent>()
+        .Count(result => result.RawRepresentation is WebSearchToolResultBlock block
+            && !block.Content.TryPickError(out _));
 
     private static long? Additional(UsageDetails details, string key) =>
         details.AdditionalCounts?.TryGetValue(key, out var value) is true ? value : null;
