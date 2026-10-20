@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using DiscordEventService.Services.Conversation;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -79,6 +80,43 @@ public sealed class ConversationToolsetTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => toolset.InvokeAsync(
             new FunctionCallContent("call_1", "cancelled", new Dictionary<string, object?>()), cts.Token));
+    }
+
+    // Conversation:EnableSensitiveData gates the tool span's payload like the prompts on the MEAI
+    // span (#458): off, the span keeps the name and the result size but no arguments.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InvokeAsync_ToolSpan_CarriesArgumentsOnlyWithSensitiveData(bool captureSensitiveData)
+    {
+        var name = $"echo_{Guid.NewGuid():N}";
+        var tool = AIFunctionFactory.Create(
+            (string text) => $"echo: {text}",
+            new AIFunctionFactoryOptions { Name = name, Description = "echoes" });
+        var toolset = new ConversationToolset([tool], NullLogger.Instance, captureSensitiveData);
+        List<Activity> spans = [];
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == ConversationTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                lock (spans)
+                    spans.Add(activity);
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        await toolset.InvokeAsync(
+            new FunctionCallContent("call_1", name, new Dictionary<string, object?> { ["text"] = "sekret" }),
+            CancellationToken.None);
+
+        Activity span;
+        lock (spans)
+            span = Assert.Single(spans, s => s.DisplayName == $"tool {name}");
+        Assert.Equal(name, span.GetTagItem("tool.name"));
+        Assert.NotNull(span.GetTagItem("tool.result_length"));
+        Assert.Equal(captureSensitiveData ? "text=sekret" : null, span.GetTagItem("tool.arguments"));
     }
 
     [Fact]

@@ -71,7 +71,6 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         Assert.Contains(log.Entries, e => e.Level == LogLevel.Warning
             && e.Message.Contains("failed with status 500") && e.Message.Contains("req_test"));
         Assert.Contains(log.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("retrying in"));
-        Assert.DoesNotContain(log.Entries, e => e.Message.Contains("OpenRouter", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

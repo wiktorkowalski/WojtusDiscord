@@ -331,13 +331,39 @@ public sealed class ConversationFlowTests
     [InlineData("   ", "Chat with Wojtuś")]
     public void ThreadName_StripsTheMention_AndFallsBackWhenNothingIsLeft(string content, string expected)
     {
-        Assert.Equal(expected, ConversationFlow.BuildThreadName(content, BotId));
+        Assert.Equal(expected, ConversationFlow.BuildThreadName(content));
+    }
+
+    [Theory]
+    [InlineData("<@1> zapytaj <@123> i <@&55> o <#77>", "zapytaj i o")]
+    [InlineData("<@1> co to\nza   <:pepe:999> i <a:dance:1>?", "co to za :pepe: i :dance:?")]
+    [InlineData("<@1> spotkanie <t:1700000000:R>, użyj </meme:42>", "spotkanie , użyj")]
+    public void ThreadName_DropsDiscordTokens_AndCollapsesWhitespace(string content, string expected)
+    {
+        Assert.Equal(expected, ConversationFlow.BuildThreadName(content));
+    }
+
+    [Fact]
+    public void ThreadName_CutsOnATextElementBoundary()
+    {
+        // An emoji (a surrogate pair) straddling the 90-char cap: never half of it (U+FFFD).
+        var name = ConversationFlow.BuildThreadName($"<@1> {new string('x', 89)}😀 dalej");
+
+        Assert.Equal(new string('x', 89), name);
+    }
+
+    [Fact]
+    public void ThreadName_FirstTextElementPastTheCap_FallsBack()
+    {
+        var name = ConversationFlow.BuildThreadName("a" + new string('\u0301', 120));
+
+        Assert.Equal("Chat with Wojtuś", name);
     }
 
     [Fact]
     public void ThreadName_IsTrimmedUnderDiscordsCap()
     {
-        var name = ConversationFlow.BuildThreadName(new string('x', 200), BotId);
+        var name = ConversationFlow.BuildThreadName(new string('x', 200));
 
         Assert.Equal(90, name.Length);
     }

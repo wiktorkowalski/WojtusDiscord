@@ -33,8 +33,9 @@ internal sealed class ConversationOptions
     public int MaxToolRounds { get; set; } = 8;
 
     // The guild whose ingested data the assistant answers about when there is no
-    // ambient guild — i.e. in a DM. Lets meme_search (and later query_database) work
-    // outside the server. Unset => those tools report they need a server context.
+    // ambient guild — i.e. in a DM. The guild-scoped tools fall back to it (see
+    // ConversationContext); query_database only names it in its description.
+    // Unset => those tools report they need a server context.
     public ulong? PrimaryGuildId { get; set; }
 
     // Guild channels where an @mention opens a conversation thread. Snowflakes, not

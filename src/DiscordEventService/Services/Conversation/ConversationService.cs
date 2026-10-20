@@ -46,7 +46,7 @@ internal sealed class ConversationService(
     // tool rounds before answering — surface something rather than an empty reply.
     private const string EmptyAnswerFallback = "Hmm, nie wiem, jak na to odpowiedzieć.";
     private const string CapReachedFallback =
-        "I hit my step limit before I could finish — try narrowing the question.";
+        "Skończył mi się limit kroków, zanim zdążyłem odpowiedzieć — spróbuj zawęzić pytanie.";
 
     // The ledger write of a failed attempt may run after the turn token is cancelled.
     private static readonly TimeSpan FailedAttemptWriteTimeout = TimeSpan.FromSeconds(5);
@@ -84,29 +84,13 @@ internal sealed class ConversationService(
         // round keeps them declared but forbids calls (AnthropicChatOptions.Create).
         var chatOptions = AnthropicChatOptions.Create(options, toolset.Tools);
 
-        // Durable memory (#267): rehydrate the conversation's stored window, then persist
-        // the incoming user message — awaited, inside the turn, so a crash mid-turn
-        // leaves a consistent prefix. The channel snowflake is the conversation key.
         // A message with no text (an image or a sticker alone): the adapter drops an empty text
         // block, so the request would end on the last assistant turn — a 400 with thinking on.
         if (string.IsNullOrWhiteSpace(userMessage))
             userMessage = EmptyUserMessage;
 
-        var memoryTurn = await memory.BeginTurnAsync(context.ChannelId, context.GuildId, cancellationToken);
-        var userTurnMessage = await memory.PersistUserMessageAsync(
-            memoryTurn, userMessage, context.InvokerId, context.InvokerDisplayName, cancellationToken);
-
-        // The system prompt is a System message, not ChatOptions.Instructions: only a message
-        // block can carry the cache breakpoint (AnthropicChatOptions.ShapeMessages).
-        List<ChatMessage> messages =
-        [
-            new(ChatRole.System, BuildSystemPrompt(options)),
-            .. memoryTurn.Window,
-            userTurnMessage,
-        ];
-
-        // Parent span so the per-round generations (MEAI's UseOpenTelemetry) and each tool
-        // span nest under a single turn in Langfuse.
+        // Parent span so the per-round generations (MEAI's UseOpenTelemetry), each tool span
+        // and every DB span of the turn nest under a single turn in Langfuse and Tempo (#458).
         using var turn = ConversationTelemetry.ActivitySource.StartActivity("conversation.turn");
         turn?.SetTag("conversation.invoker_id", context.InvokerId);
         turn?.SetTag("conversation.guild_id", context.GuildId);
@@ -128,6 +112,22 @@ internal sealed class ConversationService(
         var captureSensitiveData = options.EnableSensitiveData || environment.IsDevelopment();
         if (captureSensitiveData)
             turn?.SetTag("langfuse.trace.input", userMessage);
+
+        // Durable memory (#267): rehydrate the conversation's stored window, then persist
+        // the incoming user message — awaited, inside the turn, so a crash mid-turn
+        // leaves a consistent prefix. The channel snowflake is the conversation key.
+        var memoryTurn = await memory.BeginTurnAsync(context.ChannelId, context.GuildId, cancellationToken);
+        var userTurnMessage = await memory.PersistUserMessageAsync(
+            memoryTurn, userMessage, context.InvokerId, context.InvokerDisplayName, cancellationToken);
+
+        // The system prompt is a System message, not ChatOptions.Instructions: only a message
+        // block can carry the cache breakpoint (AnthropicChatOptions.ShapeMessages).
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.System, BuildSystemPrompt(options)),
+            .. memoryTurn.Window,
+            userTurnMessage,
+        ];
 
         // This method and StreamRoundAsync are async iterators: after every `yield return`
         // they resume on the consumer's execution context, where Activity.Current is no
@@ -318,6 +318,7 @@ internal sealed class ConversationService(
             List<ChatResponseUpdate> sink, int round, int attempt, Stopwatch stopwatch, RoundOutcome outcome,
             bool cutShort)
         {
+            ReanchorTurnSpan();
             var usage = ExtractRoundUsage(sink, round, attempt, options, stopwatch.ElapsedMilliseconds, failed: true);
             if (cutShort && usage.PromptTokens is null)
                 return;
@@ -339,12 +340,11 @@ internal sealed class ConversationService(
         // every later window (#450). Returns the text to post after any partial answer.
         async Task<string> RefuseAsync(List<ChatResponseUpdate> sink, int round)
         {
+            ReanchorTurnSpan();
             LogRefusal(sink, round, context);
             await memory.MarkTurnRefusedAsync(memoryTurn, cancellationToken);
             turnLog.Finish(TurnLog.Refused, RefusalMessage);
             turn?.SetTag("conversation.refused", true);
-            turn?.SetTag("conversation.rounds", round);
-            turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
             if (captureSensitiveData)
                 turn?.SetTag("langfuse.trace.output", RefusalMessage);
             return string.IsNullOrWhiteSpace(answer.ToString()) ? RefusalMessage : $"\n{RefusalMessage}";
@@ -355,6 +355,7 @@ internal sealed class ConversationService(
         async Task<List<ChatMessage>> CompleteRoundAsync(
             List<ChatResponseUpdate> sink, int round, RoundOutcome outcome, ChatResponse response)
         {
+            ReanchorTurnSpan();
             var roundUsage = ExtractRoundUsage(sink, round, outcome.Attempt, options, outcome.LatencyMs, failed: false);
             turnLog.CostUsd += RecordRoundCost(roundUsage, round, turn, outcome);
             WebSearchCitations.AccumulateRound(sink, citations);
@@ -388,8 +389,7 @@ internal sealed class ConversationService(
                 turnLog.Finish(TurnLog.Failed, options.FailureMessage);
                 yield return new ConversationUpdate.AssistantTextDelta(FailureLine());
                 turn?.SetTag("conversation.failed", true);
-                turn?.SetTag("conversation.rounds", round);
-                turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
+                turn?.SetTag("conversation.failure_type", outcome.Failure?.GetType().Name);
                 if (captureSensitiveData)
                     turn?.SetTag("langfuse.trace.output", options.FailureMessage);
                 yield break;
@@ -436,8 +436,6 @@ internal sealed class ConversationService(
                     yield return new ConversationUpdate.AssistantTextDelta($"\n{sources}");
                 logger.LogDebug("Conversation answered in {Rounds} round(s) for {Author}",
                     round, context.InvokerDisplayName);
-                turn?.SetTag("conversation.rounds", round);
-                turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
                 if (captureSensitiveData)
                     turn?.SetTag("langfuse.trace.output", finalAnswer);
                 yield break;
@@ -447,10 +445,14 @@ internal sealed class ConversationService(
             // progress note is the model's own (the system prompt demands one before every
             // tool call), and a silent round still renders one message per tool call.
             logger.LogDebug("Round {Round}: model requested {Count} tool call(s)", round, toolCalls.Count);
-            ReanchorTurnSpan();
             List<AIContent> results = [];
             foreach (var call in toolCalls)
             {
+                // The line (and the narration buffered before it) renders BEFORE the tool
+                // runs (#456): a slow query shows its note while it works, and a staged
+                // action's confirm card lands after its own line. Persistence stays after it.
+                yield return new ConversationUpdate.ToolCall($"-# 🔧 {call.Name}");
+                ReanchorTurnSpan();
                 turnLog.ToolCalls.Add($"{call.Name}({ConversationToolset.DescribeArguments(call.Arguments)})");
                 var result = await toolset.InvokeAsync(call, cancellationToken);
                 results.Add(result);
@@ -462,9 +464,6 @@ internal sealed class ConversationService(
             messages.Add(new ChatMessage(ChatRole.Tool, results));
             answer.Clear();
             textPending = false;
-
-            foreach (var call in toolCalls)
-                yield return new ConversationUpdate.ToolCall($"-# 🔧 {call.Name}");
         }
 
         // Round cap reached: one final streamed call with tool calls forbidden forces a text
@@ -487,7 +486,7 @@ internal sealed class ConversationService(
             turnLog.Finish(TurnLog.Failed, options.FailureMessage);
             yield return new ConversationUpdate.AssistantTextDelta(FailureLine());
             turn?.SetTag("conversation.failed", true);
-            turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
+            turn?.SetTag("conversation.failure_type", finalOutcome.Failure?.GetType().Name);
             if (captureSensitiveData)
                 turn?.SetTag("langfuse.trace.output", options.FailureMessage);
             yield break;
@@ -511,7 +510,6 @@ internal sealed class ConversationService(
             yield return new ConversationUpdate.AssistantTextDelta(CapReachedFallback);
         if (WebSearchCitations.FormatSourceList(citations) is { } finalSources)
             yield return new ConversationUpdate.AssistantTextDelta($"\n{finalSources}");
-        turn?.SetTag("conversation.cost_usd", turnLog.CostUsd);
         if (captureSensitiveData)
             turn?.SetTag("langfuse.trace.output", cappedAnswer);
     }
@@ -599,11 +597,13 @@ internal sealed class ConversationService(
         public List<string> ToolCalls { get; } = [];
 
         // Called before the last yields of a turn: a consumer that stops reading at the last
-        // delta still leaves the true outcome.
+        // delta still leaves the true outcome. Tags the turn span here, so no exit misses them.
         public void Finish(string outcome, string? answer)
         {
             _outcome = outcome;
             _answer = _captureText ? answer : null;
+            turn?.SetTag("conversation.rounds", Rounds);
+            turn?.SetTag("conversation.cost_usd", CostUsd);
         }
 
         public void Dispose() =>
