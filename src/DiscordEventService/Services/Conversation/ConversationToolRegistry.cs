@@ -674,13 +674,15 @@ internal sealed class ConversationToolRegistry(
 internal sealed class ConversationToolset
 {
     private const int MaxLoggedArgumentsLength = 200;
+    private const string Redacted = "[redacted]";
 
     private readonly Dictionary<string, AIFunction> _functions;
     private readonly ILogger _logger;
     private readonly bool _captureSensitiveData;
 
-    // captureSensitiveData: Conversation:EnableSensitiveData — the tool span carries the call's
-    // arguments only when it is on, like the prompts on the MEAI span; the result is never on it.
+    // captureSensitiveData: Conversation:EnableSensitiveData — the tool span and both log lines
+    // (this toolset's and the turn log) carry the call's arguments only when it is on, like the
+    // prompts on the MEAI span (#458, #486); the result is never on them.
     public ConversationToolset(IEnumerable<AIFunction> functions, ILogger logger, bool captureSensitiveData = false)
     {
         _functions = functions.ToDictionary(function => function.Name);
@@ -757,8 +759,10 @@ internal sealed class ConversationToolset
     }
 
     // Also the form of a tool call in the turn log (ConversationService).
-    internal static string DescribeArguments(IDictionary<string, object?>? arguments)
+    internal string DescribeArguments(IDictionary<string, object?>? arguments)
     {
+        if (!_captureSensitiveData)
+            return Redacted;
         if (arguments is null || arguments.Count == 0)
             return "{}";
 

@@ -46,7 +46,8 @@ internal interface IConfirmationService
 internal sealed class ConfirmationService(
     DiscordClientAccessor clientAccessor,
     IOptions<ConversationOptions> options,
-    ILogger<ConfirmationService> logger) : IConfirmationService
+    ILogger<ConfirmationService> logger,
+    TimeProvider? time = null) : IConfirmationService
 {
     private const string ConfirmPrefix = "conv6:confirm:";
     private const string CancelPrefix = "conv6:cancel:";
@@ -59,6 +60,8 @@ internal sealed class ConfirmationService(
     // buttons, and a late click on it must not read as expired — the action did run.
     // shortcut: grows by one token per admin click, fine at that rate; restart clears it.
     private readonly ConcurrentDictionary<string, byte> _handled = new(StringComparer.Ordinal);
+
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
 
     internal int PendingCount => _pending.Count;
 
@@ -139,7 +142,9 @@ internal sealed class ConfirmationService(
             return "I couldn't post the confirmation prompt, so I didn't do anything.";
         }
 
-        _ = ExpireAsync(pending.Token, message, expiry);
+        _ = ExpireAsync(pending.Token, text => message.ModifyAsync(new DiscordMessageBuilder()
+            .WithContent(text)
+            .WithAllowedMentions(Mentions.None)), expiry);
 
         logger.LogInformation(
             "Staged action {Token} requested by {RequesterId}: {Description}",
@@ -171,17 +176,16 @@ internal sealed class ConfirmationService(
 
     // Fire-and-forget cleanup: if no one has claimed the token by the deadline, remove it and
     // mark the prompt expired. If it was already confirmed/cancelled, TryRemove finds nothing.
-    private async Task ExpireAsync(string token, DiscordMessage message, TimeSpan expiry)
+    // editCard replaces the card's content (DiscordMessage.ModifyAsync in production).
+    internal async Task ExpireAsync(string token, Func<string, Task> editCard, TimeSpan expiry)
     {
-        await Task.Delay(expiry);
+        await Task.Delay(expiry, _time);
         if (!TryExpire(token))
             return;
 
         try
         {
-            await message.ModifyAsync(new DiscordMessageBuilder()
-                .WithContent(ExpiredText)
-                .WithAllowedMentions(Mentions.None));
+            await editCard(ExpiredText);
         }
         catch (Exception ex)
         {

@@ -25,6 +25,9 @@ internal sealed class AnthropicAttemptScope
     // The wait the API asked for on a failed response, from retry-after-ms or retry-after.
     public TimeSpan? RetryAfter { get; set; }
 
+    // The API's own retry verdict on a failed response (x-should-retry); null when absent.
+    public bool? ShouldRetry { get; set; }
+
     public static AnthropicAttemptScope Begin(int round, int attempt)
     {
         var scope = new AnthropicAttemptScope(round, attempt);
@@ -42,6 +45,7 @@ internal sealed class AnthropicAttemptLogHandler(ILogger logger) : DelegatingHan
     private const string RequestIdHeader = "request-id";
     private const string RetryAfterMsHeader = "retry-after-ms";
     private const string RetryAfterHeader = "retry-after";
+    private const string ShouldRetryHeader = "x-should-retry";
 
     private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromMinutes(10);
 
@@ -65,7 +69,12 @@ internal sealed class AnthropicAttemptLogHandler(ILogger logger) : DelegatingHan
         }
 
         var status = (int)response.StatusCode;
-        if (ConversationRetryPolicy.IsTransientStatus(status))
+        var shouldRetry = response.IsSuccessStatusCode ? null : ParseShouldRetry(response);
+        if (scope is not null)
+            scope.ShouldRetry = shouldRetry;
+
+        // Every response the retry policy might retry: by status or by the API's own header.
+        if (ConversationRetryPolicy.IsTransientStatus(status) || shouldRetry == true)
         {
             var retryAfter = ParseRetryAfter(response);
             if (scope is not null)
@@ -73,10 +82,11 @@ internal sealed class AnthropicAttemptLogHandler(ILogger logger) : DelegatingHan
 
             logger.LogWarning(
                 "Claude API round {Round} attempt {Attempt} failed with status {Status} after {ElapsedMs} ms, "
-                + "request id {RequestId}, retry-after {RetryAfterMs} ms",
+                + "request id {RequestId}, retry-after {RetryAfterMs} ms, should-retry {ShouldRetry}",
                 scope?.Round, scope?.Attempt, status, ElapsedMs(started),
                 Header(response, RequestIdHeader) ?? "none",
-                retryAfter is { } wait ? (long)wait.TotalMilliseconds : null);
+                retryAfter is { } wait ? (long)wait.TotalMilliseconds : null,
+                shouldRetry?.ToString() ?? "none");
         }
 
         return response;
@@ -99,6 +109,10 @@ internal sealed class AnthropicAttemptLogHandler(ILogger logger) : DelegatingHan
 
         return null;
     }
+
+    // "true" / "false" in any case; anything else counts as absent.
+    internal static bool? ParseShouldRetry(HttpResponseMessage response) =>
+        bool.TryParse(Header(response, ShouldRetryHeader), out var value) ? value : null;
 
     private static TimeSpan Cap(double milliseconds) =>
         TimeSpan.FromMilliseconds(Math.Min(milliseconds, MaxRetryAfter.TotalMilliseconds));

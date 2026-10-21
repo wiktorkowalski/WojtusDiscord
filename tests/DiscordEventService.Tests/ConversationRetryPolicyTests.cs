@@ -115,6 +115,33 @@ public sealed class ConversationRetryPolicyTests
         Assert.Null(AnthropicAttemptLogHandler.ParseRetryAfter(junk));
     }
 
+    // #487: the API's x-should-retry outweighs the status rule; it says nothing about the
+    // stream and transport faults.
+    [Theory]
+    [InlineData(500, false, false)]
+    [InlineData(409, true, true)]
+    [InlineData(400, null, false)]
+    [InlineData(529, null, true)]
+    public void IsTransient_ShouldRetryHeaderWinsOverStatus(int status, bool? shouldRetry, bool expected) =>
+        Assert.Equal(expected, ConversationRetryPolicy.IsTransient(ApiException(status), shouldRetry));
+
+    [Fact]
+    public void IsTransient_ShouldRetryFalse_LeavesTransportFaultsRetryable() =>
+        Assert.True(ConversationRetryPolicy.IsTransient(new HttpRequestException("reset"), shouldRetry: false));
+
+    [Theory]
+    [InlineData("true", true)]
+    [InlineData("False", false)]
+    [InlineData("maybe", null)]
+    [InlineData(null, null)]
+    public void ParseShouldRetry_ReadsTrueOrFalse_IgnoresJunk(string? header, bool? expected)
+    {
+        using var response = new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        if (header is not null)
+            response.Headers.TryAddWithoutValidation("x-should-retry", header);
+        Assert.Equal(expected, AnthropicAttemptLogHandler.ParseShouldRetry(response));
+    }
+
     private static AnthropicApiException ApiException(int status) =>
         AnthropicExceptionFactory.CreateApiException((HttpStatusCode)status, "{}");
 

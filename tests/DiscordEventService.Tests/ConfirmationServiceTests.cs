@@ -1,7 +1,9 @@
 using DiscordEventService.Configuration;
 using DiscordEventService.Services.Conversation;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Time.Testing;
 using Xunit;
 
 namespace DiscordEventService.Tests;
@@ -96,8 +98,68 @@ public sealed class ConfirmationServiceTests
         Assert.False(service.WasHandled("never-registered"));
     }
 
-    private static ConfirmationService NewService() =>
-        new(clientAccessor: null!, Options.Create(new ConversationOptions()), NullLogger<ConfirmationService>.Instance);
+    // #488: the timed half of ExpireAsync, on a fake clock — no real wait.
+    [Fact]
+    public async Task ExpireAsync_Unclaimed_EditsTheCardOnceAtTheDeadline_AndTheTokenReadsAsUnknown()
+    {
+        var time = new FakeTimeProvider();
+        var service = NewService(time);
+        var pending = service.Register(requesterId: 99UL, "Ban someone", _ => Task.FromResult("banned"));
+        List<string> edits = [];
+
+        var expiring = service.ExpireAsync(pending.Token, text => { edits.Add(text); return Task.CompletedTask; },
+            TimeSpan.FromMinutes(5));
+        time.Advance(TimeSpan.FromMinutes(5) - TimeSpan.FromTicks(1));
+        Assert.False(expiring.IsCompleted);
+        Assert.Empty(edits);
+
+        time.Advance(TimeSpan.FromTicks(1));
+        await expiring;
+
+        Assert.Equal([ConfirmationService.ExpiredText], edits);
+        Assert.False(service.TryClaim(pending.Token, out _));
+        Assert.False(service.WasHandled(pending.Token));
+    }
+
+    [Fact]
+    public async Task ExpireAsync_ClaimedBeforeTheDeadline_LeavesTheCardAlone()
+    {
+        var time = new FakeTimeProvider();
+        var service = NewService(time);
+        var pending = service.Register(requesterId: 99UL, "Ban someone", _ => Task.FromResult("banned"));
+        var edits = 0;
+
+        var expiring = service.ExpireAsync(pending.Token, _ => { edits++; return Task.CompletedTask; },
+            TimeSpan.FromMinutes(5));
+        Assert.True(service.TryClaim(pending.Token, out _));
+        time.Advance(TimeSpan.FromMinutes(5));
+        await expiring;
+
+        Assert.Equal(0, edits);
+        Assert.True(service.WasHandled(pending.Token));
+    }
+
+    [Fact]
+    public async Task ExpireAsync_EditThrows_OnlyLogsAtDebug()
+    {
+        var time = new FakeTimeProvider();
+        var log = new RecordingLogger();
+        var service = new ConfirmationService(
+            clientAccessor: null!, Options.Create(new ConversationOptions()), log.For<ConfirmationService>(), time);
+        var pending = service.Register(requesterId: 99UL, "Ban someone", _ => Task.FromResult("banned"));
+
+        var expiring = service.ExpireAsync(pending.Token, _ => throw new HttpRequestException("discord down"),
+            TimeSpan.FromMinutes(5));
+        time.Advance(TimeSpan.FromMinutes(5));
+        await expiring;
+
+        var entry = Assert.Single(log.Entries);
+        Assert.Equal(LogLevel.Debug, entry.Level);
+        Assert.Contains(pending.Token, entry.Message);
+    }
+
+    private static ConfirmationService NewService(TimeProvider? time = null) =>
+        new(clientAccessor: null!, Options.Create(new ConversationOptions()), NullLogger<ConfirmationService>.Instance, time);
 }
 
 public sealed class ConversationOptionsAdminTests
