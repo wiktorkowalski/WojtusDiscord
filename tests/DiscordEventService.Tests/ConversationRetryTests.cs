@@ -194,6 +194,40 @@ public sealed class ConversationRetryTests(PostgresFixture fixture)
         Assert.Equal(1, row.Attempt);
     }
 
+    // #487: an explicit x-should-retry outweighs the status rule, both ways.
+    [Fact]
+    public async Task Status500_ShouldRetryFalse_DoesNotRetry_SurfacesFailureLine()
+    {
+        var handler = new ScriptedClaudeHandler(_ => ScriptedClaudeHandler.Status(500, shouldRetry: false));
+
+        var events = await CollectAsync(BuildService(handler, out var options)
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        Assert.Equal(1, handler.CallCount);
+        Assert.Equal(options.Value.FailureMessage, await TurnRendering.FinalAnswerAsync(events));
+        Assert.True((await _db.ConversationUsage.SingleAsync()).Failed);
+    }
+
+    [Fact]
+    public async Task Status409_ShouldRetryTrue_Retries_AndAnswers()
+    {
+        var handler = new ScriptedClaudeHandler(call => call switch
+        {
+            0 => ScriptedClaudeHandler.Status(409, shouldRetry: true),
+            _ => ScriptedClaudeHandler.Sse(ClaudeSse.TextAnswer("Odpowiedź.")),
+        });
+        var log = new RecordingLogger();
+
+        var events = await CollectAsync(BuildService(handler, out _, log)
+            .GenerateReplyAsync("pytanie", Context(), CancellationToken.None));
+
+        Assert.Equal(2, handler.CallCount);
+        Assert.Equal("Odpowiedź.", await TurnRendering.FinalAnswerAsync(events));
+        Assert.Equal([true, false], await _db.ConversationUsage.OrderBy(u => u.Attempt).Select(u => u.Failed).ToListAsync());
+        Assert.Contains(log.Entries, e => e.Level == LogLevel.Warning
+            && e.Message.Contains("failed with status 409") && e.Message.Contains("should-retry True"));
+    }
+
     // #457: the SDK reads the type of an `error` event; one a retry cannot fix ends the round.
     [Fact]
     public async Task MidStreamInvalidRequestError_DoesNotRetry_SurfacesFailureLine()

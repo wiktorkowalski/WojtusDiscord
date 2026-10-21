@@ -554,7 +554,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
 
     // #341: one Information line per turn. With the sensitive-data gate off (the default) it
     // names who, where, the rounds, the tool calls and the trace, and no text of the person
-    // or of the model.
+    // or of the model. #486: no tool argument either, in this line or in the tool line.
     [Fact]
     public async Task GenerateReplyAsync_SensitiveDataOff_TurnLogHasToolsAndTraceButNoQuestionOrAnswer()
     {
@@ -562,14 +562,19 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         const string answer = "Found the turtle meme for you.";
         using var spans = ListenToConversationSpans();
         var log = new RecordingLogger();
-        var service = BuildService(ScriptToolThenAnswer(answer), logger: log.For<ConversationService>());
+        var toolLog = new RecordingLogger();
+        var service = BuildService(ScriptToolThenAnswer(answer), logger: log.For<ConversationService>(),
+            toolLogger: toolLog.For<ConversationToolRegistry>());
         var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "tester", IsAdmin: false, ChannelId: 7UL);
 
         await CollectAsync(service.GenerateReplyAsync(question, context, CancellationToken.None));
 
+        var toolLine = Assert.Single(toolLog.Entries, e => e.Level == LogLevel.Information).Message;
+        Assert.StartsWith("Tool meme_search args=[redacted] -> ", toolLine);
         var line = Assert.Single(log.Entries, e => e.Level == LogLevel.Information).Message;
         Assert.StartsWith("Conversation turn answered: invoker 42 (tester), guild 1, channel 7, rounds 2, ", line);
-        Assert.Contains("tools [meme_search(query=zolw, limit=5)]", line);
+        Assert.Contains("tools [meme_search([redacted])]", line);
+        Assert.DoesNotContain("zolw", line);
         // The trace id of this turn's own span. The listener is for the whole process, so it
         // also holds the turns of the tests that run at the same time.
         var traceId = System.Text.RegularExpressions.Regex.Match(line, "trace ([0-9a-f]{32}),").Groups[1].Value;
@@ -587,13 +592,18 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
         const string question = "znajdz mema\ninfo: Forged[0]";
         const string answer = "Found the turtle meme\r\nfor you.";
         var log = new RecordingLogger();
+        var toolLog = new RecordingLogger();
         var service = BuildService(
-            ScriptToolThenAnswer(answer), enableSensitiveData: true, logger: log.For<ConversationService>());
+            ScriptToolThenAnswer(answer), enableSensitiveData: true, logger: log.For<ConversationService>(),
+            toolLogger: toolLog.For<ConversationToolRegistry>());
         var context = new ConversationContext(GuildDiscordId, InvokerId: 42UL, "te\nster", IsAdmin: false, ChannelId: 7UL);
 
         await CollectAsync(service.GenerateReplyAsync(question, context, CancellationToken.None));
 
+        Assert.StartsWith("Tool meme_search args=query=zolw, limit=5 -> ",
+            Assert.Single(toolLog.Entries, e => e.Level == LogLevel.Information).Message);
         var line = Assert.Single(log.Entries, e => e.Level == LogLevel.Information).Message;
+        Assert.Contains("tools [meme_search(query=zolw, limit=5)]", line);
         Assert.Contains("invoker 42 (te ster)", line);
         Assert.EndsWith("question znajdz mema info: Forged[0], answer Found the turtle meme for you.", line);
         Assert.DoesNotContain('\n', line);
@@ -661,7 +671,8 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
 
     private ConversationService BuildService(
         IChatClient client, int maxToolRounds = 8, bool enableSensitiveData = false,
-        ILogger<ConversationService>? logger = null, string? apiKey = "test-key")
+        ILogger<ConversationService>? logger = null, string? apiKey = "test-key",
+        ILogger<ConversationToolRegistry>? toolLogger = null)
     {
         var conversationOptions = Options.Create(new ConversationOptions
         {
@@ -681,7 +692,7 @@ public sealed class ConversationLoopTests(PostgresFixture fixture)
             new FakeConfirmationService(),
             new DatabaseSchemaHint("schema hint"),
             conversationOptions,
-            NullLogger<ConversationToolRegistry>.Instance);
+            toolLogger ?? NullLogger<ConversationToolRegistry>.Instance);
 
         return new ConversationService(
             client,

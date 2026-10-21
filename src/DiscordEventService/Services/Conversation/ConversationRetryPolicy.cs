@@ -10,7 +10,8 @@ namespace DiscordEventService.Services.Conversation;
 internal static class ConversationRetryPolicy
 {
     // Transient = worth re-issuing the same round:
-    // - an API status of 408, 429 or ≥500 (529 is "overloaded");
+    // - an API error response the API marks x-should-retry: true, or with no such header a
+    //   status of 408, 429 or ≥500 (529 is "overloaded"). The header wins both ways (#487);
     // - an `error` event in the middle of the stream (AnthropicSseException) of a type that can
     //   pass on its own: overloaded, api, rate limit or timeout. Any other type, or one this SDK
     //   version does not know (null, e.g. request_too_large), fails the same way again (#457);
@@ -22,9 +23,9 @@ internal static class ConversationRetryPolicy
     //   so a cancellation that reaches this is never the caller's.
     // Everything else (400/401/403/404, unexpected bugs) is terminal: retrying cannot help —
     // surface the visible failure line instead.
-    public static bool IsTransient(Exception failure) => failure switch
+    public static bool IsTransient(Exception failure, bool? shouldRetry = null) => failure switch
     {
-        AnthropicApiException api => IsTransientStatus((int)api.StatusCode),
+        AnthropicApiException api => shouldRetry ?? IsTransientStatus((int)api.StatusCode),
         AnthropicSseException sse => sse.ErrorType
             is ErrorType.OverloadedError or ErrorType.ApiError or ErrorType.RateLimitError or ErrorType.TimeoutError,
         AnthropicIOException => true,

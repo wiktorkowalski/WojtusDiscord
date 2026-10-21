@@ -322,7 +322,7 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
         return new(HttpStatusCode.OK) { Content = new StreamContent(pipe.Reader.AsStream()) };
     }
 
-    public static HttpResponseMessage Status(int status, int? retryAfterMs = null)
+    public static HttpResponseMessage Status(int status, int? retryAfterMs = null, bool? shouldRetry = null)
     {
         var response = new HttpResponseMessage((HttpStatusCode)status)
         {
@@ -333,6 +333,8 @@ internal sealed class ScriptedClaudeHandler : HttpMessageHandler
         response.Headers.TryAddWithoutValidation("request-id", "req_test");
         if (retryAfterMs is not null)
             response.Headers.TryAddWithoutValidation("retry-after-ms", retryAfterMs.Value.ToString(CultureInfo.InvariantCulture));
+        if (shouldRetry is not null)
+            response.Headers.TryAddWithoutValidation("x-should-retry", shouldRetry.Value ? "true" : "false");
         return response;
     }
 

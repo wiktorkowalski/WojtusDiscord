@@ -288,7 +288,8 @@ internal sealed class ConversationService(
                 if (bufferedLength > 0)
                     yield return new ConversationUpdate.RoundReset(bufferedLength);
 
-                var retryable = ConversationRetryPolicy.IsTransient(failure) && attempt < options.RetryMaxAttempts;
+                var retryable = ConversationRetryPolicy.IsTransient(failure, attemptScope.ShouldRetry)
+                    && attempt < options.RetryMaxAttempts;
                 var delay = retryable
                     ? ConversationRetryPolicy.ComputeDelay(attempt, options, Random.Shared, attemptScope.RetryAfter)
                     : TimeSpan.Zero;
@@ -453,7 +454,7 @@ internal sealed class ConversationService(
                 // action's confirm card lands after its own line. Persistence stays after it.
                 yield return new ConversationUpdate.ToolCall($"-# 🔧 {call.Name}");
                 ReanchorTurnSpan();
-                turnLog.ToolCalls.Add($"{call.Name}({ConversationToolset.DescribeArguments(call.Arguments)})");
+                turnLog.ToolCalls.Add($"{call.Name}({toolset.DescribeArguments(call.Arguments)})");
                 var result = await toolset.InvokeAsync(call, cancellationToken);
                 results.Add(result);
                 await memory.PersistToolResultAsync(memoryTurn, call.Name, result, cancellationToken);
@@ -574,8 +575,8 @@ internal sealed class ConversationService(
     // its consumer. It is part of the message text because a line from this container has no
     // scope line with the trace id.
     //
-    // The question and the answer are kept only when Conversation:EnableSensitiveData is on.
-    // The tool arguments are always there, like in the "Tool ... args=" line of the toolset.
+    // The question, the answer and the tool arguments are kept only when
+    // Conversation:EnableSensitiveData is on; the toolset redacts the arguments itself (#486).
     private sealed class TurnLog(
         ILogger logger, ConversationContext context, Activity? turn, string? question) : IDisposable
     {
@@ -583,8 +584,6 @@ internal sealed class ConversationService(
         public const string Failed = "failed";
         public const string Refused = "refused";
         public const string RoundCap = "round_cap";
-
-        private const string Redacted = "[redacted]";
 
         private readonly long _startedAt = Stopwatch.GetTimestamp();
         private readonly string _traceId = turn?.TraceId.ToString() ?? "none";
@@ -614,7 +613,8 @@ internal sealed class ConversationService(
                 _outcome, context.InvokerId, SingleLine(context.InvokerDisplayName), context.GuildId, context.ChannelId,
                 Rounds, SingleLine(string.Join("; ", ToolCalls)), CostUsd,
                 (long)Stopwatch.GetElapsedTime(_startedAt).TotalMilliseconds, _traceId,
-                _captureText ? SingleLine(question) : Redacted, _captureText ? SingleLine(_answer) : Redacted);
+                _captureText ? SingleLine(question) : ConversationToolset.Redacted,
+                _captureText ? SingleLine(_answer) : ConversationToolset.Redacted);
 
         // A display name, a tool argument, the question and the answer are text a person or the
         // model wrote. A line break in one of them would start a new console line, and each
