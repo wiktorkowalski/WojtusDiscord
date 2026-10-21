@@ -13,20 +13,19 @@ internal sealed class VoiceEventHandler(EventPipeline pipeline) :
     public async Task HandleEventAsync(DiscordClient sender, VoiceStateUpdatedEventArgs args)
     {
         var eventType = DetermineEventType(args);
-        // Bots only get guild voice states, so the guild id is always set.
-        var guildId = args.GuildId!.Value;
 
         // From the event alone, before any database work: an event the pipeline fails still counts.
         foreach (var change in ChangesOf(eventType, FlagsOf(args.Before), FlagsOf(args.After)))
             BotMetrics.VoiceStateChanged(change);
 
         await pipeline.ExecuteAsync(args, "VoiceStateUpdated", nameof(VoiceEventHandler),
-            guildId, args.After?.ChannelId, args.UserId, async ctx =>
+            args.GuildId ?? 0, args.After?.ChannelId, args.UserId, async ctx =>
             {
                 ctx.Db.VoiceStateEvents.Add(new VoiceStateEventEntity
                 {
                     UserDiscordId = args.UserId,
-                    GuildDiscordId = guildId,
+                    // Inside the pipeline: a voice state without a guild fails here with its raw event kept.
+                    GuildDiscordId = args.GuildId!.Value,
                     ChannelDiscordIdBefore = args.Before?.ChannelId,
                     ChannelDiscordIdAfter = args.After?.ChannelId,
                     EventType = eventType,
@@ -56,7 +55,7 @@ internal sealed class VoiceEventHandler(EventPipeline pipeline) :
                 await ctx.Db.SaveChangesAsync();
 
                 ctx.Logger.LogDebug("Recorded voice event: {EventType} for user {UserId} in guild {GuildId}",
-                    eventType, args.UserId, guildId);
+                    eventType, args.UserId, args.GuildId);
             });
     }
 
