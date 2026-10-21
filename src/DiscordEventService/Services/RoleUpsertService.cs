@@ -18,7 +18,7 @@ internal sealed class RoleUpsertService(DiscordDbContext db, ILogger<RoleUpsertS
             r => r.DiscordId == role.Id,
             s => s
                 .SetProperty(r => r.Name, role.Name)
-                .SetProperty(r => r.Color, role.Color.Value)
+                .SetProperty(r => r.Color, role.Colors.PrimaryColor.Value)
                 .SetProperty(r => r.IsHoisted, role.IsHoisted)
                 .SetProperty(r => r.Position, role.Position)
                 .SetProperty(r => r.Permissions, permissions)
@@ -31,7 +31,7 @@ internal sealed class RoleUpsertService(DiscordDbContext db, ILogger<RoleUpsertS
                 DiscordId = role.Id,
                 GuildId = guildId,
                 Name = role.Name,
-                Color = role.Color.Value,
+                Color = role.Colors.PrimaryColor.Value,
                 IsHoisted = role.IsHoisted,
                 Position = role.Position,
                 Permissions = permissions,

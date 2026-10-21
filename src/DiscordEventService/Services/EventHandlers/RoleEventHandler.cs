@@ -70,10 +70,10 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
                     roleEvent.NameAfter = e.RoleAfter.Name;
                 }
 
-                if (e.RoleBefore.Color.Value != e.RoleAfter.Color.Value)
+                if (e.RoleBefore.Colors.PrimaryColor.Value != e.RoleAfter.Colors.PrimaryColor.Value)
                 {
-                    roleEvent.ColorBefore = e.RoleBefore.Color.Value;
-                    roleEvent.ColorAfter = e.RoleAfter.Color.Value;
+                    roleEvent.ColorBefore = e.RoleBefore.Colors.PrimaryColor.Value;
+                    roleEvent.ColorAfter = e.RoleAfter.Colors.PrimaryColor.Value;
                 }
 
                 // Role row + event row must commit together. ExecutionStrategy is required
@@ -118,7 +118,7 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
                     GuildDiscordId = e.Guild.Id,
                     EventType = RoleEventType.Deleted,
                     NameBefore = e.Role.Name,
-                    ColorBefore = e.Role.Color.Value,
+                    ColorBefore = e.Role.Colors.PrimaryColor.Value,
                     EventTimestampUtc = ctx.ReceivedAtUtc,
                     ReceivedAtUtc = ctx.ReceivedAtUtc,
                     RawEventJson = ctx.RawJson
@@ -134,7 +134,7 @@ internal sealed class RoleEventHandler(EventPipeline pipeline) :
         GuildDiscordId = e.Guild.Id,
         EventType = RoleEventType.Created,
         NameAfter = e.Role.Name,
-        ColorAfter = e.Role.Color.Value,
+        ColorAfter = e.Role.Colors.PrimaryColor.Value,
         EventTimestampUtc = ctx.ReceivedAtUtc,
         ReceivedAtUtc = ctx.ReceivedAtUtc,
         RawEventJson = ctx.RawJson,

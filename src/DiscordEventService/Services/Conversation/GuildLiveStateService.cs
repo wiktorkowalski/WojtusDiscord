@@ -88,13 +88,13 @@ internal sealed class GuildLiveStateService(DiscordClientAccessor clientAccessor
             return null;
 
         return guild.VoiceStates.Values
-            .Where(state => state.Channel is not null)
-            .GroupBy(state => state.Channel!)
+            .Where(state => state.ChannelId is not null)
+            .GroupBy(state => state.ChannelId!.Value)
             .Select(channel => new LiveVoiceChannel(
                 guildId,
-                channel.Key.Id,
-                channel.Key.Name ?? channel.Key.Id.ToString(),
-                [.. channel.Select(ProjectOccupant).OrderBy(o => o.DisplayName, StringComparer.OrdinalIgnoreCase)]))
+                channel.Key,
+                guild.Channels.GetValueOrDefault(channel.Key)?.Name ?? channel.Key.ToString(),
+                [.. channel.Select(state => ProjectOccupant(guild, state)).OrderBy(o => o.DisplayName, StringComparer.OrdinalIgnoreCase)]))
             .OrderBy(channel => channel.ChannelName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
@@ -165,9 +165,9 @@ internal sealed class GuildLiveStateService(DiscordClientAccessor clientAccessor
             guild.Emojis.Count);
     }
 
-    private static LiveVoiceOccupant ProjectOccupant(DiscordVoiceState state) =>
+    private static LiveVoiceOccupant ProjectOccupant(DiscordGuild guild, DiscordVoiceState state) =>
         new(
-            state.Member?.DisplayName ?? state.User?.Username ?? "(unknown)",
+            guild.Members.GetValueOrDefault(state.UserId)?.DisplayName ?? "(unknown)",
             state.IsSelfMuted || state.IsServerMuted,
             state.IsSelfDeafened || state.IsServerDeafened,
             state.IsSelfStream,
@@ -176,7 +176,9 @@ internal sealed class GuildLiveStateService(DiscordClientAccessor clientAccessor
     private static LiveMemberInfo ProjectMember(DiscordMember member)
     {
         var presence = member.Presence;
-        var voiceChannel = member.VoiceState?.Channel;
+        var voiceChannel = member.VoiceState?.ChannelId is { } channelId
+            ? member.Guild.Channels.GetValueOrDefault(channelId)
+            : null;
         return new LiveMemberInfo(
             member.Id,
             member.Username,

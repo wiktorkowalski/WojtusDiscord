@@ -19,14 +19,15 @@ internal sealed class VoiceEventHandler(EventPipeline pipeline) :
             BotMetrics.VoiceStateChanged(change);
 
         await pipeline.ExecuteAsync(args, "VoiceStateUpdated", nameof(VoiceEventHandler),
-            args.Guild.Id, args.After?.Channel?.Id, args.User.Id, async ctx =>
+            args.GuildId ?? 0, args.After?.ChannelId, args.UserId, async ctx =>
             {
                 ctx.Db.VoiceStateEvents.Add(new VoiceStateEventEntity
                 {
-                    UserDiscordId = args.User.Id,
-                    GuildDiscordId = args.Guild.Id,
-                    ChannelDiscordIdBefore = args.Before?.Channel?.Id,
-                    ChannelDiscordIdAfter = args.After?.Channel?.Id,
+                    UserDiscordId = args.UserId,
+                    // Inside the pipeline: a voice state without a guild fails here with its raw event kept.
+                    GuildDiscordId = args.GuildId!.Value,
+                    ChannelDiscordIdBefore = args.Before?.ChannelId,
+                    ChannelDiscordIdAfter = args.After?.ChannelId,
                     EventType = eventType,
 
                     WasSelfMuted = args.Before?.IsSelfMuted ?? false,
@@ -54,7 +55,7 @@ internal sealed class VoiceEventHandler(EventPipeline pipeline) :
                 await ctx.Db.SaveChangesAsync();
 
                 ctx.Logger.LogDebug("Recorded voice event: {EventType} for user {UserId} in guild {GuildId}",
-                    eventType, args.User.Id, args.Guild.Id);
+                    eventType, args.UserId, args.GuildId);
             });
     }
 
@@ -103,8 +104,8 @@ internal sealed class VoiceEventHandler(EventPipeline pipeline) :
 
     private static VoiceEventType DetermineEventType(VoiceStateUpdatedEventArgs args)
     {
-        var beforeChannelId = args.Before?.Channel?.Id;
-        var afterChannelId = args.After?.Channel?.Id;
+        var beforeChannelId = args.Before?.ChannelId;
+        var afterChannelId = args.After?.ChannelId;
 
         return (beforeChannelId, afterChannelId) switch
         {

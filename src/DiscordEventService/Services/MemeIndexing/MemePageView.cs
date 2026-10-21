@@ -45,7 +45,7 @@ internal sealed record MemePageView(string Content, IReadOnlyList<DiscordButtonC
         where T : BaseDiscordMessageBuilder<T>
     {
         builder.WithContent(Content).AddMentions(Mentions.None);
-        return Buttons.Count > 0 ? builder.AddComponents(Buttons) : builder;
+        return Buttons.Count > 0 ? builder.AddActionRowComponent(Buttons) : builder;
     }
 
     private static List<DiscordButtonComponent> PagingButtons(string query, int offset, bool hasPrevious, bool hasNext)
