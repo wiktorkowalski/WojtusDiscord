@@ -1,14 +1,10 @@
 using DSharpPlus;
-using Newtonsoft.Json;
+using DSharpPlus.Net.Serialization;
 using Newtonsoft.Json.Linq;
 using Xunit;
 
 namespace DiscordEventService.Tests;
 
-// #376: DSharpPlus 5.0.0-nightly-02485 read the audit log entry's user_id as a non-nullable ulong.
-// A webhook deleted with its own token has no user, so GUILD_AUDIT_LOG_ENTRY_CREATE threw inside the
-// gateway dispatch and the event was lost before any handler or raw log. The dispatch deserializes
-// the payload into the internal AuditLogAction transport type; this repeats that step.
 public sealed class AuditLogDispatchNullUserTests
 {
     [Fact]
@@ -26,7 +22,10 @@ public sealed class AuditLogDispatchNullUserTests
             }
             """);
 
-        var action = payload.ToObject(transportType, JsonSerializer.CreateDefault());
+        // #376: nightly-02485 typed user_id as ulong, so this exact gateway dispatch step threw and dropped the event.
+        var action = typeof(DiscordJson).GetMethod(nameof(DiscordJson.ToDiscordObject))!
+            .MakeGenericMethod(transportType)
+            .Invoke(null, [payload]);
 
         Assert.NotNull(action);
         Assert.Null(transportType.GetProperty("UserId")!.GetValue(action));
