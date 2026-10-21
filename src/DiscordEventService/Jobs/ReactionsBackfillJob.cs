@@ -86,11 +86,7 @@ internal sealed class ReactionsBackfillJob(
                 break;
             }
 
-            var messagesWithReactions = messages
-                .Where(m => m.Reactions is { Count: > 0 })
-                .ToList();
-
-            foreach (var message in messagesWithReactions)
+            foreach (var message in MessagesNeedingReactions(messages, afterTimestampUtc))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -112,9 +108,8 @@ internal sealed class ReactionsBackfillJob(
             checkpoint.LastProcessedId = beforeId;
             await db.SaveChangesAsync(cancellationToken);
 
-            // Stop scrolling once the oldest message in the batch is older than
-            // the requested window (we've already collected reactions for the
-            // current batch — overshoot by up to one batch is intentional).
+            // Stop scrolling once the oldest message in the batch is older than the
+            // requested window. The fetch overshoots by up to one batch; reactions do not.
             if (afterTimestampUtc.HasValue &&
                 messages.Min(m => m.Timestamp).UtcDateTime < afterTimestampUtc.Value)
             {
@@ -125,6 +120,14 @@ internal sealed class ReactionsBackfillJob(
             await Task.Delay(DelayBetweenBatches, cancellationToken);
         }
     }
+
+    // #363: one REST call per (message, emoji) is the cost, so a windowed run skips messages
+    // older than the window. A gap reaction on an older message waits for the weekly full run.
+    internal static List<DiscordMessage> MessagesNeedingReactions(IEnumerable<DiscordMessage> batch, DateTime? afterTimestampUtc)
+        => batch
+            .Where(m => m.Reactions is { Count: > 0 })
+            .Where(m => afterTimestampUtc is null || m.Timestamp.UtcDateTime >= afterTimestampUtc.Value)
+            .ToList();
 
     private async Task BackfillMessageReactionAsync(
         DiscordDbContext db,
