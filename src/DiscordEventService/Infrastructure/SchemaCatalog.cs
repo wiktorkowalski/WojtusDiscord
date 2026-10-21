@@ -14,15 +14,31 @@ public sealed record EnumValue(int Value, string Name);
 
 // Security boundary for the generic explorer: only table/column identifiers present here are ever emitted
 // into SQL, and the emitted literal is the trusted model value — never client-supplied text. Hangfire and
-// __EFMigrationsHistory are not EF entities so they never appear here (the latter filtered defensively).
+// __EFMigrationsHistory are not EF entities so they never appear here.
 public sealed class SchemaCatalog
 {
-    // Kept out of the catalog, so out of the explorer and out of the assistant's schema hint: these
-    // tables hold what each person typed. The meme search log (#384) and the assistant's conversations,
-    // DMs included, with their usage ledger and alerts (#444). The AddMemeSearchLog and
-    // RevokeConversationTablesFromQueryRole migrations revoke the assistant role's SELECT on the same
-    // tables; this list keeps the hint from naming them.
-    private static readonly HashSet<string> HiddenTables =
+    // #388: an EF table is in the catalog, so in the explorer and in the assistant's schema hint, only
+    // when it is named here. A new table stays out until someone opens it on purpose; a test fails while
+    // an EF table is in neither list. The query role's SELECT follows the same decision: since
+    // RevokeDefaultSelectFromQueryRole a new table gets no grant unless its migration adds one.
+    internal static readonly HashSet<string> VisibleTables =
+    [
+        "activities", "audit_log_events", "auto_mod_events", "auto_mod_rule_events", "auto_mod_rules",
+        "backfill_checkpoints", "ban_events", "bans", "bot_downtime_intervals", "bot_heartbeats",
+        "channel_events", "channels", "emoji_events", "emotes", "failed_events", "guild_events",
+        "guild_members_chunk_events", "guild_scheduled_events", "guilds", "integration_events", "integrations",
+        "invite_events", "invites", "member_events", "member_role_snapshots", "members", "meme_annotations",
+        "meme_index", "message_edit_history", "message_events", "message_mentions", "messages", "pin_events",
+        "poll_events", "presence_events", "raw_event_logs", "reaction_events", "role_events", "roles",
+        "scheduled_events", "stage_instance_events", "stage_instances", "sticker_events", "stickers",
+        "thread_events", "thread_sync_events", "typing_events", "user_name_history", "users",
+        "voice_server_events", "voice_state_events", "webhook_events", "webhooks",
+    ];
+
+    // Closed on purpose: these tables hold what each person typed. The meme search log (#384) and the
+    // assistant's conversations, DMs included, with their usage ledger and alerts (#444). The
+    // AddMemeSearchLog and RevokeConversationTablesFromQueryRole migrations revoke the query role's SELECT.
+    internal static readonly HashSet<string> HiddenTables =
     [
         "meme_search_log", "meme_search_log_results",
         "conversation", "conversation_message", "conversation_usage", "usage_alerts",
@@ -47,7 +63,7 @@ public sealed class SchemaCatalog
                 continue;
 
             var tableName = entityType.GetTableName();
-            if (string.IsNullOrEmpty(tableName) || tableName == "__EFMigrationsHistory" || HiddenTables.Contains(tableName))
+            if (tableName is null || !VisibleTables.Contains(tableName))
                 continue;
 
             var storeObject = StoreObjectIdentifier.Table(tableName, entityType.GetSchema());
