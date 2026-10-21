@@ -270,7 +270,7 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
     }
 
     // #384: the meme search log holds what each person typed, and any member can run query_database.
-    // The role gets SELECT on a new table by default, so the migration has to take it back.
+    // Those tables predate RevokeDefaultSelectFromQueryRole, so their migration had to take the grant back.
     // #444: the same for the assistant's conversations, DMs included, and the usage ledger that ties a
     // row to its invoker.
     [Theory]
@@ -331,6 +331,52 @@ public sealed class DatabaseQueryServiceTests(PostgresFixture fixture)
             DatabaseSchemaHint.Build(catalog).Text.Split('\n'),
             line => line.StartsWith($"{table}(", StringComparison.Ordinal));
         Assert.False(catalog.TryGetTable(table, out _));
+    }
+
+    // #388: a new EF table is out of the explorer and the hint until it is named in one list or the other.
+    [Fact]
+    public async Task SchemaCatalog_EveryEfTableHasAVisibilityDecision()
+    {
+        await using var context = NewContext();
+        var efTables = context.Model.GetEntityTypes()
+            .Where(e => !e.IsOwned())
+            .Select(e => e.GetTableName())
+            .OfType<string>()
+            .ToHashSet(StringComparer.Ordinal);
+
+        Assert.Empty(efTables.Except(SchemaCatalog.VisibleTables).Except(SchemaCatalog.HiddenTables));
+        Assert.Empty(SchemaCatalog.VisibleTables.Intersect(SchemaCatalog.HiddenTables));
+        Assert.Empty(SchemaCatalog.VisibleTables.Union(SchemaCatalog.HiddenTables).Except(efTables));
+    }
+
+    // #388: the database ACL and the catalog agree. A visible table the hint names is readable by the query
+    // role, and a table the hint skips is not, so a migration that forgets its GRANT (or adds one) fails here.
+    [Fact]
+    public async Task SchemaCatalog_QueryRoleReadsExactlyTheTablesTheHintNames()
+    {
+        await using var context = NewContext();
+        var tables = SchemaCatalog.Build(context.Model).Tables.Select(t => t.TableName).ToArray();
+
+        var readable = await _db.Database.SqlQuery<string>($"""
+            SELECT t AS "Value" FROM unnest({tables}) AS t WHERE has_table_privilege({QueryRole}, t, 'SELECT')
+            """).ToListAsync();
+
+        Assert.Equal(
+            tables.Except(DatabaseSchemaHint.UnreadableTables).Order(StringComparer.Ordinal),
+            readable.Order(StringComparer.Ordinal));
+    }
+
+    // #388: a table a migration creates is closed to the query role until that migration grants it.
+    [Fact]
+    public async Task NewTable_IsNotReadableByTheQueryRole()
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        await _db.Database.ExecuteSqlRawAsync("CREATE TABLE probe_388 (id int)");
+
+        var readable = await _db.Database.SqlQuery<bool>(
+            $"""SELECT has_table_privilege({QueryRole}, 'probe_388', 'SELECT') AS "Value" """).SingleAsync();
+
+        Assert.False(readable);
     }
 
     [Fact]
