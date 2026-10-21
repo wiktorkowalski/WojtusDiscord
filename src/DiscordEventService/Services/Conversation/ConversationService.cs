@@ -585,8 +585,6 @@ internal sealed class ConversationService(
         public const string Refused = "refused";
         public const string RoundCap = "round_cap";
 
-        private const string Redacted = "[redacted]";
-
         private readonly long _startedAt = Stopwatch.GetTimestamp();
         private readonly string _traceId = turn?.TraceId.ToString() ?? "none";
         private readonly bool _captureText = question is not null;
@@ -615,7 +613,8 @@ internal sealed class ConversationService(
                 _outcome, context.InvokerId, SingleLine(context.InvokerDisplayName), context.GuildId, context.ChannelId,
                 Rounds, SingleLine(string.Join("; ", ToolCalls)), CostUsd,
                 (long)Stopwatch.GetElapsedTime(_startedAt).TotalMilliseconds, _traceId,
-                _captureText ? SingleLine(question) : Redacted, _captureText ? SingleLine(_answer) : Redacted);
+                _captureText ? SingleLine(question) : ConversationToolset.Redacted,
+                _captureText ? SingleLine(_answer) : ConversationToolset.Redacted);
 
         // A display name, a tool argument, the question and the answer are text a person or the
         // model wrote. A line break in one of them would start a new console line, and each

@@ -674,7 +674,7 @@ internal sealed class ConversationToolRegistry(
 internal sealed class ConversationToolset
 {
     private const int MaxLoggedArgumentsLength = 200;
-    private const string Redacted = "[redacted]";
+    internal const string Redacted = "[redacted]";
 
     private readonly Dictionary<string, AIFunction> _functions;
     private readonly ILogger _logger;
