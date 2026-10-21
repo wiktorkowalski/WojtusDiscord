@@ -165,7 +165,7 @@ internal sealed class ConfirmationService(
 
         var builder = new DiscordMessageBuilder()
             .AddEmbed(embed)
-            .AddComponents(
+            .AddActionRowComponent(
                 new DiscordButtonComponent(DiscordButtonStyle.Success, ConfirmPrefix + token, "Confirm"),
                 new DiscordButtonComponent(DiscordButtonStyle.Secondary, CancelPrefix + token, "Cancel"))
             .WithAllowedMentions(Mentions.None);

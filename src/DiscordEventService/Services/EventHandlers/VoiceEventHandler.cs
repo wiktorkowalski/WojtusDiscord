@@ -13,20 +13,22 @@ internal sealed class VoiceEventHandler(EventPipeline pipeline) :
     public async Task HandleEventAsync(DiscordClient sender, VoiceStateUpdatedEventArgs args)
     {
         var eventType = DetermineEventType(args);
+        // Bots only get guild voice states, so the guild id is always set.
+        var guildId = args.GuildId!.Value;
 
         // From the event alone, before any database work: an event the pipeline fails still counts.
         foreach (var change in ChangesOf(eventType, FlagsOf(args.Before), FlagsOf(args.After)))
             BotMetrics.VoiceStateChanged(change);
 
         await pipeline.ExecuteAsync(args, "VoiceStateUpdated", nameof(VoiceEventHandler),
-            args.Guild.Id, args.After?.Channel?.Id, args.User.Id, async ctx =>
+            guildId, args.After?.ChannelId, args.UserId, async ctx =>
             {
                 ctx.Db.VoiceStateEvents.Add(new VoiceStateEventEntity
                 {
-                    UserDiscordId = args.User.Id,
-                    GuildDiscordId = args.Guild.Id,
-                    ChannelDiscordIdBefore = args.Before?.Channel?.Id,
-                    ChannelDiscordIdAfter = args.After?.Channel?.Id,
+                    UserDiscordId = args.UserId,
+                    GuildDiscordId = guildId,
+                    ChannelDiscordIdBefore = args.Before?.ChannelId,
+                    ChannelDiscordIdAfter = args.After?.ChannelId,
                     EventType = eventType,
 
                     WasSelfMuted = args.Before?.IsSelfMuted ?? false,
@@ -54,7 +56,7 @@ internal sealed class VoiceEventHandler(EventPipeline pipeline) :
                 await ctx.Db.SaveChangesAsync();
 
                 ctx.Logger.LogDebug("Recorded voice event: {EventType} for user {UserId} in guild {GuildId}",
-                    eventType, args.User.Id, args.Guild.Id);
+                    eventType, args.UserId, guildId);
             });
     }
 
@@ -103,8 +105,8 @@ internal sealed class VoiceEventHandler(EventPipeline pipeline) :
 
     private static VoiceEventType DetermineEventType(VoiceStateUpdatedEventArgs args)
     {
-        var beforeChannelId = args.Before?.Channel?.Id;
-        var afterChannelId = args.After?.Channel?.Id;
+        var beforeChannelId = args.Before?.ChannelId;
+        var afterChannelId = args.After?.ChannelId;
 
         return (beforeChannelId, afterChannelId) switch
         {

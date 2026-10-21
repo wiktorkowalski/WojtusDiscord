@@ -124,7 +124,7 @@ public sealed class RoleUpsertServiceTests(PostgresFixture fixture) : IClassFixt
         {
             ["id"] = id.ToString(),
             ["name"] = name,
-            ["color"] = color,
+            ["colors"] = new Dictionary<string, object?> { ["primary_color"] = color },
             ["hoist"] = hoisted,
             ["position"] = position,
             ["permissions"] = permissions,

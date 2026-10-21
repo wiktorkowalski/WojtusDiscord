@@ -261,7 +261,7 @@ var app = builder.Build();
     BotMetrics.SetGatewayStateReader(() => HealthResponseWriter.ReadGatewayState(discordClientAccessor));
     // Memory only: the voice states of the gateway cache. BotMetrics guards the read.
     BotMetrics.SetVoiceMemberReader(() => discordClient.Guilds.Sum(
-        guild => guild.Value.VoiceStates.Count(state => state.Value.Channel is not null)));
+        guild => guild.Value.VoiceStates.Count(state => state.Value.ChannelId is not null)));
     StartupValidator.ValidateChildContainer(
         discordClient.ServiceProvider,
         app.Services.GetRequiredService<ILogger<Program>>());
