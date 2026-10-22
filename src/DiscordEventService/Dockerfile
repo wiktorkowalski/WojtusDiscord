@@ -28,11 +28,13 @@ ARG GIT_SHA
 ARG TARGETARCH
 WORKDIR /src
 COPY src/DiscordEventService/*.csproj ./
-RUN dotnet restore -a $TARGETARCH
+# #406: ReadyToRun precompiles to native code and cuts JIT time from every boot (deploy gap).
+# The restore needs the flag too, so it fetches the crossgen pack for the build platform.
+RUN dotnet restore -a $TARGETARCH -p:PublishReadyToRun=true
 COPY src/DiscordEventService/ ./
 # Bundle the built SPA so the .NET host serves it from wwwroot.
 COPY --from=frontend-build /app/frontend/dist ./wwwroot
-RUN dotnet publish -a $TARGETARCH --no-restore -c Release -o /app/publish /p:UseAppHost=false /p:EnforceCodeStyleInBuild=false /p:RunAnalyzers=false /p:SourceRevisionId=$GIT_SHA
+RUN dotnet publish -a $TARGETARCH --no-restore -c Release -o /app/publish /p:PublishReadyToRun=true /p:UseAppHost=false /p:EnforceCodeStyleInBuild=false /p:RunAnalyzers=false /p:SourceRevisionId=$GIT_SHA
 
 # Stage 3: Runtime. No --platform: resolves to the *target* platform. The apt-get
 # below is the only step that runs under emulation for a non-native target.
