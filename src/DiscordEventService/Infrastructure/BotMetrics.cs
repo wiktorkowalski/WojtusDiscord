@@ -94,7 +94,8 @@ internal static class BotMetrics
     private static readonly Counter<long> UnwritableFailedWrites = Meter.CreateCounter<long>(
         "wojtus.db.unwritable.failed_writes", description: "Failed heartbeat writes counted toward an unwritable window.");
     private static readonly Counter<long> DowntimeIntervals = Meter.CreateCounter<long>(
-        "wojtus.downtime.intervals", description: "Downtime rows written, by type.");
+        "wojtus.downtime.intervals", description: "Downtime rows written while the process keeps running, by type."
+            + " A row written by a stopping process or at boot never reaches a scrape; see wojtus.downtime.boot_gap.");
 
     // Gateway state.
     private static readonly Counter<long> HeartbeatWrites = Meter.CreateCounter<long>(
@@ -216,6 +217,7 @@ internal static class BotMetrics
     private static long _healthCheckLastRunUnixSeconds;
 
     private static readonly ConcurrentDictionary<string, double> BootPhaseSeconds = new();
+    private static volatile BootGap? _bootGap;
 
     private static Func<(bool? Connected, int? LatencyMs)>? _gatewayReader;
     private static Func<int?>? _voiceMemberReader;
@@ -247,6 +249,8 @@ internal static class BotMetrics
             description: "Unix time the last health check run finished every check.");
         Meter.CreateObservableGauge("wojtus.boot.phase.duration", ObserveBootPhases, unit: "s",
             description: "Duration of a boot phase, first run since the process started (migrate, backfill_sweep, guild_download, quick_sync).");
+        Meter.CreateObservableGauge("wojtus.downtime.boot_gap", ObserveBootGap, unit: "s",
+            description: "Gap before this process started, by the type of the downtime row the boot closed or inferred (#422).");
         Meter.CreateObservableGauge("wojtus.db.unwritable.window.pending", () => _unwritableWindowReader?.Invoke() == true ? 1 : 0,
             description: "1 while an unwritable-database window is open or waits for its row.");
         Meter.CreateObservableGauge("wojtus.process.start.time",
@@ -468,6 +472,10 @@ internal static class BotMetrics
     public static bool BootPhaseFinished(string phase, TimeSpan elapsed) =>
         BootPhaseSeconds.TryAdd(phase, elapsed.TotalSeconds);
 
+    // Held as state, not counted: the stopping process cannot report its own gap, and at boot
+    // the meter is not scraped yet (#422).
+    public static void BootGapSettled(string type, TimeSpan gap) => _bootGap = new BootGap(type, gap.TotalSeconds);
+
     public static void TraceExportFailed() => TraceExportFailures.Add(1);
 
     public static void LogEventWritten(LogLevel level)
@@ -578,6 +586,12 @@ internal static class BotMetrics
             yield return new Measurement<double>(seconds, Tag("phase", phase));
     }
 
+    private static IEnumerable<Measurement<double>> ObserveBootGap()
+    {
+        if (_bootGap is { } gap)
+            yield return new Measurement<double>(gap.Seconds, Tag("type", gap.Type));
+    }
+
     private static IEnumerable<Measurement<int>> ObserveBuildInfo()
     {
         if (_buildCommit is { } commit)
@@ -612,4 +626,6 @@ internal static class BotMetrics
             advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = boundaries });
 
     private static KeyValuePair<string, object?> Tag(string key, object? value) => new(key, value);
+
+    private sealed record BootGap(string Type, double Seconds);
 }

@@ -4671,7 +4671,7 @@
           "hideZeros": false
         }
       },
-      "description": "Downtime rows the bot wrote, per interval, by type. Deploy and restart gaps are not counted here: the bot counts the row in the process that stops, or before its metrics are up, so no scrape sees it. The series shows only a downtime that opens while the process keeps running (gateway loss, database unreachable). For a deploy gap see the Deploy markers and the table bot_downtime_intervals.",
+      "description": "Downtime rows the bot wrote, per interval, by type. Deploy and restart gaps are not counted here: the process that stops cannot report its own row. The series shows only a downtime that opens while the process keeps running (gateway loss, database unreachable). For a deploy or restart gap see the row Boot, panel 'Gap before each start'.",
       "interval": "1m"
     },
     {
@@ -5355,20 +5355,193 @@
       "description": "The same durations over time. Each step is one bot start; the value holds until the next."
     },
     {
-      "type": "row",
+      "type": "bargauge",
       "id": 61,
+      "title": "Gap before the last start",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 126,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "max by (type)(wojtus_downtime_boot_gap_seconds{job=\"wojtusdiscord\"})",
+          "refId": "A",
+          "legendFormat": "{{type}}",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "mappings": [],
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#d95926"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "noValue": "No gap recorded",
+          "displayName": "${__field.labels.type}"
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "basic",
+        "orientation": "horizontal",
+        "valueMode": "text",
+        "namePlacement": "left",
+        "showUnfilled": true,
+        "sizing": "manual",
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "maxVizHeight": 28,
+        "legend": {
+          "showLegend": false,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "description": "How long the bot was gone before the last start, from the downtime row the boot closed (Deploy, GracefulShutdown) or inferred from the last heartbeat (Inferred)."
+    },
+    {
+      "type": "timeseries",
+      "id": 62,
+      "title": "Gap before each start",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 126,
+        "w": 16,
+        "h": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "max by (type)(wojtus_downtime_boot_gap_seconds{job=\"wojtusdiscord\"})",
+          "refId": "A",
+          "legendFormat": "{{type}}",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 14,
+            "showPoints": "never",
+            "pointSize": 5,
+            "lineInterpolation": "stepAfter",
+            "spanNulls": false,
+            "gradientMode": "opacity",
+            "barAlignment": 0,
+            "barWidthFactor": 0.8,
+            "axisBorderShow": false,
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "axisColorMode": "text",
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#898781",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "min": 0,
+          "noValue": "No samples in this time range"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc",
+          "hideZeros": false
+        }
+      },
+      "description": "The same gap over time. Each step is one bot start; the value holds until the next. The gap of a deploy ends when the new process settles it, before the gateway connects: add guild_download from the panel above for the full time without events."
+    },
+    {
+      "type": "row",
+      "id": 63,
       "title": "Backfill",
       "collapsed": true,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 126
+        "y": 133
       },
       "panels": [
         {
           "type": "timeseries",
-          "id": 62,
+          "id": 64,
           "title": "Backfill runs by type and outcome",
           "datasource": {
             "type": "prometheus",
@@ -5376,7 +5549,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 127,
+            "y": 134,
             "w": 6,
             "h": 8
           },
@@ -5529,7 +5702,7 @@
         },
         {
           "type": "timeseries",
-          "id": 63,
+          "id": 65,
           "title": "Backfill run duration",
           "datasource": {
             "type": "prometheus",
@@ -5537,7 +5710,7 @@
           },
           "gridPos": {
             "x": 6,
-            "y": 127,
+            "y": 134,
             "w": 6,
             "h": 8
           },
@@ -5626,7 +5799,7 @@
         },
         {
           "type": "timeseries",
-          "id": 64,
+          "id": 66,
           "title": "Backfill items per second",
           "datasource": {
             "type": "prometheus",
@@ -5634,7 +5807,7 @@
           },
           "gridPos": {
             "x": 12,
-            "y": 127,
+            "y": 134,
             "w": 6,
             "h": 8
           },
@@ -5724,7 +5897,7 @@
         },
         {
           "type": "timeseries",
-          "id": 65,
+          "id": 67,
           "title": "Backfill item errors",
           "datasource": {
             "type": "prometheus",
@@ -5732,7 +5905,7 @@
           },
           "gridPos": {
             "x": 18,
-            "y": 127,
+            "y": 134,
             "w": 6,
             "h": 8
           },
@@ -5824,7 +5997,7 @@
         },
         {
           "type": "timeseries",
-          "id": 66,
+          "id": 68,
           "title": "Orphan replay rows by result",
           "datasource": {
             "type": "prometheus",
@@ -5832,7 +6005,7 @@
           },
           "gridPos": {
             "x": 0,
-            "y": 135,
+            "y": 142,
             "w": 24,
             "h": 7
           },

@@ -48,6 +48,8 @@ public sealed class DowntimeStartupSettleTests(PostgresFixture fixture)
         Assert.NotNull(row.EndedAtUtc);
         Assert.InRange(row.EndedAtUtc!.Value, boot, DateTime.UtcNow);
 
+        AssertBootGap("Inferred", 22);
+
         // The reconnect backfill sizes itself from the same instant as before the row
         // existed, so writing it cannot turn a quick-sync into a crawl.
         var resolved = await NewTracker().ResolveGapStartAsync(boot);
@@ -77,6 +79,7 @@ public sealed class DowntimeStartupSettleTests(PostgresFixture fixture)
         Assert.Equal(stoppedAt, row.StartedAtUtc, TimeSpan.FromMilliseconds(1));
         Assert.NotNull(row.EndedAtUtc);
         Assert.InRange(row.EndedAtUtc!.Value, boot, DateTime.UtcNow);
+        AssertBootGap("Deploy", 4);
     }
 
     [Fact]
@@ -101,6 +104,17 @@ public sealed class DowntimeStartupSettleTests(PostgresFixture fixture)
         Assert.Equal(BotDowntimeDetectionMethod.StartupGapInference, row.DetectionMethod);
         Assert.Equal(lastHeartbeat, row.StartedAtUtc, TimeSpan.FromMilliseconds(1));
         Assert.InRange(row.EndedAtUtc!.Value, boot, DateTime.UtcNow);
+    }
+
+    // #422: the gap must reach a scrape of the new process, not a counter in the old one.
+    // Only this class settles a prior session, so the static gauge holds this test's value.
+    private static void AssertBootGap(string type, double expectedSeconds)
+    {
+        using var metrics = new MetricsCapture();
+        metrics.Observe();
+        var gap = Assert.Single(metrics.Of("wojtus.downtime.boot_gap"));
+        Assert.Equal(type, gap.Tags["type"]);
+        Assert.InRange(gap.Value, expectedSeconds, expectedSeconds + 5);
     }
 
     private async Task AddHeartbeatAsync(DateTime atUtc)
