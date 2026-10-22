@@ -3320,7 +3320,7 @@
           "hideZeros": false
         }
       },
-      "description": "Downtime rows written, gateway socket closes and warm reconnects per interval. Deploy and restart gaps are not counted here: the bot counts the row in the process that stops, or before its metrics are up, so no scrape sees it. The series shows only a downtime that opens while the process keeps running (gateway loss, database unreachable). For a deploy gap see the Deploy markers and the table bot_downtime_intervals. Counts include the first sample of a new series, which increase() and rate() miss: the bot creates a counter series on its first increment.",
+      "description": "Downtime rows written, gateway socket closes and warm reconnects per interval. Deploy and restart gaps are not counted here: the process that stops cannot report its own row. The series shows only a downtime that opens while the process keeps running (gateway loss, database unreachable). For a deploy or restart gap see the row Boot, panel 'Gap before each start'. Counts include the first sample of a new series, which increase() and rate() miss: the bot creates a counter series on its first increment.",
       "interval": "1m"
     },
     {

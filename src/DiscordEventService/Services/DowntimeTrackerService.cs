@@ -190,9 +190,17 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
     {
         // Nothing open means the stop path wrote no row for this restart: a crash, or
         // Postgres went away first and StopAsync could not write (#400).
-        var closed = await CloseOpenDowntimeAsync(DateTime.UtcNow);
+        var now = DateTime.UtcNow;
+        var open = await db.BotDowntimeIntervals
+            .Where(x => x.EndedAtUtc == null)
+            .OrderBy(x => x.StartedAtUtc)
+            .Select(x => new { x.Type, x.StartedAtUtc })
+            .FirstOrDefaultAsync();
+        var closed = await CloseOpenDowntimeAsync(now);
         if (closed == 0)
             await InferStartupGapAsync();
+        else if (open is not null)
+            BotMetrics.BootGapSettled(open.Type.ToString(), now - open.StartedAtUtc);
     }
 
     private async Task InferStartupGapAsync()
@@ -221,7 +229,7 @@ internal sealed class DowntimeTrackerService(DiscordDbContext db, ILogger<Downti
         };
         db.BotDowntimeIntervals.Add(row);
         await db.SaveChangesAsync();
-        BotMetrics.DowntimeIntervalWritten(row.Type.ToString());
+        BotMetrics.BootGapSettled(row.Type.ToString(), gap);
         logger.LogInformation(
             "Recorded closed inferred downtime row {DowntimeId} for a gap the stop path did not record: {StartedAtUtc:O} to {EndedAtUtc:O} ({GapSeconds:F0}s)",
             row.Id, row.StartedAtUtc, now, gap.TotalSeconds);

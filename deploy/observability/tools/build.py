@@ -93,10 +93,10 @@ def buckets(title, metric, desc, extra="", w_unit="short"):
                     fmt="heatmap", decimals=0, desc=desc)
 EVENTS_LINK = link("Open this event type on Events & Ingest", "/d/wojtus-events/?var-event_type=${__field.labels.event_type}")
 HC = "wojtus_healthcheck_"
-DOWNTIME_NOTE = (" Deploy and restart gaps are not counted here: the bot counts the row in the process that"
-                 " stops, or before its metrics are up, so no scrape sees it. The series shows only a downtime"
-                 " that opens while the process keeps running (gateway loss, database unreachable). For a"
-                 " deploy gap see the Deploy markers and the table bot_downtime_intervals.")
+DOWNTIME_NOTE = (" Deploy and restart gaps are not counted here: the process that stops cannot report its own"
+                 " row. The series shows only a downtime that opens while the process keeps running (gateway"
+                 " loss, database unreachable). For a deploy or restart gap see the row Boot, panel"
+                 " 'Gap before each start'.")
 
 
 def availability_panel():
@@ -528,6 +528,15 @@ def events():
     d.add(ts("Boot phases across restarts", [q(f"max by (phase)(wojtus_boot_phase_duration_seconds{{{J}}})", "{{phase}}")],
              unit="s", line_interp="stepAfter",
              desc="The same durations over time. Each step is one bot start; the value holds until the next."), 16, 7)
+    d.add(bargauge("Gap before the last start", f"max by (type)(wojtus_downtime_boot_gap_seconds{{{J}}})", unit="s",
+                   legend="{{type}}", fixed=ORANGE, no_value="No gap recorded",
+                   desc="How long the bot was gone before the last start, from the downtime row the boot closed"
+                        " (Deploy, GracefulShutdown) or inferred from the last heartbeat (Inferred)."), 8, 7)
+    d.add(ts("Gap before each start", [q(f"max by (type)(wojtus_downtime_boot_gap_seconds{{{J}}})", "{{type}}")],
+             unit="s", line_interp="stepAfter",
+             desc="The same gap over time. Each step is one bot start; the value holds until the next."
+                  " The gap of a deploy ends when the new process settles it, before the gateway connects:"
+                  " add guild_download from the panel above for the full time without events."), 16, 7)
 
     d.row("Backfill", collapsed=True)
     d.add(bars("Backfill runs by type and outcome",
