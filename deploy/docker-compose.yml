@@ -1,0 +1,85 @@
+# Prod compose for orion (#340, bot part; map #327 "Move scope").
+# On orion: ~/wojtusdiscord/ holds a copy of this file as compose.yml, deploy/init/, and .env (0600, by hand, never in git).
+# Keys of .env: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, DISCORD_TOKEN (the DEV token until #343 step 4), and the
+# bot keys copied from the homelab .env (Anthropic__*, OpenRouter__*, HealthCheck__*, MemeIndex__*). The shared stack (network `observability`, Tempo, Prometheus) comes from repo `orion`.
+#
+# Until the cutover (#343) the bot stays stopped:  docker compose up -d postgres postgres-exporter
+# A deploy (#342) stays bot-only (#400):           docker compose pull discord-event-service && docker compose up -d --no-deps discord-event-service
+name: wojtusdiscord
+
+services:
+  postgres:
+    image: postgres:18
+    # Stable name: postgres-exporter and the dashboards point at it.
+    container_name: wojtus-postgres
+    # pg_stat_statements feeds the query panels of the Postgres dashboard.
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:-discord_event_service}
+    # No published port: the agent reads over SSH + docker exec (#496).
+    volumes:
+      # postgres:18 moved the data root up a level (docker-library/postgres#1259).
+      - postgres_data:/var/lib/postgresql
+      - ./init:/docker-entrypoint-initdb.d:ro
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  discord-event-service:
+    image: ghcr.io/wiktorkowalski/wojtusdiscord/discord-event-service:${WOJTUS_TAG:-latest}
+    # Stable name: the Loki label container_name, the Prometheus target and the dashboards use it.
+    container_name: discord-event-service
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-discord_event_service};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:?}
+      Discord__Token: ${DISCORD_TOKEN:?}
+      Database__AutoMigrate: "true"
+      # Shared Tempo from repo `orion` (OTLP/HTTP). Not a secret.
+      Telemetry__OtlpTracesEndpoint: http://tempo:4318
+    # No published port: craftops already holds 8080 on the host, and only Prometheus reaches /metrics.
+    networks: [default, observability]
+    mem_limit: 2g
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Read-only: SELECTs on pg_stat_* and the catalogs.
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
+    container_name: wojtus-postgres-exporter
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    environment:
+      DATA_SOURCE_URI: "postgres:5432/${POSTGRES_DB:-discord_event_service}?sslmode=disable"
+      DATA_SOURCE_USER: ${POSTGRES_USER:-postgres}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:?}
+    command:
+      - '--collector.long_running_transactions'
+      - '--collector.database_wraparound'
+      - '--collector.stat_activity_autovacuum'
+      - '--collector.statio_user_indexes'
+      - '--collector.postmaster'
+      - '--collector.stat_statements'
+      # Normalised SQL ($1..$n), no user data.
+      - '--collector.stat_statements.include_query'
+    networks: [default, observability]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+networks:
+  observability:
+    external: true
+
+volumes:
+  postgres_data:
