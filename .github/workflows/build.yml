@@ -47,13 +47,13 @@ jobs:
       context: .
       # #193: /health reports the deployed commit.
       build-args: GIT_SHA=${{ github.sha }}
-      # #342: dual-arch during the homelab -> EC2 (t4g, arm64) migration window;
-      # drop linux/amd64 after cutover (#343).
-      platforms: linux/amd64,linux/arm64
-      deploy-compose-path: /home/ubuntu/docker/wojtusdiscord
+      # #342: orion is x86_64.
+      platforms: linux/amd64
+      # #343: prod runs on orion; deploy/docker-compose.yml is the host's compose.yml there.
+      deploy-compose-path: /home/vicio/wojtusdiscord
       # #400: only the bot. The compose file also holds Postgres, and a deploy over every
       # service recreated it (a new image under postgres:18, or an edit of the shared .env).
       # The name is the compose service on the host. Postgres is updated by hand.
       deploy-compose-services: discord-event-service
-      deploy-runner-labels: '["self-hosted", "homelab"]'
+      deploy-runner-labels: '["self-hosted", "orion"]'
     secrets: inherit
