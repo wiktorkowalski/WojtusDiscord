@@ -32,7 +32,7 @@ services:
       retries: 5
 
   discord-event-service:
-    image: ghcr.io/wiktorkowalski/wojtusdiscord/discord-event-service:${WOJTUS_TAG:-latest}
+    image: ghcr.io/wiktorkowalski/wojtusdiscord/discord-event-service:${IMAGE_TAG:-latest}
     # Stable name: the Loki label container_name, the Prometheus target and the dashboards use it.
     container_name: discord-event-service
     restart: unless-stopped
