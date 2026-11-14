@@ -12,6 +12,8 @@
 # compare row counts with prod.
 # healthchecks.io gets a success ping only after a verified upload or a passed drill, /fail otherwise.
 set -eu
+# Dumps hold message and DM content: owner-only files.
+umask 077
 
 # Remotes come from the environment; no config file.
 export RCLONE_LOG_LEVEL=ERROR
