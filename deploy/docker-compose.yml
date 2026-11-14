@@ -99,7 +99,8 @@ services:
       HC_BACKUP_URL: ${HC_BACKUP_URL:-}
       HC_RESTORE_URL: ${HC_RESTORE_URL:-}
     volumes:
-      # Two nights stay here for a fast restore; the 2026-11-07 cutover dump next to them is not touched.
+      # Two nights stay here for a fast restore; cutover-20261107.dump next to them is not touched.
+      # The container runs as uid 999: once, before the first up:  sudo chown 999:999 /srv/db-dumps/wojtusdiscord && sudo chmod 700 /srv/db-dumps/wojtusdiscord
       - /srv/db-dumps/wojtusdiscord:/dumps
     mem_limit: 2g
     depends_on:
