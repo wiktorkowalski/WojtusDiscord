@@ -1,7 +1,8 @@
 -- Read-only login roles. Idempotent: runs on an empty data volume, and by hand on a live one:
 --   docker exec -i wojtus-postgres psql -U postgres -d discord_event_service -v ON_ERROR_STOP=1 < init/10-readonly-roles.sql
 -- No passwords here. Set the exporter password by hand (it lives in .env as POSTGRES_MONITOR_PASSWORD):
---   ALTER ROLE wojtus_monitor PASSWORD '...';
+--   SET pg_stat_statements.track_utility = off; ALTER ROLE wojtus_monitor PASSWORD '...';
+-- Keep the SET in the same session: otherwise the plaintext lands in pg_stat_statements and the exporter ships it to Prometheus.
 -- Cluster roles are not in pg_dump: re-run this file after a restore into a new cluster.
 DO $$
 BEGIN
