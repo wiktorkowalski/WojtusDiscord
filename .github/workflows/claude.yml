@@ -27,5 +27,5 @@ jobs:
   review:
     uses: wiktorkowalski/github-workflows/.github/workflows/claude-code-review.yml@master
     with:
-      runner-labels: '["self-hosted", "homelab"]'
+      runner-labels: '["self-hosted", "orion"]'
     secrets: inherit
