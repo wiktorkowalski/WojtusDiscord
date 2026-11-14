@@ -25,7 +25,7 @@ HEAD = r'''
 # Source of truth: deploy/observability/tools/alerts.py in the WojtusDiscord repo.
 # Change it there, run `python3 deploy/observability/tools/build.py`, then `./sync.sh`.
 #
-# Every rule starts as severity: warning (Alertmanager -> homelab-bot DM, 4h repeat).
+# Every rule starts as severity: warning (Alertmanager on orion -> Discord webhook, 4h repeat).
 # Promote to critical only after a baseline exists.
 # Target-down is NOT repeated here: the host-wide InstanceDown / PrometheusTargetMissing
 # rules already cover every job, including the ones below.
@@ -258,7 +258,7 @@ b += rule("WojtusHealthCheckWebhookFailed",
 b += rule("WojtusHealthEndpointDown",
           'max by (instance)(probe_success{job="wojtusdiscord-http"}) == 0', "3m",
           "The bot does not answer on its public URL",
-          "The blackbox probe of {{ $labels.instance }} through Traefik fails for 3 minutes. If WojtusGatewayDisconnected is quiet the bot runs and the fault is in Traefik, DNS or the certificate; check probe_http_status_code and the Runtime & HTTP dashboard, row 'Public URL probe'.",
+          "The blackbox probe of {{ $labels.instance }} fails for 3 minutes. If WojtusGatewayDisconnected is quiet the bot runs and the fault is in its HTTP host (or, for a public URL, the proxy, DNS or the certificate); check probe_http_status_code and the Runtime & HTTP dashboard, row 'Public URL probe'.",
           "The probe runs every 30 s. A deploy takes the endpoint away for under a minute; 3 minutes is\nsix failed probes in a row.")
 b += rule("WojtusHealthCheckFailing",
           f"max by (check)(wojtus_healthcheck_failing{{{J}}}) == 1", "10m",

@@ -7,7 +7,8 @@
 """
 import json, os, sys, urllib.error, urllib.parse, urllib.request
 OUT=os.path.join(os.path.dirname(os.path.abspath(__file__)),'..','grafana','dashboards','wojtusdiscord'); live='--live' in sys.argv
-PROM_URL=os.environ.get('PROM_URL','https://prometheus.home.vicio.ovh')
+# orion Prometheus has no public port: ssh -L 9090:$(prometheus container IP):9090 orion, then the default works.
+PROM_URL=os.environ.get('PROM_URL','http://localhost:9090')
 SUB={'$__rate_interval':'1m','$__interval_ms':'60000','$__interval':'1m','$__range':'6h','$event_type':'.*'}
 def sub(e):
     for k,v in SUB.items(): e=e.replace(k,v)

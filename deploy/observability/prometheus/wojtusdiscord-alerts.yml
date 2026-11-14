@@ -2,7 +2,7 @@
 # Source of truth: deploy/observability/tools/alerts.py in the WojtusDiscord repo.
 # Change it there, run `python3 deploy/observability/tools/build.py`, then `./sync.sh`.
 #
-# Every rule starts as severity: warning (Alertmanager -> homelab-bot DM, 4h repeat).
+# Every rule starts as severity: warning (Alertmanager on orion -> Discord webhook, 4h repeat).
 # Promote to critical only after a baseline exists.
 # Target-down is NOT repeated here: the host-wide InstanceDown / PrometheusTargetMissing
 # rules already cover every job, including the ones below.
@@ -374,7 +374,7 @@ groups:
           service: wojtusdiscord
         annotations:
           summary: "The bot does not answer on its public URL"
-          description: "The blackbox probe of {{ $labels.instance }} through Traefik fails for 3 minutes. If WojtusGatewayDisconnected is quiet the bot runs and the fault is in Traefik, DNS or the certificate; check probe_http_status_code and the Runtime & HTTP dashboard, row 'Public URL probe'."
+          description: "The blackbox probe of {{ $labels.instance }} fails for 3 minutes. If WojtusGatewayDisconnected is quiet the bot runs and the fault is in its HTTP host (or, for a public URL, the proxy, DNS or the certificate); check probe_http_status_code and the Runtime & HTTP dashboard, row 'Public URL probe'."
 
       # Mirrors the bot's own webhook alerts into Alertmanager: the webhook can fail, this cannot.
       # The job judges night silence itself (per-type thresholds), so the rule is quiet on an idle night.
