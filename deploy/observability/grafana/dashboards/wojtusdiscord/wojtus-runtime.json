@@ -452,7 +452,7 @@
           "range": true
         }
       ],
-      "description": "Green while the part works, red while it does not: the scrape of the bot, the Discord gateway, the HTTP probe of /health through Traefik, Postgres, and writes to Postgres. A gap means no sample.",
+      "description": "Green while the part works, red while it does not: the scrape of the bot, the Discord gateway, the HTTP probe of /health, Postgres, and writes to Postgres. A gap means no sample.",
       "fieldConfig": {
         "defaults": {
           "unit": "none",
@@ -2746,7 +2746,7 @@
           "hideZeros": false
         }
       },
-      "description": "Blackbox probe of /health through Traefik every 30 s, split into DNS resolve, TCP connect, TLS, server processing and transfer. 'processing' is the time the bot takes."
+      "description": "Blackbox probe of /health every 30 s, split into DNS resolve, TCP connect, TLS, server processing and transfer. 'processing' is the time the bot takes."
     },
     {
       "type": "state-timeline",

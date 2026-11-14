@@ -17,7 +17,7 @@ Run:
   python3 deploy/observability/tools/validate.py    panel ids, layout, units, descriptions
   python3 deploy/observability/tools/validate.py --live    also send every query to Prometheus
   deploy/observability/sync.sh --check              promtool check + rule tests + JSON
-  deploy/observability/sync.sh                      copy to the homelab host and reload (the deploy)
+  deploy/observability/sync.sh                      copy to orion and reload (the deploy)
 
 Files:
   build.py     this file: one function per dashboard (overview, events, ai, runtime)
@@ -107,7 +107,7 @@ def availability_panel():
         q('max(pg_up{job="wojtus-postgres"})', "Postgres"),
         q(f"1 - max(wojtus_db_unwritable_window_pending{{{J}}})", "DB writes")],
         "Green while the part works, red while it does not: the scrape of the bot, the Discord gateway,"
-        " the HTTP probe of /health through Traefik, Postgres, and writes to Postgres. A gap means no sample.")
+        " the HTTP probe of /health, Postgres, and writes to Postgres. A gap means no sample.")
 
 
 def uptime_panel(window, step, decimals, orientation):
@@ -178,7 +178,7 @@ def overview():
                  "1 when every gateway shard is connected to Discord.",
                  up="\u2713 ONLINE", down="\u2715 OFFLINE"), 3, 3)
     d.add(updown("Public URL", f"max(probe_success{{{HTTP}}})",
-                 "Blackbox probe of https://wojtusdiscord.home.vicio.ovh/health through Traefik, every 30 s."), 3, 3)
+                 "Blackbox probe of /health every 30 s (on orion: the internal URL, no public URL yet)."), 3, 3)
     d.add(updown("Postgres", 'pg_up{job="wojtus-postgres"}',
                  "pg_up from postgres_exporter: 1 when the exporter can query Postgres."), 3, 3)
     d.add(stat("DB writes", f"max(wojtus_db_unwritable_window_pending{{{J}}})", unit="none",
@@ -272,7 +272,8 @@ def overview():
                "Requests Traefik sent to the bot per interval. The flat base is the blackbox probe of"
                " /health: 2 requests per minute, all through Traefik. Dashboard and API requests sit on"
                " top of it. The Traefik counter has no path label, so the probe cannot be left out."
-               " The Prometheus scrape of /metrics does not pass through Traefik.",
+               " The Prometheus scrape of /metrics does not pass through Traefik. On orion no Traefik"
+               " stands in front of the bot yet, so the panel stays empty until it does.",
                colors={"2xx": GOOD, "3xx": BLUE, "4xx": WARN, "5xx": CRIT}), 8, 8)
 
     d.row("Jobs, connection and alerts")
@@ -883,7 +884,7 @@ def runtime():
              [q(f"max by (phase)(probe_http_duration_seconds{{{HTTP}}})", "{{phase}}")],
              unit="s", stack=True, fill=40,
              colors={"resolve": PURPLE, "connect": BLUE, "tls": TEAL, "processing": ORANGE, "transfer": YELLOW},
-             desc="Blackbox probe of /health through Traefik every 30 s, split into DNS resolve, TCP connect, TLS,"
+             desc="Blackbox probe of /health every 30 s, split into DNS resolve, TCP connect, TLS,"
                   " server processing and transfer. 'processing' is the time the bot takes."), 14, 8)
     d.add(state_timeline("Probe result", [q(f"max(probe_success{{{HTTP}}})", "Public URL")],
                          "Green while the probe gets HTTP 200 from /health.", row_height=0.6), 6, 8)

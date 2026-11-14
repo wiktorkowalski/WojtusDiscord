@@ -114,7 +114,7 @@ tests:
   # first minutes of the new process. Nothing fires.
   - interval: 30s
     input_series:
-      - series: 'probe_success{job="wojtusdiscord-http",instance="https://wojtusdiscord.home.vicio.ovh/health",service="wojtusdiscord"}'
+      - series: 'probe_success{job="wojtusdiscord-http",instance="http://discord-event-service:8080/health",service="wojtusdiscord"}'
         values: '1x20 0 0 1x100'
       - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
         values: '5000+30x20 stale 0+30x100'
@@ -135,7 +135,7 @@ tests:
   # Round 2, real problems.
   - interval: 30s
     input_series:
-      - series: 'probe_success{job="wojtusdiscord-http",instance="https://wojtusdiscord.home.vicio.ovh/health",service="wojtusdiscord"}'
+      - series: 'probe_success{job="wojtusdiscord-http",instance="http://discord-event-service:8080/health",service="wojtusdiscord"}'
         values: '1x10 0x30'
       - series: 'wojtus_process_uptime_seconds{job="wojtusdiscord",instance="b"}'
         values: '5000+30x120'
@@ -162,10 +162,10 @@ tests:
       - eval_time: 10m
         alertname: WojtusHealthEndpointDown
         exp_alerts:
-          - exp_labels: {severity: warning, service: wojtusdiscord, instance: "https://wojtusdiscord.home.vicio.ovh/health"}
+          - exp_labels: {severity: warning, service: wojtusdiscord, instance: "http://discord-event-service:8080/health"}
             exp_annotations:
               summary: "The bot does not answer on its public URL"
-              description: "The blackbox probe of https://wojtusdiscord.home.vicio.ovh/health through Traefik fails for 3 minutes. If WojtusGatewayDisconnected is quiet the bot runs and the fault is in Traefik, DNS or the certificate; check probe_http_status_code and the Runtime & HTTP dashboard, row 'Public URL probe'."
+              description: "The blackbox probe of http://discord-event-service:8080/health fails for 3 minutes. If WojtusGatewayDisconnected is quiet the bot runs and the fault is in its HTTP host (or, for a public URL, the proxy, DNS or the certificate); check probe_http_status_code and the Runtime & HTTP dashboard, row 'Public URL probe'."
       - eval_time: 20m
         alertname: WojtusHealthCheckFailing
         exp_alerts:

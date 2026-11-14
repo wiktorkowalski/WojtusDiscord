@@ -407,7 +407,7 @@
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
       },
-      "description": "Blackbox probe of https://wojtusdiscord.home.vicio.ovh/health through Traefik, every 30 s."
+      "description": "Blackbox probe of /health every 30 s (on orion: the internal URL, no public URL yet)."
     },
     {
       "type": "stat",
@@ -1465,7 +1465,7 @@
           "range": true
         }
       ],
-      "description": "Green while the part works, red while it does not: the scrape of the bot, the Discord gateway, the HTTP probe of /health through Traefik, Postgres, and writes to Postgres. A gap means no sample.",
+      "description": "Green while the part works, red while it does not: the scrape of the bot, the Discord gateway, the HTTP probe of /health, Postgres, and writes to Postgres. A gap means no sample.",
       "fieldConfig": {
         "defaults": {
           "unit": "none",
@@ -2977,7 +2977,7 @@
           "hideZeros": false
         }
       },
-      "description": "Requests Traefik sent to the bot per interval. The flat base is the blackbox probe of /health: 2 requests per minute, all through Traefik. Dashboard and API requests sit on top of it. The Traefik counter has no path label, so the probe cannot be left out. The Prometheus scrape of /metrics does not pass through Traefik.",
+      "description": "Requests Traefik sent to the bot per interval. The flat base is the blackbox probe of /health: 2 requests per minute, all through Traefik. Dashboard and API requests sit on top of it. The Traefik counter has no path label, so the probe cannot be left out. The Prometheus scrape of /metrics does not pass through Traefik. On orion no Traefik stands in front of the bot yet, so the panel stays empty until it does.",
       "interval": "1m"
     },
     {
