@@ -8,7 +8,7 @@
 - Discord MCP (`SaseQ/discord-mcp` via Docker) available globally — **drive live tests autonomously with it**: send/edit messages, add reactions, read channels, join voice, manage roles, etc. without prompting the user. Only ask the user to act when the MCP is unavailable or the action genuinely can't be done via MCP
 - Prod runs on **orion** (Hetzner dedicated, `ssh orion`), compose in `~/wojtusdiscord` from `deploy/docker-compose.yml`. The homelab instance is retired: never touch `ssh ubuntu` for WojtusDiscord.
 - Monitoring: Prometheus + Loki + Tempo + Grafana on orion (`~/monitoring`, set up by hand, not in this repo). Dashboards and alert rules live in `deploy/observability/`; `./sync.sh` there validates and pushes them to orion. Dashboards and rules are generated: edit `tools/build.py` / `tools/alerts.py`, not the output. Bot metrics come from `Infrastructure/BotMetrics.cs` (`/metrics`); a new metric needs a panel and, if it can go wrong, a rule
-- Production DB: READ ONLY (SELECT-only by convention), never run migrations or writes against prod. Connect via `ssh orion docker exec wojtus-postgres psql -U postgres -d discord_event_service -c '...'` (the DB has no published port)
+- Production DB: READ ONLY (SELECT-only by convention), never run migrations or writes against prod. Connect over `ssh orion` with the SQL on stdin, so no shell parses it twice: `ssh orion docker exec -i wojtus-postgres psql -U postgres -d discord_event_service <<'SQL'` … `SQL` (the DB has no published port)
 
 ## Development workflow
 
@@ -19,7 +19,7 @@
 5. **Create PR** — push branch, `gh pr create`, wait for GitHub Claude review
 6. **Review loop** — after every review round, read ALL comments (top-level + inline via `gh api repos/<o>/<r>/pulls/<N>/comments`). Apply fixes, push, repeat until approved and no outstanding comments
 7. **Merge** — review clean and checks green → `gh pr merge <N> --squash --delete-branch`, no user approval needed
-8. **Post-merge deployment** — after merge, watch deploy via `gh run watch`, wait for container restart, then over `ssh orion`: `docker ps` (expect `discord-event-service` healthy) + `docker logs --since <deploy time> discord-event-service` + targeted Loki queries (`docker run --rm --network observability curlimages/curl ... http://loki:3100/...`) covering ~5–15 min around deploy. Surface anomalies (new patterns, unexpected callsites), not just error counts
+8. **Post-merge deployment** — after merge, watch deploy via `gh run watch`, wait for container restart, then over `ssh orion`: `docker ps` (expect `discord-event-service` healthy) + `docker logs --since <deploy time> discord-event-service` + targeted Loki queries (`ssh orion 'docker run --rm --network observability curlimages/curl:latest -s -G http://loki:3100/loki/api/v1/query_range --data-urlencode "query=..."'`, the whole remote command quoted once) covering ~5–15 min around deploy. Surface anomalies (new patterns, unexpected callsites), not just error counts
 9. **Post-deploy verification** — **standard step, do it autonomously**: run read-only SELECT checks against the prod DB to confirm the change's data looks sane (recent rows, no duplicates/corruption from the change, relevant invariants hold). A reusable verification query set is in agent memory
 
 
