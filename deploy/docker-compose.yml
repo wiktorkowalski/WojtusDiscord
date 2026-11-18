@@ -1,6 +1,6 @@
 # Prod compose for orion (#340, bot part; map #327 "Move scope").
 # On orion: ~/wojtusdiscord/ holds a copy of this file as compose.yml, deploy/init/, deploy/db-backup/, and .env (0600, by hand, never in git).
-# Keys of .env: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, DISCORD_TOKEN (the DEV token until #343 step 4), and the
+# Keys of .env: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, POSTGRES_MONITOR_PASSWORD (role wojtus_monitor, init/10-readonly-roles.sql), DISCORD_TOKEN (the DEV token until #343 step 4), the
 # bot keys copied from the homelab .env (Anthropic__*, OpenRouter__*, HealthCheck__*, MemeIndex__*), and for db-backup R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, HC_BACKUP_URL, HC_RESTORE_URL. The shared stack (network `observability`, Tempo, Prometheus) comes from repo `orion`.
 #
 # Until the cutover (#343) the bot stays stopped:  docker compose up -d postgres postgres-exporter
@@ -51,7 +51,7 @@ services:
       postgres:
         condition: service_healthy
 
-  # Read-only: SELECTs on pg_stat_* and the catalogs.
+  # Read-only: role wojtus_monitor (pg_monitor), not the superuser.
   postgres-exporter:
     image: quay.io/prometheuscommunity/postgres-exporter:v0.20.1
     container_name: wojtus-postgres-exporter
@@ -61,8 +61,8 @@ services:
     mem_limit: 128m
     environment:
       DATA_SOURCE_URI: "postgres:5432/${POSTGRES_DB:-discord_event_service}?sslmode=disable"
-      DATA_SOURCE_USER: ${POSTGRES_USER:-postgres}
-      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:?}
+      DATA_SOURCE_USER: wojtus_monitor
+      DATA_SOURCE_PASS: ${POSTGRES_MONITOR_PASSWORD:?}
     command:
       - '--collector.long_running_transactions'
       - '--collector.database_wraparound'
