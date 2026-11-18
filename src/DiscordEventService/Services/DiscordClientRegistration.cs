@@ -31,8 +31,10 @@ internal static class DiscordClientRegistration
         {
             var clientBuilder = DiscordClientBuilder.CreateDefault(discordToken, DiscordIntents.All);
             var stopping = rootSp.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
-            clientBuilder.ConfigureLogging(logging => logging.AddFilter(
-                ShardOrchestratorCategory, level => IsShardOrchestratorLogKept(level, stopping.IsCancellationRequested)));
+            // Not ConfigureLogging: that call also disables DSharpPlus's default console logger,
+            // and every line of this container (handlers, EF, gateway) goes silent.
+            clientBuilder.ConfigureServices(services => services.Configure<LoggerFilterOptions>(options => options.AddFilter(
+                ShardOrchestratorCategory, level => IsShardOrchestratorLogKept(level, stopping.IsCancellationRequested))));
 
             ConfigureChildServices(clientBuilder, rootSp, configuration, environment, addDiscordDbContext);
             ConfigureEventHandlers(clientBuilder);
