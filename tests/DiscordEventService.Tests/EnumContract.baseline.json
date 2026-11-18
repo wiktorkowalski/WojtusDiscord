@@ -1,4 +1,8 @@
 {
+  "DiscordEventService.Configuration.AuthMode": {
+    "Disabled": 0,
+    "Discord": 1
+  },
   "DiscordEventService.Data.Entities.Conversations.ConversationMessageRole": {
     "Assistant": 1,
     "Tool": 2,
@@ -186,6 +190,11 @@
     "Left": 1,
     "Moved": 2,
     "StateChanged": 3
+  },
+  "DiscordEventService.Infrastructure.Auth.MembershipStatus": {
+    "Member": 0,
+    "NotMember": 1,
+    "Unknown": 2
   },
   "DiscordEventService.Infrastructure.ColumnKind": {
     "Bool": 4,

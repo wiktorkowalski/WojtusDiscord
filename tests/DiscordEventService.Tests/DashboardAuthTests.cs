@@ -119,6 +119,7 @@ public sealed class DashboardAuthTests
     [InlineData("//evil.example", false)]
     [InlineData("/\\evil.example", false)]
     [InlineData("https://evil.example", false)]
+    [InlineData("/\t/evil.example", false)]
     public void IsLocalUrl_RejectsOpenRedirects(string url, bool expected) =>
         Assert.Equal(expected, DashboardAuth.IsLocalUrl(url));
 

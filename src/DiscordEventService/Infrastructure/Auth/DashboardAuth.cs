@@ -232,8 +232,10 @@ internal static class DashboardAuth
         });
     }
 
+    // Browsers drop tabs/newlines, so "/\t/evil" would become "//evil": control chars are rejected.
     internal static bool IsLocalUrl(string url) =>
-        url.StartsWith('/') && !url.StartsWith("//", StringComparison.Ordinal) && !url.StartsWith("/\\", StringComparison.Ordinal);
+        url.StartsWith('/') && !url.StartsWith("//", StringComparison.Ordinal) && !url.StartsWith("/\\", StringComparison.Ordinal)
+        && !url.Any(char.IsControl);
 
     internal sealed record AuthMeResponse(string? Id, string? Username, string? AvatarHash, bool IsMember, bool IsAdmin);
 
