@@ -77,7 +77,7 @@ services:
       postgres:
         condition: service_healthy
 
-  # Nightly pg_dump to Cloudflare R2 and a weekly restore drill (#332); details in db-backup/db-backup.sh.
+  # Nightly pg_dump to Cloudflare R2 and a weekly restore drill (#332); details in db-backup/db-backup.sh, restore in db-backup/RESTORE.md.
   # Built on orion and updated by hand, like postgres:  docker compose up -d --build --no-deps db-backup
   # One run now:  docker compose run --rm db-backup backup   (or: drill)
   # The R2_* and HC_* keys default to empty on purpose: a missing key must not break the bot deploy,
