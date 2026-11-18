@@ -64,6 +64,17 @@ public sealed class LogEventCounterTests
         Assert.Equal(1, metrics.Of(LogEvents, "level", "critical").Sum(m => m.Value));
     }
 
+    // ConfigureLogging on the client builder drops DSharpPlus's console logger; the 2026-11-18
+    // deploy lost every handler, EF and gateway line that way.
+    [Fact]
+    public void ChildContainer_KeepsTheDSharpPlusConsoleLogger()
+    {
+        var client = BuildClient(new TestLifetime());
+
+        Assert.Contains(client.ServiceProvider.GetServices<ILoggerProvider>(),
+            p => p.GetType().Name == "DefaultLoggerProvider");
+    }
+
     private static DiscordClient BuildClient(IHostApplicationLifetime lifetime)
     {
         var configuration = new ConfigurationBuilder()
