@@ -11,7 +11,8 @@ Rules:
 
 ```sh
 cd ~/wojtusdiscord
-docker compose stop discord-event-service
+# The exporter holds a session too: a rename needs none open.
+docker compose stop discord-event-service postgres-exporter db-backup
 date -u   # note the time: the gap to backfill starts at the dump, not here
 ```
 
@@ -44,7 +45,7 @@ docker exec -i wojtus-postgres pg_restore --list < /tmp/restore/wojtusdiscord-YY
 
 ```sh
 D=/tmp/restore/wojtusdiscord-YYYY-MM-DD
-# Keep the broken copy. Rename fails while a session is open: the bot must be stopped (step 1).
+# Keep the broken copy. Rename fails while a session is open: step 1 stopped every client.
 docker exec wojtus-postgres psql -U postgres -d postgres -c \
   "ALTER DATABASE discord_event_service RENAME TO discord_event_service_broken_$(date -u +%Y%m%d)"
 docker exec wojtus-postgres createdb -U postgres discord_event_service
@@ -83,7 +84,7 @@ SQL
 ## 5. Start the bot and close the gap
 
 ```sh
-docker compose up -d --no-deps discord-event-service
+docker compose up -d --no-deps discord-event-service postgres-exporter db-backup
 ```
 
 - `Database__AutoMigrate` applies any migration newer than the dump.
