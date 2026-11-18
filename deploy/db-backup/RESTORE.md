@@ -20,7 +20,7 @@ date -u   # note the time: the gap to backfill starts at the dump, not here
 
 Each backup is two files: `wojtusdiscord-YYYY-MM-DD.dump` and `wojtusdiscord-YYYY-MM-DD.roles.sql`.
 
-- **On orion** (fastest): the last two nights are in `/srv/db-dumps/wojtusdiscord/` (owner uid 999, mode 700). Copy them out first: `mkdir -p /tmp/restore && sudo cp /srv/db-dumps/wojtusdiscord/wojtusdiscord-YYYY-MM-DD.* /tmp/restore/`.
+- **On orion** (fastest): the last two nights are in `/srv/db-dumps/wojtusdiscord/` (owner uid 999, mode 700). Copy them out first: `mkdir -p /tmp/restore && sudo cp /srv/db-dumps/wojtusdiscord/wojtusdiscord-YYYY-MM-DD.* /tmp/restore/ && sudo chown "$(id -u)" /tmp/restore/*` (docker cp reads them as you).
 - **From R2**, when orion lost its disk or the local copy is bad. R2 keeps `daily/` 7 days, `weekly/` 4 weeks, `monthly/` 6 months.
 
 ```sh
