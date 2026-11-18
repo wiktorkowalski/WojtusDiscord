@@ -30,6 +30,9 @@ internal static class DiscordClientRegistration
         rootServices.AddSingleton(rootSp =>
         {
             var clientBuilder = DiscordClientBuilder.CreateDefault(discordToken, DiscordIntents.All);
+            var stopping = rootSp.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
+            clientBuilder.ConfigureLogging(logging => logging.AddFilter(
+                ShardOrchestratorCategory, level => IsShardOrchestratorLogKept(level, stopping.IsCancellationRequested)));
 
             ConfigureChildServices(clientBuilder, rootSp, configuration, environment, addDiscordDbContext);
             ConfigureEventHandlers(clientBuilder);
@@ -38,6 +41,14 @@ internal static class DiscordClientRegistration
             return clientBuilder.Build();
         });
     }
+
+    internal const string ShardOrchestratorCategory = "DSharpPlus.Clients.IShardOrchestrator";
+
+    // Our own DisconnectAsync in StopAsync makes DSharpPlus log "gateway exited ... UserRequested,
+    // abandoning reconnecting" at Error on every deploy. Drop this category only while the host
+    // stops, so a real gateway failure at any other time still logs and counts as Error.
+    internal static bool IsShardOrchestratorLogKept(LogLevel level, bool hostStopping) =>
+        level >= LogLevel.Information && !hostStopping;
 
     // Register ASP.NET Core services in DSharpPlus's DI container. Services event
     // handlers share with the root container come from AddCoreServices(); add new

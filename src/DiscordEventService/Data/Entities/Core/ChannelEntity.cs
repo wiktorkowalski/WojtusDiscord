@@ -47,5 +47,7 @@ public enum ChannelType
     Stage = 13,
     GuildDirectory = 14,
     Forum = 15,
-    Media = 16
+    Media = 16,
+    // Not in Discord's docs nor in DSharpPlus; prod sees it on the "server-hub" channel.
+    ServerHub = 20
 }
