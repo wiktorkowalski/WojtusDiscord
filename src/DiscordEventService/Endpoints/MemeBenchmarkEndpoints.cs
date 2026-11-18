@@ -1,3 +1,4 @@
+using DiscordEventService.Infrastructure.Auth;
 using DiscordEventService.Configuration;
 using DiscordEventService.Jobs;
 using DiscordEventService.Services.MemeIndexing;
@@ -13,7 +14,7 @@ internal static class MemeBenchmarkEndpoints
 
     public static void MapMemeBenchmarkEndpoints(this WebApplication app)
     {
-        var group = app.MapGroup("/api/ops/meme-benchmark");
+        var group = app.MapGroup("/api/ops/meme-benchmark").RequireAuthorization(DashboardAuth.AdminPolicy);
 
         group.MapPost("/", StartBenchmark)
             .WithName("StartMemeBenchmark")

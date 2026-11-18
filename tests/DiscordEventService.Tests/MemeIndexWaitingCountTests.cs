@@ -16,6 +16,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using DiscordEventService.Infrastructure.Auth;
 using Xunit;
 
 namespace DiscordEventService.Tests;
@@ -319,7 +320,12 @@ public sealed class MemeIndexWaitingCountTests(PostgresFixture fixture) : IClass
         builder.Services.AddScoped<MemeSampleService>();
         builder.Services.AddScoped<IMemeIndexSummaryReader, MemeIndexSummaryReader>();
 
+        // The ops groups require Admin (#339); Disabled mode lets every request through.
+        builder.Services.AddDashboardAuth(builder.Configuration, new TestHostEnvironment { EnvironmentName = "Development" });
+
         var app = builder.Build();
+        app.UseAuthentication();
+        app.UseAuthorization();
         app.MapMemeIndexEndpoints();
         await app.StartAsync();
 
