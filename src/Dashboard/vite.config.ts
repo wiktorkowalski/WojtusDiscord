@@ -16,6 +16,8 @@ export default defineConfig({
         target: 'http://localhost:5099',
         changeOrigin: true,
       },
+      // Login gate (#339). No changeOrigin: the OAuth redirect_uri must keep the dev host.
+      '/auth': 'http://localhost:5099',
     },
   },
   build: {

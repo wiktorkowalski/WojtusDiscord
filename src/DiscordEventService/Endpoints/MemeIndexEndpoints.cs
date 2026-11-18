@@ -1,3 +1,4 @@
+using DiscordEventService.Infrastructure.Auth;
 using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
@@ -13,7 +14,7 @@ internal static class MemeIndexEndpoints
 {
     public static void MapMemeIndexEndpoints(this WebApplication app)
     {
-        var group = app.MapGroup("/api/ops/meme-index");
+        var group = app.MapGroup("/api/ops/meme-index").RequireAuthorization(DashboardAuth.AdminPolicy);
 
         group.MapPost("/backfill/{guildId:long}", StartIndexing)
             .WithName("StartMemeIndexing")

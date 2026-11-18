@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using DiscordEventService.Infrastructure.Auth;
 using Xunit;
 
 namespace DiscordEventService.Tests;
@@ -450,7 +451,12 @@ public sealed class MemeAnnotationImportEndpointTests(PostgresFixture fixture) :
         builder.Services.AddScoped<MemeAttachmentIndexer>();
         builder.Services.AddScoped<MemeAnnotationImportService>();
 
+        // The ops groups require Admin (#339); Disabled mode lets every request through.
+        builder.Services.AddDashboardAuth(builder.Configuration, new TestHostEnvironment { EnvironmentName = "Development" });
+
         var app = builder.Build();
+        app.UseAuthentication();
+        app.UseAuthorization();
         app.MapMemeAnnotationImportEndpoints();
         await app.StartAsync();
 
