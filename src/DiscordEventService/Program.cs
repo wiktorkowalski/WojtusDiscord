@@ -13,6 +13,8 @@ using Hangfire;
 using Hangfire.PostgreSql;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Serilog;
+using Serilog.Extensions.Logging;
 
 // #350: pin the boot instant before anything else runs, so a downtime row closed during
 // StartAsync sorts after it. BootClock explains why the first read must happen here.
@@ -25,13 +27,19 @@ if (File.Exists(envPath)) Env.Load(envPath);
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Log events by level for /metrics. The DSharpPlus child container registers its own copy.
+// JSON lines on stdout (JsonConsoleLog); the DSharpPlus child container writes through the same
+// static logger. AddProvider, not AddSerilog: that adds a Trace rule for its provider, which outranks
+// every Logging:LogLevel entry. Log events by level for /metrics; the child container registers its own copy.
+Log.Logger = JsonConsoleLog.Create();
+// A crash before or outside the host (the 2026-11-07 wrong-password boot loop) lands as one JSON line too.
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+{
+    Log.Fatal(e.ExceptionObject as Exception, "Unhandled exception, the process exits");
+    Log.CloseAndFlush();
+};
+builder.Logging.ClearProviders();
+builder.Logging.AddProvider(new SerilogLoggerProvider(dispose: true));
 builder.Logging.AddProvider(new LogEventCounterProvider());
-
-// A log line written inside a traced operation carries its trace and span id, as one more
-// scope line under the unchanged "warn: Category[0]" prefix (Logging:Console:IncludeScopes).
-builder.Logging.Configure(options => options.ActivityTrackingOptions =
-    ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
 
 // Fail fast on DI misconfigurations: ValidateOnBuild constructs every
 // registered service at host build time so missing/unresolvable dependencies

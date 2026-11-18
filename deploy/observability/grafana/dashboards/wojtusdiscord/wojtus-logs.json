@@ -155,7 +155,7 @@
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
           },
-          "expr": "sum(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[(Error|Fatal|Critical|Crit)\\]|(fail|crit): )` [$__auto]))",
+          "expr": "sum(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[(Error|Fatal|Critical|Crit)\\]|(fail|crit): |\\{\"time\":\"[^\"]+\",\"level\":\"(Error|Fatal)\")` [$__auto]))",
           "refId": "A",
           "legendFormat": "",
           "editorMode": "code",
@@ -226,7 +226,7 @@
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
           },
-          "expr": "sum(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[Warn(ing)?\\]|warn: )` [$__auto]))",
+          "expr": "sum(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[Warn(ing)?\\]|warn: |\\{\"time\":\"[^\"]+\",\"level\":\"Warning\")` [$__auto]))",
           "refId": "A",
           "legendFormat": "",
           "editorMode": "code",
@@ -569,7 +569,7 @@
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
           },
-          "expr": "sum(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[(Error|Fatal|Critical|Crit)\\]|(fail|crit): )` [$__auto]))",
+          "expr": "sum(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[(Error|Fatal|Critical|Crit)\\]|(fail|crit): |\\{\"time\":\"[^\"]+\",\"level\":\"(Error|Fatal)\")` [$__auto]))",
           "refId": "A",
           "legendFormat": "error",
           "editorMode": "code",
@@ -580,7 +580,7 @@
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
           },
-          "expr": "sum(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[Warn(ing)?\\]|warn: )` [$__auto]))",
+          "expr": "sum(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[Warn(ing)?\\]|warn: |\\{\"time\":\"[^\"]+\",\"level\":\"Warning\")` [$__auto]))",
           "refId": "B",
           "legendFormat": "warning",
           "editorMode": "code",
@@ -707,7 +707,7 @@
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
           },
-          "expr": "sum(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[Info(rmation)?\\]|info: )` [$__auto]))",
+          "expr": "sum(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[Info(rmation)?\\]|info: |\\{\"time\":\"[^\"]+\",\"level\":\"Information\")` [$__auto]))",
           "refId": "A",
           "legendFormat": "info",
           "editorMode": "code",
@@ -803,7 +803,7 @@
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
           },
-          "expr": "topk(10, sum by (cat)(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[(Error|Fatal|Critical|Crit)\\]|(fail|crit): )` | regexp `^(\\[[^\\]]+\\] \\[|[a-z]{4}: )(?P<cat>[A-Za-z0-9_.]+)` [$__range])))",
+          "expr": "topk(10, sum by (cat)(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[(Error|Fatal|Critical|Crit)\\]|(fail|crit): |\\{\"time\":\"[^\"]+\",\"level\":\"(Error|Fatal)\")` | regexp `^(\\[[^\\]]+\\] \\[|[a-z]{4}: |\\{\"time\":\"[^\"]+\",\"level\":\"[A-Za-z]+\",\"category\":\")(?P<cat>[A-Za-z0-9_.]+)` [$__range])))",
           "refId": "A",
           "legendFormat": "{{cat}}",
           "editorMode": "code",
@@ -894,7 +894,7 @@
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
           },
-          "expr": "topk(10, sum by (cat)(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[Warn(ing)?\\]|warn: )` | regexp `^(\\[[^\\]]+\\] \\[|[a-z]{4}: )(?P<cat>[A-Za-z0-9_.]+)` [$__range])))",
+          "expr": "topk(10, sum by (cat)(count_over_time({container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[Warn(ing)?\\]|warn: |\\{\"time\":\"[^\"]+\",\"level\":\"Warning\")` | regexp `^(\\[[^\\]]+\\] \\[|[a-z]{4}: |\\{\"time\":\"[^\"]+\",\"level\":\"[A-Za-z]+\",\"category\":\")(?P<cat>[A-Za-z0-9_.]+)` [$__range])))",
           "refId": "A",
           "legendFormat": "{{cat}}",
           "editorMode": "code",
@@ -985,7 +985,7 @@
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
           },
-          "expr": "{container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[(Error|Fatal|Critical|Crit|Warn|Warning)\\]|(fail|crit|warn): )`",
+          "expr": "{container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[(Error|Fatal|Critical|Crit|Warn|Warning)\\]|(fail|crit|warn): |\\{\"time\":\"[^\"]+\",\"level\":\"(Error|Fatal|Warning)\")`",
           "refId": "A",
           "legendFormat": "",
           "editorMode": "code",

@@ -8,6 +8,7 @@ using DSharpPlus;
 using DSharpPlus.Commands;
 using DSharpPlus.Commands.Processors.SlashCommands;
 using Hangfire;
+using Serilog.Extensions.Logging;
 
 namespace DiscordEventService.Services;
 
@@ -31,8 +32,9 @@ internal static class DiscordClientRegistration
         {
             var clientBuilder = DiscordClientBuilder.CreateDefault(discordToken, DiscordIntents.All);
             var stopping = rootSp.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping;
-            // Not ConfigureLogging: that call also disables DSharpPlus's default console logger,
-            // and every line of this container (handlers, EF, gateway) goes silent.
+            // ConfigureLogging also turns DSharpPlus's own console logger off: Serilog replaces it here.
+            // AddProvider, not AddSerilog: its Trace rule for the provider outranks the filter below.
+            clientBuilder.ConfigureLogging(logging => logging.AddProvider(new SerilogLoggerProvider(dispose: false)));
             clientBuilder.ConfigureServices(services => services.Configure<LoggerFilterOptions>(options => options.AddFilter(
                 ShardOrchestratorCategory, level => IsShardOrchestratorLogKept(level, stopping.IsCancellationRequested))));
 

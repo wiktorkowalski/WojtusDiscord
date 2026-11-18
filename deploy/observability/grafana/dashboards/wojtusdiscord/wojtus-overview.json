@@ -3455,7 +3455,7 @@
             "type": "loki",
             "uid": "P8E80F9AEF21F6940"
           },
-          "expr": "{container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[(Error|Fatal|Critical|Crit|Warn|Warning)\\]|(fail|crit|warn): )`",
+          "expr": "{container_name=\"discord-event-service\"} |~ `^(\\[[^\\]]+\\] \\[[^\\]]+\\] \\[(Error|Fatal|Critical|Crit|Warn|Warning)\\]|(fail|crit|warn): |\\{\"time\":\"[^\"]+\",\"level\":\"(Error|Fatal|Warning)\")`",
           "refId": "A",
           "legendFormat": "",
           "editorMode": "code",

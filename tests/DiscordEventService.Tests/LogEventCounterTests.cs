@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Serilog.Extensions.Logging;
 using Xunit;
 
 namespace DiscordEventService.Tests;
@@ -65,14 +66,15 @@ public sealed class LogEventCounterTests
     }
 
     // ConfigureLogging on the client builder drops DSharpPlus's console logger; the 2026-11-18
-    // deploy lost every handler, EF and gateway line that way.
+    // deploy of #506 lost every handler, EF and gateway line that way. Serilog writes them now.
     [Fact]
-    public void ChildContainer_KeepsTheDSharpPlusConsoleLogger()
+    public void ChildContainer_WritesThroughSerilog()
     {
         var client = BuildClient(new TestLifetime());
 
-        Assert.Contains(client.ServiceProvider.GetServices<ILoggerProvider>(),
-            p => p.GetType().Name == "DefaultLoggerProvider");
+        Assert.Contains(client.ServiceProvider.GetServices<ILoggerProvider>(), p => p is SerilogLoggerProvider);
+        // AddSerilog would add a Trace rule for its provider and let Debug and Verbose through.
+        Assert.False(client.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Any").IsEnabled(LogLevel.Debug));
     }
 
     private static DiscordClient BuildClient(IHostApplicationLifetime lifetime)

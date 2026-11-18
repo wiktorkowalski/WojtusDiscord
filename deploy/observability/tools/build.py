@@ -47,7 +47,7 @@ OUT = os.path.join(HERE, "..", "grafana", "dashboards", "wojtusdiscord")
 
 IV, R = "$__interval", "$__range"
 PER_MIN = " / ($__interval_ms / 60000)"
-ERR_RE = r"^(\[[^\]]+\] \[[^\]]+\] \[(Error|Fatal|Critical|Crit|Warn|Warning)\]|(fail|crit|warn): )"
+ERR_RE = r'^(\[[^\]]+\] \[[^\]]+\] \[(Error|Fatal|Critical|Crit|Warn|Warning)\]|(fail|crit|warn): |\{"time":"[^"]+","level":"(Error|Fatal|Warning)")'
 BIRTH = (" Counts include the first sample of a new series, which increase() and rate() miss:"
          " the bot creates a counter series on its first increment.")
 NOT_PROBE = 'http_route!~"/?(health|metrics)"'
