@@ -1,7 +1,7 @@
 # Prod compose for orion (#340, bot part; map #327 "Move scope").
-# On orion: ~/wojtusdiscord/ holds a copy of this file as compose.yml, deploy/init/, and .env (0600, by hand, never in git).
-# Keys of .env: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, POSTGRES_MONITOR_PASSWORD (role wojtus_monitor, init/10-readonly-roles.sql), DISCORD_TOKEN (the DEV token until #343 step 4), and the
-# bot keys copied from the homelab .env (Anthropic__*, OpenRouter__*, HealthCheck__*, MemeIndex__*). The shared stack (network `observability`, Tempo, Prometheus) comes from repo `orion`.
+# On orion: ~/wojtusdiscord/ holds a copy of this file as compose.yml, deploy/init/, deploy/db-backup/, and .env (0600, by hand, never in git).
+# Keys of .env: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, POSTGRES_MONITOR_PASSWORD (role wojtus_monitor, init/10-readonly-roles.sql), DISCORD_TOKEN (the DEV token until #343 step 4), the
+# bot keys copied from the homelab .env (Anthropic__*, OpenRouter__*, HealthCheck__*, MemeIndex__*), and for db-backup R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, HC_BACKUP_URL, HC_RESTORE_URL. The shared stack (network `observability`, Tempo, Prometheus) comes from repo `orion`.
 #
 # Until the cutover (#343) the bot stays stopped:  docker compose up -d postgres postgres-exporter
 # A deploy (#342) stays bot-only (#400):           docker compose pull discord-event-service && docker compose up -d --no-deps discord-event-service
@@ -73,6 +73,36 @@ services:
       # Normalised SQL ($1..$n), no user data.
       - '--collector.stat_statements.include_query'
     networks: [default, observability]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Nightly pg_dump to Cloudflare R2 and a weekly restore drill (#332); details in db-backup/db-backup.sh.
+  # Built on orion and updated by hand, like postgres:  docker compose up -d --build --no-deps db-backup
+  # One run now:  docker compose run --rm db-backup backup   (or: drill)
+  # The R2_* and HC_* keys default to empty on purpose: a missing key must not break the bot deploy,
+  # which reads this whole file; the script fails and pings /fail instead.
+  db-backup:
+    build: ./db-backup
+    image: wojtusdiscord-db-backup:local
+    container_name: wojtus-db-backup
+    restart: unless-stopped
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-postgres}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
+      PGDATABASE: ${POSTGRES_DB:-discord_event_service}
+      BACKUP_AT: "02:30"
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      HC_BACKUP_URL: ${HC_BACKUP_URL:-}
+      HC_RESTORE_URL: ${HC_RESTORE_URL:-}
+    volumes:
+      # Two nights stay here for a fast restore; cutover-20261107.dump next to them is not touched.
+      # The container runs as uid 999: once, before the first up:  sudo chown 999:999 /srv/db-dumps/wojtusdiscord && sudo chmod 700 /srv/db-dumps/wojtusdiscord
+      - /srv/db-dumps/wojtusdiscord:/dumps
+    mem_limit: 2g
     depends_on:
       postgres:
         condition: service_healthy
