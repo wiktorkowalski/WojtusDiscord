@@ -52,6 +52,7 @@
     "Private": 1,
     "PrivateThread": 12,
     "PublicThread": 11,
+    "ServerHub": 20,
     "Stage": 13,
     "Store": 6,
     "Text": 0,
