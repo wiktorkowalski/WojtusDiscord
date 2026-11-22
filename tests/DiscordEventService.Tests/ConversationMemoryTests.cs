@@ -135,9 +135,9 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         Assert.Equal([1, 2], rows.Select(r => r.Round));
         Assert.Equal((0, 2000), (rows[0].CacheReadTokens, rows[0].CacheWriteTokens));
         Assert.Equal((2000, 0), (rows[1].CacheReadTokens, rows[1].CacheWriteTokens));
-        // 100 × $2 + 2000 × $2.50 + 50 × $10 per MTok; then 100 × $2 + 2000 × $0.20 + 50 × $10.
+        // 100 × $2 + 2000 × $2.50 + 50 × $10 per MTok; then 100 × $2 + 2000 × $0.10 + 50 × $10.
         Assert.Equal(0.0057, rows[0].CostUsd!.Value, precision: 9);
-        Assert.Equal(0.0011, rows[1].CostUsd!.Value, precision: 9);
+        Assert.Equal(0.0009, rows[1].CostUsd!.Value, precision: 9);
 
         // The prompt tokens also land on the round's first assistant transcript row.
         Assert.Contains(await _db.ConversationMessages.ToListAsync(), m => m.PromptTokens == 2100);
@@ -146,7 +146,7 @@ public sealed class ConversationMemoryTests(PostgresFixture fixture)
         var monthlyCost = await _db.ConversationUsage
             .Where(u => u.InvokerId == InvokerId && u.CreatedAtUtc >= DateTime.UtcNow.AddDays(-30))
             .SumAsync(u => u.CostUsd ?? 0);
-        Assert.Equal(0.0068, monthlyCost, precision: 9);
+        Assert.Equal(0.0066, monthlyCost, precision: 9);
     }
 
     [Fact]

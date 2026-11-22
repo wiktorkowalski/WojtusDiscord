@@ -158,8 +158,8 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         Assert.Equal((5300, 5000, 0, 100), (rows[1].PromptTokens!.Value, rows[1].CacheReadTokens!.Value,
             rows[1].CacheWriteTokens!.Value, rows[1].CompletionTokens!.Value));
         Assert.Null(rows[1].WebSearchRequests);
-        // 300 × $2 + 5000 × $0.20 + 100 × $10 per MTok.
-        Assert.Equal(0.0026, rows[1].CostUsd!.Value, precision: 9);
+        // 300 × $2 + 5000 × $0.10 + 100 × $10 per MTok.
+        Assert.Equal(0.0021, rows[1].CostUsd!.Value, precision: 9);
 
         // The search fee metric: cost less the token cost. Other test classes use the same
         // model label, so the assertion is on this turn's own value.
@@ -223,11 +223,11 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
             ["cache_creation_input_tokens", "cache_read_input_tokens", "input", "output", "total", "web_search"],
             costs.Keys.Order(StringComparer.Ordinal));
         Assert.Equal(4 * 2e-6, costs["input"], precision: 12);
-        Assert.Equal(14339 * 0.2e-6, costs["cache_read_input_tokens"], precision: 12);
+        Assert.Equal(14339 * 0.1e-6, costs["cache_read_input_tokens"], precision: 12);
         Assert.Equal(22116 * 2.5e-6, costs["cache_creation_input_tokens"], precision: 12);
         Assert.Equal(496 * 10e-6, costs["output"], precision: 12);
         Assert.Equal(0.01, costs["web_search"], precision: 12);
-        Assert.Equal(0.0731258, costs["total"], precision: 12);
+        Assert.Equal(0.0716919, costs["total"], precision: 12);
     }
 
     // Review of #434: the span tagger runs mid-stream, before the ledger's cost call. It must not
@@ -703,9 +703,9 @@ public sealed class ConversationWebSearchTests(PostgresFixture fixture)
         var row = await _db.ConversationUsage.SingleAsync();
         Assert.Equal((5700, 5000, 400, 20, 1), (row.PromptTokens!.Value, row.CacheReadTokens!.Value,
             row.CacheWriteTokens!.Value, row.CompletionTokens!.Value, row.WebSearchRequests!.Value));
-        // 300 × $2 + 5000 × $0.20 + 400 × $2.50 + 20 × $10 per MTok, plus one search at $0.01.
-        Assert.Equal(0.0028, row.UpstreamInferenceCostUsd!.Value, precision: 9);
-        Assert.Equal(0.0128, row.CostUsd!.Value, precision: 9);
+        // 300 × $2 + 5000 × $0.10 + 400 × $2.50 + 20 × $10 per MTok, plus one search at $0.01.
+        Assert.Equal(0.0023, row.UpstreamInferenceCostUsd!.Value, precision: 9);
+        Assert.Equal(0.0123, row.CostUsd!.Value, precision: 9);
     }
 
     // redacted_thinking carries encrypted reasoning: the next round of the turn must send it
