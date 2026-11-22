@@ -40,7 +40,7 @@ The scope is the conversation only. Meme indexing, the meme benchmark, `OpenRout
 
 ## Amendment: Claude Sonnet 5.5 (2026-10-16, #435)
 
-The model id is now `claude-sonnet-5-5`. The prices are the same as `claude-sonnet-5`. The price table keeps the `claude-sonnet-5` row, so a rollback by `Conversation__Model` still gets a cost.
+The model id is now `claude-sonnet-5-5`. The prices are the same as `claude-sonnet-5`, except cache reads: $0.10/MTok, not $0.20 (fixed 2026-11-22; ledger rows before the fix overstate the cache-read cost 2x). The price table keeps the `claude-sonnet-5` row, so a rollback by `Conversation__Model` still gets a cost.
 
 - **Breaking changes that do not apply.** Sonnet 5.5 rejects `thinking: disabled`, forced `tool_choice` (`any` / `tool`) and non-default sampling values. The loop sends none of them: adaptive thinking, `auto`, and `none` on the post-cap round.
 - **Effort.** The effort levels are recalibrated on 5.5. `medium` stays: it is the start point for multistep tool use, and the live tests showed no problem.

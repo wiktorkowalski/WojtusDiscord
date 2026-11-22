@@ -332,7 +332,7 @@ public sealed class UsageAlertTests(PostgresFixture fixture)
         options.CostAlerts.GlobalDailyUsd = 0.05;
 
         // What the MEAI adapter emits at the end of a stream: 100k input (60k of them cache
-        // read), 2k output, 3 searches → 40k × $2 + 60k × $0.20 + 2k × $10 per MTok + $0.03.
+        // read), 2k output, 3 searches → 40k × $2 + 60k × $0.10 + 2k × $10 per MTok + $0.03.
         var usage = new UsageDetails
         {
             InputTokenCount = 100_000,
@@ -343,8 +343,8 @@ public sealed class UsageAlertTests(PostgresFixture fixture)
         var tokens = RoundTokens.From([new ChatResponseUpdate(ChatRole.Assistant, [new UsageContent(usage)])]);
         var cost = ConversationCost.Compute(options, tokens, NullLogger.Instance);
         Assert.NotNull(cost);
-        Assert.Equal(0.142, cost.TotalUsd, precision: 9);
-        Assert.Equal(0.112, cost.TokensUsd, precision: 9);
+        Assert.Equal(0.136, cost.TotalUsd, precision: 9);
+        Assert.Equal(0.106, cost.TokensUsd, precision: 9);
 
         var memory = new ConversationMemoryService(
             NewContext(), Options.Create(options), NullLogger<ConversationMemoryService>.Instance);

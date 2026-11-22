@@ -139,7 +139,8 @@ internal sealed class ConversationOptions
 
     // USD prices per model id (#426): the Claude API reports tokens, not money, so the
     // ledger cost is computed from these. A model with no entry gets a null cost and one
-    // Warning. Source: https://platform.claude.com/docs/en/about-claude/pricing (2026-10-15).
+    // Warning. Source: https://platform.claude.com/docs/en/about-claude/pricing (2026-10-15;
+    // claude-sonnet-5-5 re-checked 2026-11-22: cache reads are 0.05x input, not 0.1x).
     // The binder merges config keys into this default; it never removes one.
     public Dictionary<string, ModelPrice> Prices { get; set; } = new(StringComparer.Ordinal)
     {
@@ -147,7 +148,7 @@ internal sealed class ConversationOptions
         {
             InputPerMTokUsd = 2,
             OutputPerMTokUsd = 10,
-            CacheReadPerMTokUsd = 0.20,
+            CacheReadPerMTokUsd = 0.10,
             CacheWritePerMTokUsd = 2.50,
         },
         // The model before #435, kept so a rollback by Conversation__Model still gets a cost.
