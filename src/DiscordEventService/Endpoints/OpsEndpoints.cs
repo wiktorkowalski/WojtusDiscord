@@ -1,5 +1,8 @@
+using DiscordEventService.Infrastructure.Auth;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Services;
+using Hangfire;
+using Hangfire.Storage;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DiscordEventService.Endpoints;
@@ -8,7 +11,7 @@ internal static class OpsEndpoints
 {
     public static void MapOpsEndpoints(this WebApplication app)
     {
-        var group = app.MapGroup("/api/ops");
+        var group = app.MapGroup("/api/ops").RequireAuthorization(DashboardAuth.AdminPolicy);
 
         group.MapPost("/downtime/start", StartDowntimeAsync)
             .WithName("StartDowntime")
@@ -36,6 +39,35 @@ internal static class OpsEndpoints
             .WithName("ResolveFailedEvent")
             .Produces(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status404NotFound);
+
+        // #339: scripted access to the recurring jobs; /hangfire itself is cookie-only.
+        group.MapGet("/jobs", ListRecurringJobs)
+            .WithName("ListRecurringJobs")
+            .Produces<IEnumerable<RecurringJobResponse>>(StatusCodes.Status200OK);
+
+        group.MapPost("/jobs/{id}/trigger", TriggerRecurringJob)
+            .WithName("TriggerRecurringJob")
+            .Produces(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status404NotFound);
+    }
+
+    private static IResult ListRecurringJobs(JobStorage storage)
+    {
+        using var connection = storage.GetConnection();
+        return Results.Ok(connection.GetRecurringJobs().Select(j => new RecurringJobResponse(
+            j.Id, j.Cron, j.NextExecution, j.LastExecution, j.LastJobId, j.LastJobState, j.Error)));
+    }
+
+    private static IResult TriggerRecurringJob(string id, JobStorage storage, IRecurringJobManagerV2 manager)
+    {
+        using (var connection = storage.GetConnection())
+        {
+            if (!connection.GetRecurringJobs([id]).Any(j => j.Job is not null))
+                return Results.NotFound(new { error = $"No recurring job with id {id}" });
+        }
+
+        var jobId = manager.TriggerJob(id);
+        return Results.Ok(new { id, jobId });
     }
 
     private static async Task<IResult> StartDowntimeAsync(
@@ -109,6 +141,10 @@ internal static class OpsEndpoints
             : Results.NotFound(new { error = $"No unresolved failed event with id {id}" });
     }
 }
+
+internal sealed record RecurringJobResponse(
+    string Id, string Cron, DateTime? NextExecution, DateTime? LastExecution,
+    string? LastJobId, string? LastJobState, string? Error);
 
 internal sealed record DowntimeStartResponse
 {

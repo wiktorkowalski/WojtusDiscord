@@ -1,5 +1,7 @@
 // Thin fetch wrapper. All requests go through the .NET backend under /api
 // (proxied to :5099 in dev by vite.config.ts; same-origin in production).
+import { AUTH_CHANGED } from './authApi'
+
 const BASE_URL = '/api'
 
 export async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -10,6 +12,9 @@ export async function fetchApi<T>(endpoint: string, options?: RequestInit): Prom
     },
     ...options,
   })
+
+  // Session gone or access revoked: the AuthGate swaps the page for the login / no-access screen.
+  if (res.status === 401 || res.status === 403) window.dispatchEvent(new Event(AUTH_CHANGED))
 
   if (!res.ok) {
     const body = await res.text().catch(() => '')

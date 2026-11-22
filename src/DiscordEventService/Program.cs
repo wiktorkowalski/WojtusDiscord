@@ -3,6 +3,7 @@ using DiscordEventService.Configuration;
 using DiscordEventService.Data;
 using DiscordEventService.Endpoints;
 using DiscordEventService.Infrastructure;
+using DiscordEventService.Infrastructure.Auth;
 using DiscordEventService.Jobs;
 using DiscordEventService.Services;
 using DiscordEventService.Services.Conversation;
@@ -149,6 +150,9 @@ builder.Services.AddSingleton(sp =>
     var db = scope.ServiceProvider.GetRequiredService<DiscordDbContext>();
     return SchemaCatalog.Build(db.Model);
 });
+
+// Discord OAuth gate of the dashboard, /api and /hangfire (#339). Throws on a bad Auth section.
+builder.Services.AddDashboardAuth(builder.Configuration, builder.Environment);
 
 builder.Services.AddHttpClient();
 builder.Services.AddHealthCheckWebhookClient();
@@ -315,12 +319,20 @@ BotMetrics.BootPhaseFinished("backfill_sweep", Stopwatch.GetElapsedTime(sweepSta
 // Serve the bundled dashboard SPA (Vite build output in wwwroot). Must precede
 // the route-mapping below; the SPA fallback is registered LAST so it never
 // swallows /api, /health, /metrics, or /hangfire.
+app.UseForwardedHeaders();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
 // One Information line per request to the API, with the trace id. After the static files (they
 // answer before this runs) and inside the request activity.
 app.UseMiddleware<RequestLogMiddleware>();
+
+// Static files above stay public (SPA shell + /assets); everything mapped below needs Member
+// unless it says otherwise.
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapAuthEndpoints();
 
 app.MapControllers();
 
@@ -329,12 +341,14 @@ app.MapControllers();
 app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
 {
     ResponseWriter = HealthResponseWriter.WriteAsync,
-});
+}).AllowAnonymous();
 
-// Prometheus scrape of the meters registered in AddBotTelemetry.
-app.MapPrometheusScrapingEndpoint();
+// Prometheus scrape of the meters registered in AddBotTelemetry. Anonymous for the scrape over
+// the observability network; the public Traefik route excludes it.
+app.MapPrometheusScrapingEndpoint().AllowAnonymous();
 
-app.MapHangfireDashboard("/hangfire");
+app.MapHangfireDashboard("/hangfire", new DashboardOptions { Authorization = [new EndpointAuthorizedDashboardFilter()] })
+    .RequireAuthorization(DashboardAuth.HangfireAdminPolicy);
 
 // Weekly full backfill safety net — catches anything reconnect-backfill misses
 // due to its windowed semantics. See #124 postmortem.
@@ -369,6 +383,6 @@ app.MapMemeAnnotationImportEndpoints();
 // SPA fallback — LAST so it only catches client-side routes (any non-/api,
 // non-/health, non-/metrics, non-/hangfire GET) and serves index.html for deep links.
 // A mapped endpoint wins over this catch-all, so /metrics never answers with index.html.
-app.MapFallbackToFile("index.html");
+app.MapFallbackToFile("index.html").AllowAnonymous();
 
 app.Run();

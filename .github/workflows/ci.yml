@@ -69,6 +69,11 @@ jobs:
           Discord__Token: smoke-test-not-a-real-discord-token-do-not-use-0000000000
           # trust auth on the service => no password in the connection string.
           ConnectionStrings__Postgres: Host=localhost;Port=5432;Database=postgres;Username=postgres
+          # Production refuses Auth:Mode=Disabled (#339); fake Discord app values pass the startup check.
+          Auth__Mode: Discord
+          Auth__GuildId: "1"
+          Auth__Discord__ClientId: smoke-client
+          Auth__Discord__ClientSecret: smoke-secret
         run: |
           set -uo pipefail
           # --no-build so the /health timeout below measures boot time, not Release compilation.

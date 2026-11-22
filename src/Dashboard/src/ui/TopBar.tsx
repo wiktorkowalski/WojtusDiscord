@@ -4,6 +4,7 @@ import { NavLink } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { C } from '../theme'
 import { guildApi } from '../api/guildApi'
+import { authApi } from '../api/authApi'
 import { Avatar } from './Avatar'
 import { Icon } from './Icon'
 import type { IconName } from './Icon'
@@ -69,6 +70,7 @@ export function TopBar() {
   const [spin, setSpin] = useState(false)
 
   const { data: guild } = useQuery({ queryKey: ['guild'], queryFn: guildApi.get })
+  const { data: me } = useQuery({ queryKey: ['me'], queryFn: authApi.me, staleTime: 60_000 })
 
   const online = guild?.online ?? []
   const onlineShown = online.slice(0, 6)
@@ -185,6 +187,28 @@ export function TopBar() {
           </span>
           refresh
         </button>
+
+        {me && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Avatar discordId={me.id ?? undefined} avatarHash={me.avatarHash} name={me.username ?? '?'} size={28} />
+            <button
+              onClick={() => void authApi.logout()}
+              style={{
+                padding: '8px 11px',
+                borderRadius: 9,
+                border: `1px solid ${C.border}`,
+                background: 'transparent',
+                color: C.muted,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              wyloguj
+            </button>
+          </div>
+        )}
       </div>
       <style>{KEYFRAMES}</style>
     </header>

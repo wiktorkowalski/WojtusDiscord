@@ -1,3 +1,4 @@
+using DiscordEventService.Infrastructure.Auth;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -18,9 +19,10 @@ internal static class MemeAnnotationImportEndpoints
 
     public static void MapMemeAnnotationImportEndpoints(this WebApplication app)
     {
-        // On the group: an endpoint added here later is gated too. Replace with the OAuth gate
-        // when #339 lands.
+        // On the group: an endpoint added here later is gated too. The secret stays next to the
+        // Admin gate (#339) until its callers move to the ops key.
         var group = app.MapGroup("/api/ops/meme-annotations")
+            .RequireAuthorization(DashboardAuth.AdminPolicy)
             .AddEndpointFilter<MemeImportSecretFilter>();
 
         // Filters run after parameter binding, so the handler takes HttpRequest and reads the body

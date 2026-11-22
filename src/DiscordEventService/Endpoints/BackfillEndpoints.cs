@@ -1,3 +1,4 @@
+using DiscordEventService.Infrastructure.Auth;
 using DiscordEventService.Data;
 using DiscordEventService.Data.Entities.Core;
 using DiscordEventService.Jobs;
@@ -10,7 +11,7 @@ internal static class BackfillEndpoints
 {
     public static void MapBackfillEndpoints(this WebApplication app)
     {
-        var group = app.MapGroup("/api/backfill");
+        var group = app.MapGroup("/api/backfill").RequireAuthorization(DashboardAuth.AdminPolicy);
 
         group.MapPost("/{guildId:long}", StartBackfill)
             .WithName("StartBackfill")
