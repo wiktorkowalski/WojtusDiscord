@@ -7,7 +7,9 @@ description: Meme catch-up — annotate the meme images that are not in the sear
 
 Live indexing is off by the owner's choice (#223): a new meme reaches `/meme` only through this run. The commands, the batch statuses and the import rules are in `tools/meme-eval/OPUS-RUN.md` — read it first; this file holds only the order and the rules the runbook does not.
 
-The owner's request is the go for the whole run, the prod import included. Target: prod (`MEME_IMPORT_URL`, home network only).
+The owner's request is the go for the whole run, the prod import included. Target: prod (`MEME_IMPORT_URL`).
+
+**Not working since the 2026-11-07 move to orion.** On orion the prod DB and the bot publish no port, and no prod DB password is stored, so the inputs and steps below cannot reach prod. When the owner asks for this run, stop and tell the owner that the access path is not decided yet. The two candidates: SSH plus `docker exec` on orion, or ports bound to localhost on orion plus an SSH tunnel.
 
 ## Inputs
 

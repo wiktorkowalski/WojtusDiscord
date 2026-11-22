@@ -1,3 +1,5 @@
+> **Prod access does not work since the 2026-11-07 move to orion** (no published DB or bot port, no stored DB password). See `.claude/skills/meme-catchup/SKILL.md`.
+
 # Opus annotation run (#371)
 
 Annotates the meme corpus with Claude Opus through Claude Code subagents (subscription limit, no API cost).
